@@ -12,7 +12,7 @@
     "e2e": "playwright test"
   },
   "dependencies": {
-    "@joint/core": "^4.3.1",
+    "@joint/core": "^4.3.2",
     "dxf-parser": "^1.1.2",
     "fast-xml-parser": "^5.11.0",
     "idb-keyval": "^6.3.0",
@@ -25,7 +25,7 @@
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
+    "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.1.0",
     "jsdom": "^30.0.1",
     "typescript": "^7.0.2",
