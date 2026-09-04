@@ -154,6 +154,14 @@ function portItems(node: PlantNode) {
     id: p.id,
     group: 'p',
     args: { x: p.x * sx, y: p.y * sy },
+    // The kind rides on the element as a CLASS so "which ports could this
+    // line reach?" is a CSS question, answered by the style engine while a
+    // link is being dragged, rather than a per-magnet JavaScript sweep. A
+    // class and not a data attribute on purpose: class selectors are matched
+    // out of a hash, and these have to stay cheap across a couple of thousand
+    // ports on every style recalculation. See app.css and paperSetup's
+    // markAvailable note.
+    attrs: { portBody: { class: `pid-port-hit pid-kind-${p.kind}` } },
     ...('hit' in p && typeof p.hit === 'number' ? { markup: haloMarkup(p.hit) } : {}),
   }))
 }
@@ -299,9 +307,31 @@ function routerFor(edge: PlantEdge, nodes?: Map<string, PlantNode>): Record<stri
   return { name: 'manhattan', args }
 }
 
+type RouterSpec = { name?: string; args?: Record<string, unknown> }
+
+/** Same router, same arguments? Writing an equal-but-new router object is a
+ *  Backbone change, and a change re-routes the link and re-runs its connector
+ *  — which on a P&ID means recomputing every crossing hop on it. Reconcile
+ *  refreshes the router of every line touching a moved symbol, so "equal
+ *  means don't write" is the difference between one line re-routing and all
+ *  of its neighbours doing so too. */
+function sameRouter(a: RouterSpec | undefined, b: RouterSpec): boolean {
+  if (!a || a.name !== b.name) return false
+  const x = (a.args ?? {}) as Record<string, unknown>
+  const y = (b.args ?? {}) as Record<string, unknown>
+  return (
+    x.step === y.step &&
+    x.padding === y.padding &&
+    String(x.startDirections) === String(y.startDirections) &&
+    String(x.endDirections) === String(y.endDirections)
+  )
+}
+
 /** Recompute a link's route choice after an endpoint node moved or resized. */
 export function refreshLinkRouter(cell: dia.Link, edge: PlantEdge, nodes?: Map<string, PlantNode>): void {
-  cell.router(routerFor(edge, nodes) as never)
+  const next = routerFor(edge, nodes) as RouterSpec
+  if (sameRouter(cell.router() as RouterSpec | undefined, next)) return
+  cell.router(next as never)
 }
 
 const LINK_MARKUP = [
@@ -342,7 +372,10 @@ export function makeLink(edge: PlantEdge, nodes?: Map<string, PlantNode>, fluidC
     target: toEnd(edge.target),
     vertices: edge.vertices ?? [],
     router: routerFor(edge, nodes),
-    // jumpover draws the little hop where unrelated lines cross
+    // The little hop where unrelated lines cross. The paper resolves
+    // 'jumpover' through canvas/jumpover.ts — JointJS's own connector fed a
+    // spatial shortlist instead of the whole graph, so the arcs are identical
+    // without the L x L intersection sweep.
     connector: { name: 'jumpover', args: { size: 5 } },
     markup: LINK_MARKUP,
     data: { lineClass: edge.lineClass, fluidColor },

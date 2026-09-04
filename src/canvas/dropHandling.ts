@@ -6,13 +6,13 @@ import type { dia } from '@joint/core'
 import { ulid } from 'ulid'
 import { DRAG_MIME, paletteDrag, type DragPayload } from '../panels/Palette'
 import { getSymbol } from '../symbols/registry'
-import type { NodeKind, PlantNode } from '../model/types'
+import type { NodeKind, PlantEdge, PlantNode } from '../model/types'
 import type { SymbolDef } from '../symbols/types'
 import { nextLoopNumber } from '../isa/autonumber'
 import { buildTypical } from '../assist/typicals'
 import { activeSheet, useStore } from '../store/store'
 import { canvasRef } from './paperSetup'
-import { type Dock, dockEdge, dockRadius, findDock, showDockHint } from './autoConnect'
+import { type Dock, type DockIndex, buildDockIndex, dockEdge, dockRadius, findDock, flashDockMade, showDockHint } from './autoConnect'
 
 export function kindForSymbol(def: Pick<SymbolDef, 'tagRule' | 'category'>): NodeKind {
   switch (def.tagRule) {
@@ -114,6 +114,10 @@ function placedNode(def: SymbolDef, local: { x: number; y: number }): PlantNode 
  * identically for the hover preview and for the drop itself, so the ring the
  * user aims at is exactly the connection they get.
  */
+/** Resolved connection points for the sheet the palette drag is over. A drag
+ *  fires `dragover` at pointer rate; the sheet underneath it is not changing. */
+let dragGeom: { nodes: PlantNode[]; edges: PlantEdge[]; dock: DockIndex } | null = null
+
 function previewDrop(
   payload: DragPayload,
   paper: dia.Paper,
@@ -129,12 +133,17 @@ function previewDrop(
   const node = placedNode(def, paper.clientToLocalPoint({ x: clientX, y: clientY }))
   const state = useStore.getState()
   const sheet = activeSheet(state)
+  if (!dragGeom || dragGeom.nodes !== sheet.nodes || dragGeom.edges !== sheet.edges) {
+    dragGeom = { nodes: sheet.nodes, edges: sheet.edges, dock: buildDockIndex(sheet.nodes, sheet.edges) }
+  }
   const dock = findDock(
     node,
     sheet.nodes,
     sheet.edges,
     state.activeLineClass,
     dockRadius(paper.scale().sx),
+    undefined,
+    dragGeom.dock,
   )
   return { node, dock }
 }
@@ -146,6 +155,9 @@ export function attachDropHandling(host: HTMLElement, paper: dia.Paper): () => v
     showDockHint(paper, null)
   }
 
+  // The hint only has to be right once per painted frame; `dragover` fires far
+  // more often than that, and each one asks where the symbol would dock.
+  let hintFrame = 0
   const onDragOver = (e: DragEvent) => {
     if (e.dataTransfer?.types.includes(DRAG_MIME) || e.dataTransfer?.types.includes('Files')) {
       e.preventDefault()
@@ -156,14 +168,22 @@ export function attachDropHandling(host: HTMLElement, paper: dia.Paper): () => v
     // Connection dots come up across the sheet so the user can see what there
     // is to aim at, and the ring says which one is currently caught.
     paper.el.classList.add('pid-docking')
-    showDockHint(paper, previewDrop(payload, paper, e.clientX, e.clientY)?.dock?.at ?? null)
+    const { clientX, clientY } = e
+    if (hintFrame) return
+    hintFrame = requestAnimationFrame(() => {
+      hintFrame = 0
+      showDockHint(paper, previewDrop(payload, paper, clientX, clientY)?.dock?.at ?? null)
+    })
   }
   const onDragLeave = (e: DragEvent) => {
     const to = e.relatedTarget
     if (to instanceof Node && host.contains(to)) return
     clearPreview()
   }
-  const onDragEnd = () => clearPreview()
+  const onDragEnd = () => {
+    if (hintFrame) { cancelAnimationFrame(hintFrame); hintFrame = 0 }
+    clearPreview()
+  }
 
   const onDrop = (e: DragEvent) => {
     clearPreview()
@@ -189,6 +209,9 @@ export function attachDropHandling(host: HTMLElement, paper: dia.Paper): () => v
     // One batch either way: the symbol and the line it docked onto arrive
     // together, and one undo takes both back. addBatch selects the new node.
     store.addBatch([node], dock ? [{ ...dockEdge(id, dock), id: ulid() }] : [])
+    // Say so, plainly. A symbol dropped near a nozzle and a symbol dropped ONTO
+    // one look much the same once the drag ghost is gone.
+    if (dock) flashDockMade(paper, dock.at)
   }
 
   host.addEventListener('dragover', onDragOver)
@@ -196,6 +219,7 @@ export function attachDropHandling(host: HTMLElement, paper: dia.Paper): () => v
   host.addEventListener('drop', onDrop)
   window.addEventListener('dragend', onDragEnd)
   return () => {
+    if (hintFrame) { cancelAnimationFrame(hintFrame); hintFrame = 0 }
     clearPreview()
     host.removeEventListener('dragover', onDragOver)
     host.removeEventListener('dragleave', onDragLeave)

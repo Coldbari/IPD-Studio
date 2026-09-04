@@ -9,9 +9,10 @@ import type { PlantEdge, PlantNode } from '../model/types'
 import { isPortEnd } from '../model/types'
 import type { PortKind } from '../symbols/types'
 import { compatibleKinds, pickLineClass } from './connectionRules'
-import { alignNodes, distributeNodes, localPortPoint, portWorld, snapGuides } from './alignment'
-import { type Dock, dockEdge, dockKey, dockRadius, findDock, flashDockCut, showDockHint } from './autoConnect'
+import { alignNodes, buildSnapIndex, distributeNodes, localPortPoint, portWorld, snapGuides, type SnapIndex } from './alignment'
+import { type Dock, type DockIndex, buildDockIndex, dockEdge, dockKey, dockRadius, findDock, flashDockCut, flashDockMade, showDockHint } from './autoConnect'
 import { createShakeDetector } from './shake'
+import { attachCiteHighlight } from './cite'
 import { cleanVertices } from './vertexClean'
 import { makeLink } from './shapes'
 import { getSymbol } from '../symbols/registry'
@@ -262,9 +263,26 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
 
   // Port dots are hidden until they matter: hovering a symbol shows its own,
   // and holding a link drag ('pid-linking' on the paper root) shows them all.
-  const onMagnetDown = () => paper.el.classList.add('pid-linking')
+  /** Classes naming what the in-flight link is coming FROM, so CSS can ring
+   *  the ports it could legally reach. One class toggle instead of a sweep of
+   *  every magnet on the sheet — see markAvailable in paperSetup.ts. */
+  const LINK_SRC_CLASSES = ['pid-link-process', 'pid-link-signal', 'pid-link-both'] as const
+  /** The symbol the in-flight link left, so its OWN ports are not ringed as
+   *  targets — a line cannot connect a symbol to itself, and validateConnection
+   *  refuses it. */
+  let linkFrom: Element | null = null
+  const onMagnetDown = (view: dia.ElementView, _evt: dia.Event, magnet: SVGElement) => {
+    paper.el.classList.add('pid-linking')
+    const kind = portKindOf(view as dia.CellView, magnet)
+    if (!kind) return
+    paper.el.classList.add(`pid-link-${kind}`)
+    linkFrom = view.el
+    linkFrom.classList.add('pid-link-src')
+  }
   const onGlobalPointerUp = () => {
-    paper.el.classList.remove('pid-linking')
+    paper.el.classList.remove('pid-linking', ...LINK_SRC_CLASSES)
+    linkFrom?.classList.remove('pid-link-src')
+    linkFrom = null
     // A symbol drag is NOT over yet: this 'pointerup' lands before the
     // compatibility 'mouseup' JointJS listens on, so element:pointerup — which
     // commits the move and closes the docking gesture's undo group — still has
@@ -331,17 +349,57 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
   const dragStart = new Map<string, { x: number; y: number }>()
   /** Waypoints of the links moving rigidly with the drag, as they were at grab. */
   const dragStartVerts = new Map<string, { x: number; y: number }[]>()
-  const guideEls: SVGLineElement[] = []
-  const guideLayer = () => paper.svg.querySelector('.joint-layers') as SVGGElement | null
+
+  /**
+   * Geometry the drag reads on every pointermove but that does not move while
+   * one symbol is being dragged: the other symbols' boxes, their connection
+   * points, and which pairs are already joined. Rebuilt only when the sheet's
+   * node or edge array is replaced — the store is immutable, so identity is a
+   * complete change signal. Before this, both indexes were derived from
+   * scratch sixty-plus times a second.
+   */
+  let geom: { nodes: PlantNode[]; edges: PlantEdge[]; dock: DockIndex; snap: SnapIndex } | null = null
+  const geomFor = (sheet: { nodes: PlantNode[]; edges: PlantEdge[] }) => {
+    if (!geom || geom.nodes !== sheet.nodes || geom.edges !== sheet.edges) {
+      geom = {
+        nodes: sheet.nodes,
+        edges: sheet.edges,
+        dock: buildDockIndex(sheet.nodes, sheet.edges),
+        snap: buildSnapIndex(sheet.nodes, sheet.edges),
+      }
+    }
+    return geom
+  }
+
+  // Two reused <line> elements rather than create-and-remove per pointermove:
+  // the guides are the same two lines every frame, and churning SVG nodes
+  // inside the drag loop is pure garbage.
+  let layerEl: SVGGElement | null = null
+  const guideLayer = () => (layerEl ??= paper.svg.querySelector('.joint-layers') as SVGGElement | null)
+  const guides: Record<'v' | 'h', SVGLineElement | null> = { v: null, h: null }
+  const guideFor = (axis: 'v' | 'h'): SVGLineElement | null => {
+    const existing = guides[axis]
+    if (existing?.isConnected) return existing
+    const layer = guideLayer()
+    if (!layer) return null
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+    line.setAttribute('stroke', '#2b6cb0')
+    line.setAttribute('stroke-width', '0.75')
+    line.setAttribute('stroke-dasharray', '4 3')
+    line.setAttribute('pointer-events', 'none')
+    line.setAttribute('display', 'none')
+    layer.appendChild(line)
+    guides[axis] = line
+    return line
+  }
   const clearGuides = () => {
-    guideEls.forEach((g) => g.remove())
-    guideEls.length = 0
+    guides.v?.setAttribute('display', 'none')
+    guides.h?.setAttribute('display', 'none')
   }
   const drawGuide = (vertical: boolean, at: number) => {
-    const layer = guideLayer()
-    if (!layer) return
+    const line = guideFor(vertical ? 'v' : 'h')
+    if (!line) return
     const size = paper.getComputedSize()
-    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
     if (vertical) {
       line.setAttribute('x1', String(at)); line.setAttribute('x2', String(at))
       line.setAttribute('y1', '0'); line.setAttribute('y2', String(size.height))
@@ -349,12 +407,7 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
       line.setAttribute('y1', String(at)); line.setAttribute('y2', String(at))
       line.setAttribute('x1', '0'); line.setAttribute('x2', String(size.width))
     }
-    line.setAttribute('stroke', '#2b6cb0')
-    line.setAttribute('stroke-width', '0.75')
-    line.setAttribute('stroke-dasharray', '4 3')
-    line.setAttribute('pointer-events', 'none')
-    layer.appendChild(line)
-    guideEls.push(line)
+    line.setAttribute('display', '')
   }
   /** Grid/guide-resolved landing position for a node dragged to `p`. */
   const landing = (hit: ReturnType<typeof snapGuides>, p: { x: number; y: number }) => ({
@@ -404,18 +457,54 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
     return Math.hypot(port.x - dock.portAt.x, port.y - dock.portAt.y) <= dockRadius(paper.scale().sx)
   }
 
-  /** Cut the line this drag docked and let the user aim somewhere else. */
-  const cutLive = () => {
-    if (!live) return
-    refused.add(dockKey(live.dock))
-    flashDockCut(paper, live.dock.at)
-    store().deleteIds([live.edgeId])
+  /** Shared tail of both kinds of shake-off. */
+  const afterCut = () => {
     live = null
     holding = false
     cut = true
     dockAgainAt = Date.now() + SHAKE_COOLOFF_MS
     shake.reset()
     showDockHint(paper, null)
+  }
+
+  /**
+   * Shake the symbol free.
+   *
+   * If this drag made a line, that is the one the user is rejecting. If it
+   * didn't, they are shaking a symbol that arrived already wired up — so the
+   * gesture takes off every line it has, which is the only way to unpick a
+   * connection without hunting for the line itself and pressing Delete.
+   *
+   * Either way the symbol stays in hand, and nothing it was just freed from
+   * can re-catch it for the rest of the drag.
+   */
+  const shakeOff = (node: PlantNode): void => {
+    if (live) {
+      refused.add(dockKey(live.dock))
+      flashDockCut(paper, live.dock.at)
+      store().deleteIds([live.edgeId])
+      return afterCut()
+    }
+    const attached = activeSheet(store()).edges.filter(
+      (e) =>
+        (isPortEnd(e.source) && e.source.nodeId === node.id) ||
+        (isPortEnd(e.target) && e.target.nodeId === node.id),
+    )
+    if (!attached.length) return
+    for (const e of attached) {
+      const mine = isPortEnd(e.source) && e.source.nodeId === node.id ? e.source : e.target
+      const far = mine === e.source ? e.target : e.source
+      if (isPortEnd(far)) refused.add(far.nodeId)
+      if (isPortEnd(mine)) {
+        const at = portWorld(node, mine.portId)
+        if (at) flashDockCut(paper, at)
+      }
+    }
+    // No dockNode opened an undo group this drag, so this delete opens it:
+    // it records the wired-up state, then the rest of the drag folds in.
+    store().deleteIds(attached.map((e) => e.id))
+    pauseHistory()
+    afterCut()
   }
 
   const onElementPointerMove = (view: dia.ElementView, evt: dia.Event) => {
@@ -441,7 +530,8 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
         link?.vertices(v0.map((p) => ({ x: p.x + dx, y: p.y + dy })))
       }
     }
-    const hit = snapGuides({ ...node, x: p.x, y: p.y }, sheet.nodes, 4, sheet.edges)
+    const ix = geomFor(sheet)
+    const hit = snapGuides({ ...node, x: p.x, y: p.y }, sheet.nodes, 4, sheet.edges, 8, ix.snap)
     if (hit.guideX !== undefined) drawGuide(true, hit.guideX)
     if (hit.guideY !== undefined) drawGuide(false, hit.guideY)
 
@@ -453,8 +543,8 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
     paper.el.classList.add('pid-docking')
 
     const pointer = (evt.originalEvent ?? evt) as { clientX?: number; clientY?: number }
-    if (live && shake.push(pointer.clientX ?? p.x, pointer.clientY ?? p.y, Date.now())) {
-      cutLive()
+    if (shake.push(pointer.clientX ?? p.x, pointer.clientY ?? p.y, Date.now())) {
+      shakeOff(node)
       return
     }
 
@@ -476,6 +566,7 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
       store().activeLineClass,
       dockRadius(paper.scale().sx),
       refused,
+      ix.dock,
     )
     showDockHint(paper, dock?.at ?? null)
     if (!dock) {
@@ -488,6 +579,7 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
     pauseHistory()
     holding = true
     view.model.position(dock.x, dock.y)
+    flashDockMade(paper, dock.at)
   }
 
   const onElementPointerDownPos = (view: dia.ElementView) => {
@@ -534,7 +626,8 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
     const p = view.model.position()
     const sheet = activeSheet(store())
     const node = sheet.nodes.find((n) => n.id === id)
-    const hit = node ? snapGuides({ ...node, x: p.x, y: p.y }, sheet.nodes, 4, sheet.edges) : {}
+    const upIx = geomFor(sheet)
+    const hit = node ? snapGuides({ ...node, x: p.x, y: p.y }, sheet.nodes, 4, sheet.edges, 8, upIx.snap) : {}
     // A magnet still holding at release keeps the spot it clicked into.
     const { x: nx, y: ny } =
       docked && wasHolding ? { x: docked.dock.x, y: docked.dock.y } : landing(hit, p)
@@ -550,6 +643,8 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
         sheet.edges,
         store().activeLineClass,
         dockRadius(paper.scale().sx),
+        undefined,
+        upIx.dock,
       )
       if (dock) {
         store().dockNode(id, dock.x, dock.y, dockEdge(id, dock))
@@ -604,50 +699,101 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
   }
 
   // --- selection highlight + link tools -----------------------------------
+  //
+  // This used to walk EVERY cell in the graph on EVERY store change: the
+  // subscription had no selector, so a node move, a tag keystroke, an autosave
+  // flag — anything at all — swept the whole drawing asking each cell whether
+  // its highlighter matched. Selection is a diff, so it is applied as one:
+  // only the ids that entered or left the selection are touched.
   const HIGHLIGHT = 'pid-selection'
-  const syncSelection = () => {
-    // pin-arming shows every connection dot and a crosshair cursor
-    paper.el.classList.toggle('pid-pinning', Boolean(store().armPin))
-    const sel = new Set(store().selection)
-    for (const cell of graph.getCells()) {
-      const view = cell.findView(paper)
-      if (!view) continue
-      const has = highlighters.stroke.get(view, HIGHLIGHT)
-      if (sel.has(String(cell.id)) && !has) {
-        highlighters.stroke.add(view, cell.isLink() ? { selector: 'line' } : { selector: 'root' }, HIGHLIGHT, {
-          padding: 4,
-          attrs: { stroke: '#2b6cb0', 'stroke-width': 2, 'stroke-opacity': 0.7 },
-        })
-        if (cell.isLink()) {
-          ;(view as dia.LinkView).addTools(
-            new dia.ToolsView({
-              tools: [
-                new linkTools.Vertices({ snapRadius: 8 }),
-                // drag a whole run sideways — the natural way to arrange a line
-                new linkTools.Segments({ snapRadius: 8 }),
-                new linkTools.SourceArrowhead(),
-                new linkTools.TargetArrowhead(),
-                new linkTools.Remove({
-                  distance: '25%',
-                  // the default action removes only the JointJS cell; the doc
-                  // would keep the edge and the next reconcile would resurrect
-                  // the "deleted" line — deletion must go through the store
-                  action: (_evt: dia.Event, toolView: dia.LinkView) => {
-                    store().deleteIds([String(toolView.model.id)])
-                    store().setSelection([])
-                  },
-                }),
-              ],
-            }),
-          )
-        }
-      } else if (!sel.has(String(cell.id)) && has) {
-        highlighters.stroke.remove(view, HIGHLIGHT)
-        if (cell.isLink()) (view as dia.LinkView).removeTools()
-      }
+
+  const linkToolsFor = () =>
+    new dia.ToolsView({
+      tools: [
+        new linkTools.Vertices({ snapRadius: 8 }),
+        // drag a whole run sideways — the natural way to arrange a line
+        new linkTools.Segments({ snapRadius: 8 }),
+        new linkTools.SourceArrowhead(),
+        new linkTools.TargetArrowhead(),
+        new linkTools.Remove({
+          distance: '25%',
+          // the default action removes only the JointJS cell; the doc would
+          // keep the edge and the next reconcile would resurrect the "deleted"
+          // line — deletion must go through the store
+          action: (_evt: dia.Event, toolView: dia.LinkView) => {
+            store().deleteIds([String(toolView.model.id)])
+            store().setSelection([])
+          },
+        }),
+      ],
+    })
+
+  /** Show the selection ring on one cell. Returns false when the cell has no
+   *  rendered view yet — the async paper may not have drawn it. */
+  const showOn = (id: string): boolean => {
+    const cell = graph.getCell(id)
+    if (!cell) return true // nothing to draw on; not a pending render
+    const view = cell.findView(paper)
+    if (!view) return false
+    if (!highlighters.stroke.get(view, HIGHLIGHT)) {
+      highlighters.stroke.add(view, cell.isLink() ? { selector: 'line' } : { selector: 'root' }, HIGHLIGHT, {
+        padding: 4,
+        attrs: { stroke: '#2b6cb0', 'stroke-width': 2, 'stroke-opacity': 0.7 },
+      })
     }
+    // Checked separately from the ring on purpose. A link view can lose its
+    // tools and keep its highlighter — a re-render, or being unmounted and
+    // brought back by viewport culling — and a single "already highlighted"
+    // early return then leaves a selected line with no ✕ and no segment
+    // handles for the rest of the session.
+    const link = cell.isLink() ? (view as dia.LinkView) : null
+    if (link && !link.hasTools()) link.addTools(linkToolsFor())
+    return true
   }
+
+  const hideOn = (id: string): void => {
+    const cell = graph.getCell(id)
+    const view = cell?.findView(paper)
+    if (!view) return
+    if (highlighters.stroke.get(view, HIGHLIGHT)) highlighters.stroke.remove(view, HIGHLIGHT)
+    if (cell!.isLink()) (view as dia.LinkView).removeTools()
+  }
+
+  let shownSel: readonly string[] = []
+  let shownArm: string | null = null
+  const syncSelection = () => {
+    const s = store()
+    if (s.armPin !== shownArm) {
+      shownArm = s.armPin
+      // pin-arming shows every connection dot and a crosshair cursor
+      paper.el.classList.toggle('pid-pinning', Boolean(shownArm))
+    }
+    if (s.selection === shownSel) return
+    const next = new Set(s.selection)
+    const prev = new Set(shownSel)
+    for (const id of shownSel) if (!next.has(id)) hideOn(id)
+    for (const id of s.selection) if (!prev.has(id)) showOn(id)
+    shownSel = s.selection
+  }
+
+  // The async paper draws a cell a frame or two after the store selects it,
+  // and a cell removed and restored (undo) comes back without its ring. Both
+  // are repaired by re-checking the CURRENT selection — a handful of ids —
+  // rather than by sweeping the drawing.
+  const repairSelection = () => {
+    for (const id of shownSel) showOn(id)
+  }
+
   const unsubSelection = useStore.subscribe(syncSelection)
+  // The assistant's citation channel, alongside the user's selection and
+  // never instead of it. See canvas/cite.ts.
+  const detachCite = attachCiteHighlight(paper, graph)
+  const onCellAdded = (cell: dia.Cell) => {
+    if (shownSel.includes(String(cell.id))) showOn(String(cell.id))
+  }
+  paper.on('render:done', repairSelection)
+  graph.on('add', onCellAdded)
+  syncSelection()
 
   // --- keyboard -----------------------------------------------------------
   const onKeyDown = (e: KeyboardEvent) => {
@@ -710,11 +856,12 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
     }
   }
 
-  paper.on('element:pointerdown', (v: dia.ElementView, e: dia.Event, x: number, y: number) => {
+  const onPointerDownAny = (v: dia.ElementView, e: dia.Event, x: number, y: number) => {
     if (placePin(v, x, y)) return
     onElementPointerDown(v, e)
     onElementPointerDownPos(v)
-  })
+  }
+  paper.on('element:pointerdown', onPointerDownAny)
   paper.on('element:pointermove', onElementPointerMove)
   paper.on('element:pointerup', onElementPointerUp)
   paper.on('element:magnet:pointerdown', onMagnetDown)
@@ -730,16 +877,24 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
     clearGuides()
     endDockGesture()
     unsubSelection()
+    detachCite()
     window.removeEventListener('keydown', onKeyDown)
     window.removeEventListener('pointerup', onGlobalPointerUp)
-    paper.off('element:magnet:pointerdown')
-    paper.off('element:pointerdown')
-    paper.off('element:pointermove')
-    paper.off('element:pointerup')
-    paper.off('link:pointerdown')
-    paper.off('link:pointerup')
-    paper.off('blank:pointerdown')
-    graph.off('change:vertices')
+    // Every one of these names the handler it is taking off. Backbone's
+    // off(name) with no callback removes EVERY listener on that event —
+    // including JointJS's own ('add' is how the paper learns about new cells)
+    // and this module's neighbours (the marquee also listens on
+    // 'blank:pointerdown', the jumpover index on 'change:vertices').
+    paper.off('render:done', repairSelection)
+    paper.off('element:magnet:pointerdown', onMagnetDown)
+    paper.off('element:pointerdown', onPointerDownAny)
+    paper.off('element:pointermove', onElementPointerMove)
+    paper.off('element:pointerup', onElementPointerUp)
+    paper.off('link:pointerdown', onLinkPointerDown)
+    paper.off('link:pointerup', onLinkPointerUp)
+    paper.off('blank:pointerdown', onBlankPointerDown)
+    graph.off('add', onCellAdded)
+    graph.off('change:vertices', onLinkChangeVertices)
     graph.off('batch:stop', onBatchStop)
   }
 }

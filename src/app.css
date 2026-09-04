@@ -250,18 +250,35 @@ button { font: inherit; }
    both. */
 .pid-port-dot { fill: #fff; stroke: #93a4bd; stroke-width: 1.2; opacity: 0; transition: opacity 0.12s; }
 .joint-element:hover .pid-port-dot { opacity: 1; stroke: #2b6cb0; fill: #dbeafe; r: 4px; }
-.pid-linking .pid-port-dot { opacity: 1; }
+/* Revealing EVERY dot on the sheet at once — a link drag, pin-arming, or a
+   symbol drag looking for somewhere to dock — must not animate. Transitioning
+   a few thousand SVG circles is a whole-document style recalculation and
+   repaint, and it lands on exactly the frame the drag needed. Hovering one
+   symbol still fades its own dots in: that is a handful of elements. */
+.pid-linking .pid-port-dot { opacity: 1; transition: none; }
 /* pin-arming: crosshair + all dots visible so the user can aim the new pin */
-.pid-pinning .pid-port-dot { opacity: 1; }
+.pid-pinning .pid-port-dot { opacity: 1; transition: none; }
 .pid-pinning [joint-selector='hit'] { cursor: crosshair !important; }
 .arm-on { background: #dbeafe !important; border-color: #2b6cb0 !important; color: #2b6cb0; }
 .pid-port-hit:hover { fill: rgba(43, 108, 176, 0.22); stroke: #2b6cb0; }
-/* While dragging a link, every legal target port shows a slim ring. */
+/* While dragging a link, every legal target port shows a slim ring.
+   Which ports are legal follows from the kind of port the line LEFT, so the
+   paper root carries that kind and each port carries its own: the style engine
+   does the matching. JointJS's markAvailable does the same job by walking
+   every cell, querying its magnets and building two highlighter views per
+   magnet on mousedown — 40-60 ms on a large sheet, for a ring. */
+.pid-link-process .joint-element:not(.pid-link-src) .pid-kind-process,
+.pid-link-process .joint-element:not(.pid-link-src) .pid-kind-both,
+.pid-link-signal .joint-element:not(.pid-link-src) .pid-kind-signal,
+.pid-link-signal .joint-element:not(.pid-link-src) .pid-kind-both,
+.pid-link-both .joint-element:not(.pid-link-src) .pid-kind-process,
+.pid-link-both .joint-element:not(.pid-link-src) .pid-kind-signal,
+.pid-link-both .joint-element:not(.pid-link-src) .pid-kind-both,
 .pid-port-hit.available-magnet { fill: rgba(43, 108, 176, 0.12); stroke: #2b6cb0; stroke-width: 1.25; r: 5px; }
 /* Magnetic docking: dragging a symbol (from the palette or across the sheet)
    raises every connection dot, and a ring marks the point it will click onto
    and connect to when the drag is released. */
-.pid-docking .pid-port-dot { opacity: 1; }
+.pid-docking .pid-port-dot { opacity: 1; transition: none; }
 .pid-dock-hint {
   fill: rgba(43, 108, 176, 0.2);
   stroke: #2b6cb0;
@@ -271,6 +288,20 @@ button { font: inherit; }
 }
 @keyframes pid-dock-pulse {
   50% { fill: rgba(43, 108, 176, 0.38); r: 8.5px; }
+}
+/* Connected: a green flash the instant a line is made, so the user never has
+   to drag the symbol away to find out whether it caught. */
+.pid-dock-made {
+  fill: none;
+  stroke: #2f855a;
+  stroke-width: 2.5;
+  pointer-events: none;
+  animation: pid-dock-made 0.45s ease-out forwards;
+}
+@keyframes pid-dock-made {
+  from { r: 16px; opacity: 0; }
+  40% { opacity: 1; }
+  to { r: 5px; opacity: 0.9; }
 }
 /* Shake-to-cut: a red flash where the line the drag just made used to land. */
 .pid-dock-cut {
@@ -288,6 +319,7 @@ button { font: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .pid-dock-hint { animation: none; }
   .pid-dock-cut { animation: none; r: 10px; }
+  .pid-dock-made { animation: none; r: 10px; opacity: 0.9; }
 }
 
 /* --- quick line editor ---------------------------------------------------- */
@@ -481,7 +513,187 @@ button { font: inherit; }
 }
 .version-chip:disabled { cursor: default; opacity: .7; }
 .hmi-status .version-chip { color: inherit; opacity: .75; }
-.hmi-status .version-chip:hover:not(:disabled) { opacity: 1; background: rgba(255, 255, 255, .12); border-color: transparent; }
+.hmi-status .version-chip:hover:not(:disabled) { opacity: 1; background: var(--c-surface); border-color: var(--c-line); }
+
+/* Feedback: the second app-level chip. Same pill as .version-chip on purpose —
+   these two are the only controls in either status bar that are about IPD
+   Studio rather than about the drawing, and a second shape 8px away would read
+   as a second kind of thing. Not a .budget-chip: that one is a live readout
+   with a value in it and earned its border by turning red. */
+.feedback-chip {
+  border: 1px solid transparent; background: none;
+  padding: 1px 6px; border-radius: 999px;
+  font: inherit; font-size: 11px; color: var(--c-ink-3);
+  cursor: pointer; white-space: nowrap;
+}
+.feedback-chip:hover { color: var(--c-ink); border-color: var(--c-line); background: var(--c-surface); }
+/* The status bar is the last stop on the Tab order and the UA default outline
+   disappears against --c-chrome, so both chips get a ring of their own. */
+.feedback-chip:focus-visible,
+.version-chip:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; }
+.hmi-status .feedback-chip { color: inherit; opacity: .8; }
+.hmi-status .feedback-chip:hover { opacity: 1; background: var(--c-surface); border-color: var(--c-line); }
+
+/* ── feedback dialog ─────────────────────────────────────────────────────── */
+.fb { display: flex; flex-direction: column; gap: 12px; }
+.fb-lead { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--c-ink-2); }
+.fb-k { font-size: 10px; letter-spacing: .09em; text-transform: uppercase; color: var(--c-ink-3); }
+.fb-hint { font-size: 10.5px; line-height: 1.4; color: var(--c-ink-3); }
+.fb-fine { margin: 0; font-size: 10.5px; line-height: 1.45; color: var(--c-ink-3); }
+.fb-err { font-size: 11.5px; color: var(--c-bad); }
+
+/* Type: real radios wearing a segmented control. The browser already ships the
+   arrow-key roving, the single tab stop and the "1 of 2" announcement that a
+   role="radiogroup" would have to hand-roll — so keep the semantics and change
+   only the paint, borrowing the selected treatment the workspace tabs use. */
+.fb-seg { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.fb-seg legend { padding: 0; }
+.fb-seg-row { display: flex; gap: 3px; }
+.fb-seg-opt { flex: 1; }
+/* clip-path, not display:none — a hidden radio stays focusable and announced,
+   which is the whole reason for using native radios here. */
+.fb-seg-opt input {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  padding: 0; border: 0; overflow: hidden; clip-path: inset(50%);
+}
+.fb-seg-opt span {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  height: 30px; padding: 0 10px;
+  border: 1px solid var(--c-line); border-radius: var(--r);
+  background: var(--c-surface); color: var(--c-ink-2);
+  font-size: 12.5px; cursor: pointer; user-select: none;
+}
+.fb-seg-opt:hover span { border-color: #bcc6cd; background: var(--c-accent-soft); }
+.fb-seg-opt input:checked + span {
+  background: var(--c-accent-soft); border-color: #bcc6cd;
+  color: var(--c-accent); font-weight: 600;
+}
+.fb-seg-opt input:focus-visible + span { outline: 2px solid var(--c-accent); outline-offset: 1px; }
+
+.fb-field { display: flex; flex-direction: column; gap: 3px; }
+.fb-label { display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--c-ink-2); }
+.fb-count { margin-left: auto; font-size: 10.5px; color: var(--c-ink-3); font-variant-numeric: tabular-nums; }
+.fb-count-near { color: var(--c-warn); }
+.fb-count-over { color: var(--c-bad); font-weight: 700; }
+.fb-field input, .fb-field textarea {
+  width: 100%; font: inherit; font-size: 13px; padding: 6px 8px;
+  border: 1px solid var(--c-line); border-radius: var(--r);
+  background: var(--c-surface); color: var(--c-ink);
+}
+.fb-field textarea { min-height: 120px; resize: vertical; line-height: 1.5; }
+.fb-field input:focus-visible, .fb-field textarea:focus-visible {
+  outline: 2px solid var(--c-accent); outline-offset: -1px; border-color: var(--c-accent);
+}
+.fb-field input[aria-invalid="true"], .fb-field textarea[aria-invalid="true"] { border-color: var(--c-bad); }
+
+.fb-shot { display: flex; flex-direction: column; gap: 6px; }
+.fb-shot-head { display: flex; align-items: baseline; gap: 6px; }
+.fb-opt { font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--c-ink-3); }
+.fb-file { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); }
+.fb-drop {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  width: 100%; min-height: 84px; padding: 12px;
+  border: 1px dashed var(--c-line); border-radius: var(--r);
+  background: none; font: inherit; font-size: 12.5px; color: var(--c-ink-2); cursor: pointer;
+}
+.fb-drop:hover { border-style: solid; border-color: var(--c-accent); color: var(--c-accent); background: var(--c-surface); }
+.fb-drop:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; }
+/* A file drag never fires :hover, so the dashed box has to be told separately
+   that something is over it — otherwise the one moment the target most needs
+   to look live is the one moment it looks dead. */
+.fb-drop-over {
+  border-style: solid; border-color: var(--c-accent);
+  background: var(--c-accent-soft); color: var(--c-accent);
+}
+.fb-drop-sub { font-size: 10.5px; color: var(--c-ink-3); }
+.fb-capture {
+  align-self: flex-start; padding: 4px 10px;
+  border: 1px solid var(--c-line); border-radius: var(--r); background: var(--c-surface);
+  font: inherit; font-size: 12px; cursor: pointer; color: var(--c-ink);
+}
+.fb-capture:hover:not(:disabled) { border-color: var(--c-accent); color: var(--c-accent); }
+.fb-capture:disabled { opacity: .5; cursor: default; }
+.fb-warn { margin: 0; font-size: 11px; color: var(--c-warn); }
+
+.fb-preview {
+  display: flex; gap: 10px; padding: 8px;
+  border: 1px solid var(--c-line); border-radius: var(--r); background: var(--c-panel);
+}
+/* top-left, not centre: the top-left of a screenshot is the app chrome, which
+   is what makes it recognisable at thumbnail size. */
+.fb-preview img {
+  width: 132px; height: 84px; flex: none;
+  object-fit: cover; object-position: top left;
+  border: 1px solid var(--c-line-soft); border-radius: 3px; background: var(--c-surface);
+}
+.fb-preview-meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.fb-preview-name { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-preview-dims { font-size: 10.5px; color: var(--c-ink-3); font-variant-numeric: tabular-nums; }
+.fb-preview-btns { display: flex; gap: 6px; margin-top: auto; }
+.fb-preview-btns button {
+  padding: 2px 9px; border: 1px solid var(--c-line); border-radius: 4px;
+  background: var(--c-surface); font: inherit; font-size: 11px; cursor: pointer; color: var(--c-ink-2);
+}
+.fb-preview-btns button:hover { border-color: var(--c-accent); color: var(--c-accent); }
+
+.fb-ctx { border: 1px solid var(--c-line-soft); border-radius: var(--r); background: var(--c-panel); }
+.fb-ctx > summary { padding: 6px 10px; font-size: 11.5px; color: var(--c-ink-2); cursor: pointer; list-style: none; }
+.fb-ctx > summary::-webkit-details-marker { display: none; }
+.fb-ctx > summary::before { content: '▸ '; color: var(--c-ink-3); }
+.fb-ctx[open] > summary::before { content: '▾ '; }
+.fb-ctx dl {
+  display: grid; grid-template-columns: 96px 1fr; gap: 2px 10px;
+  margin: 0; padding: 2px 10px 6px; font-size: 11.5px;
+}
+.fb-ctx dt { color: var(--c-ink-3); }
+.fb-ctx dd { margin: 0; color: var(--c-ink-2); }
+.fb-ctx p { margin: 0; padding: 0 10px 8px; font-size: 10.5px; color: var(--c-ink-3); }
+
+.fb-live { display: flex; flex-direction: column; }
+.fb-status { margin: 0; font-size: 12px; line-height: 1.4; color: var(--c-ink-2); }
+/* Collapsed, NOT display:none. A live region has to be in the accessibility
+   tree before its text is inserted or the announcement is unreliable, and
+   display:none takes it out; a zero-height overflow-hidden box does not. */
+.fb-status:empty { height: 0; overflow: hidden; }
+.fb-status.bad { color: var(--c-bad); }
+/* Busy dims the whole card, not just the button: a form that still takes
+   typing while it sends invites an edit that will not be in what was sent. */
+.fb-busy { opacity: .55; pointer-events: none; }
+
+/* The form is taller than the card on a laptop, so the actions and the alert
+   ride along at the bottom of the scroll instead of waiting below the fold.
+   bottom: -16px cancels .datasheet-body's bottom padding, and the matching
+   padding here fills the strip so nothing scrolls through underneath. */
+.fb-actions {
+  position: sticky; bottom: -16px; z-index: 1;
+  display: flex; flex-direction: column; gap: 8px;
+  padding-bottom: 16px; background: var(--c-surface);
+}
+.fb-foot { display: flex; gap: 8px; align-items: flex-end; padding-top: 10px; border-top: 1px solid var(--c-line-soft); }
+.fb-foot .fb-fine { flex: 1; }
+.fb-cancel {
+  white-space: nowrap; padding: 7px 12px;
+  border: 1px solid var(--c-line); border-radius: var(--r); background: var(--c-surface);
+  font: inherit; font-size: 13px; cursor: pointer; color: var(--c-ink-2);
+}
+.fb-cancel:hover:not(:disabled) { background: var(--c-accent-soft); border-color: #bcc6cd; }
+.fb-send {
+  white-space: nowrap; padding: 7px 16px;
+  border: 1px solid var(--c-accent); border-radius: var(--r);
+  background: var(--c-accent); color: #fff;
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.fb-send:hover:not(:disabled) { background: #0b5a64; border-color: #0b5a64; }
+.fb-send:disabled { opacity: .5; cursor: default; }
+
+.fb-done { display: flex; flex-direction: column; gap: 8px; padding: 6px 0 2px; }
+.fb-done h3 { margin: 0; font-size: 14px; font-weight: 700; color: var(--c-ink); }
+.fb-done p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--c-ink-2); }
+.fb-ref {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  background: var(--c-accent-soft); color: var(--c-accent); border-radius: 3px; padding: 1px 5px;
+}
+.fb-done-btns { display: flex; gap: 8px; margin-top: 4px; }
 
 /* ── workspace shell ──────────────────────────────────────────────────────
    The rail is the editor's top-level navigation. It sits outside .app so it
@@ -658,3 +870,92 @@ button.used-row:hover { background: var(--c-accent-soft); color: var(--c-accent)
 .ws-ignored .ws-group { margin-top: 8px; }
 .drawer-group.sev-critical { color: var(--c-bad); }
 .drawer-group.sev-warning { color: var(--c-warn); }
+
+/* --- Right column: properties and assistant share one 288px column ------- */
+.right-col { grid-area: props; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--c-line); }
+.right-col > .props, .right-col > .assist { flex: 1; min-height: 0; border-left: none; }
+.right-tabs { display: flex; gap: 2px; padding: 5px 8px 0; background: var(--c-chrome); border-bottom: 1px solid var(--c-line-soft); flex: none; }
+.right-tabs button {
+  flex: 1; height: 24px; border: 1px solid var(--c-line); border-bottom: none; background: #dfe2e7;
+  color: var(--c-ink-2); border-radius: var(--r) var(--r) 0 0; cursor: pointer; font: inherit; font-size: 12px;
+}
+.right-tabs button:hover { background: #e9ebef; }
+.right-tabs button.on { background: var(--c-panel); color: var(--c-ink); font-weight: 600; }
+
+/* --- Assistant ----------------------------------------------------------- */
+.assist { display: flex; flex-direction: column; min-height: 0; background: var(--c-panel); overflow: hidden; }
+.assist-context { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 6px 10px; background: var(--c-chrome-2); border-bottom: 1px solid var(--c-line-soft); flex: none; }
+.assist-chip { font-size: 11px; padding: 2px 7px; border-radius: 10px; background: var(--c-surface); border: 1px solid var(--c-line); color: var(--c-ink-2); }
+.assist-chip.subject { border-color: var(--c-accent); color: var(--c-accent); font-weight: 600; }
+.assist-chip.warn { border-color: #b7791f; color: #b7791f; }
+.assist-muted { font-size: 11.5px; color: var(--c-ink-3); }
+.assist-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px 14px; }
+
+.assist-asked { font-size: 11px; color: var(--c-ink-3); margin-bottom: 3px; }
+.assist-headline { margin: 0 0 8px; font-size: 12.5px; line-height: 1.45; }
+.assist-gap { font-size: 12px; line-height: 1.45; padding: 7px 9px; border-left: 3px solid #b7791f; background: #fffaf0; margin-bottom: 8px; }
+.assist-gap code { font-size: 11px; }
+
+.assist-showall { display: block; width: 100%; margin-bottom: 5px; padding: 4px; border: 1px dashed var(--c-line); border-radius: var(--r); background: none; font: inherit; font-size: 11.5px; color: var(--c-ink-2); cursor: pointer; }
+.assist-showall:hover { border-style: solid; border-color: var(--c-accent); color: var(--c-accent); background: var(--c-surface); }
+
+.assist-rows { list-style: none; margin: 0; padding: 0; }
+.assist-row { display: flex; gap: 8px; align-items: baseline; width: 100%; text-align: left; border: none; background: none; padding: 4px 6px; border-radius: 3px; cursor: pointer; font: inherit; font-size: 12px; }
+.assist-row:hover { background: var(--c-accent-soft); }
+.assist-ref { font-weight: 600; color: var(--c-ink); }
+.assist-row.warn .assist-ref { color: #b7791f; }
+.assist-row.gap .assist-ref { color: var(--c-ink-2); }
+.assist-note { font-size: 11px; color: var(--c-ink-3); }
+
+.assist-suggest { display: flex; flex-direction: column; gap: 3px; margin-top: 12px; font-size: 11px; color: var(--c-ink-3); }
+.assist-sugg { text-align: left; border: 1px solid var(--c-line); border-radius: var(--r); background: var(--c-surface); padding: 5px 8px; cursor: pointer; font: inherit; font-size: 12px; color: var(--c-ink); }
+.assist-sugg:hover { border-color: var(--c-accent); color: var(--c-accent); }
+
+.assist-composer { display: flex; gap: 5px; padding: 7px 8px; border-top: 1px solid var(--c-line); background: var(--c-chrome-2); flex: none; }
+.assist-composer input { flex: 1; min-width: 0; height: 26px; padding: 0 8px; border: 1px solid var(--c-line); border-radius: var(--r); font: inherit; font-size: 12px; }
+.assist-composer button { height: 26px; padding: 0 11px; border: 1px solid var(--c-line); border-radius: var(--r); background: var(--c-surface); cursor: pointer; font: inherit; font-size: 12px; }
+.assist-composer button:disabled { opacity: .5; cursor: default; }
+
+.prop-note { margin: 4px 0 8px; font-size: 12px; line-height: 1.45; color: var(--c-ink-2); }
+
+/* --- Assistant: model setup and consent ---------------------------------- */
+.assist-setup { border: 1px solid var(--c-line); border-radius: var(--r); padding: 8px 10px; margin-bottom: 10px; background: var(--c-surface); }
+.assist-setup input[type="password"] { width: 100%; height: 26px; padding: 0 8px; margin: 4px 0; border: 1px solid var(--c-line); border-radius: var(--r); font: inherit; font-size: 12px; }
+.assist-ack { display: flex; gap: 6px; align-items: flex-start; font-size: 11.5px; line-height: 1.4; margin: 6px 0; color: var(--c-ink-2); }
+.assist-ack input { margin-top: 2px; }
+.assist-consent { border: 1px solid #b7791f; border-left-width: 3px; border-radius: var(--r); padding: 8px 10px; margin-top: 8px; background: #fffaf0; font-size: 12px; }
+.assist-consent p { margin: 4px 0 8px; line-height: 1.45; }
+.assist-models { margin: 6px 0; }
+.assist-models select { width: 100%; height: 26px; margin-top: 4px; border: 1px solid var(--c-line); border-radius: var(--r); font: inherit; font-size: 12px; background: var(--c-surface); }
+
+/* --- Assistant: conversation thread -------------------------------------- */
+.assist-thread { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.assist-intro { font-size: 12.5px; line-height: 1.5; color: var(--c-ink-2); }
+.assist-intro p { margin: 0 0 6px; }
+
+.bubble { max-width: 92%; padding: 7px 10px; border-radius: 12px; font-size: 12.5px; line-height: 1.5; }
+.bubble.user { align-self: flex-end; background: var(--c-accent); color: #fff; border-bottom-right-radius: 3px; white-space: pre-wrap; }
+.bubble.assistant { align-self: flex-start; background: var(--c-surface); border: 1px solid var(--c-line); border-bottom-left-radius: 3px; }
+.bubble-text { margin: 0; white-space: pre-wrap; }
+.bubble .assist-rows { margin-top: 6px; }
+.bubble .assist-gap { margin-top: 6px; }
+
+/* three-dot typing indicator */
+.assist-typing { display: inline-flex; gap: 3px; padding: 2px 0; }
+.assist-typing i { width: 5px; height: 5px; border-radius: 50%; background: var(--c-ink-3); animation: assist-blink 1.2s infinite ease-in-out; }
+.assist-typing i:nth-child(2) { animation-delay: .18s; }
+.assist-typing i:nth-child(3) { animation-delay: .36s; }
+@keyframes assist-blink { 0%, 60%, 100% { opacity: .25 } 30% { opacity: 1 } }
+
+.assist-trace { margin-top: 6px; font-size: 11px; color: var(--c-ink-3); }
+.assist-trace summary { cursor: pointer; }
+.assist-trace ul { margin: 4px 0 0; padding-left: 16px; }
+
+/* --- Resizable right column ---------------------------------------------- */
+.right-col { position: relative; }
+.col-grip { position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 5; touch-action: none; }
+.col-grip::after { content: ''; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px; background: transparent; transition: background .12s; }
+.col-grip:hover::after, .col-grip:active::after { background: var(--c-accent); }
+.assist-free { font-size: 11.5px; line-height: 1.5; padding: 7px 9px; margin: 6px 0; border-left: 3px solid #2f855a; background: #f0fff4; border-radius: 0 var(--r) var(--r) 0; }
+.assist-free code { font-size: 11px; }
+.assist-free a { color: #2f855a; font-weight: 600; }

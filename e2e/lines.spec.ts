@@ -139,6 +139,10 @@ test('segments tool: drag a whole run sideways in one undo step', async ({ page 
   const before = await undoDepth(page)
   // the vertical run's segment handle sits on the line; drag it 56px right
   const handle = page.locator('[data-tool-name="segments"] .joint-marker-segment').first()
+  // The tool group mounts before the async paper has laid its handle out, so
+  // the first boundingBox() can come back null — poll for it, the way the
+  // rescale assertions do, instead of sampling once.
+  await expect.poll(async () => (await handle.boundingBox())?.width ?? 0).toBeGreaterThan(0)
   const bb = (await handle.boundingBox())!
   await drag(page, { x: bb.x + bb.width / 2, y: bb.y + bb.height / 2 }, { x: bb.x + bb.width / 2 + 56, y: bb.y + bb.height / 2 }, 14)
   const e1 = await edges(page)

@@ -126,12 +126,56 @@ export interface GuideHit {
 }
 
 /**
+ * The other symbols' geometry, resolved once.
+ *
+ * `snapGuides` is called on every pointermove of a drag, and the symbols it
+ * measures against do not move while one symbol is being dragged. Re-deriving
+ * their sizes (a catalog lookup and a rotation test each) and re-scanning the
+ * whole edge list per move cost 0.25 ms/move at 1,000 symbols, all of it the
+ * same answer as the move before. Build this at grab time instead.
+ *
+ * Keyed by the `nodes`/`edges` arrays it was built from: the store is
+ * immutable, so a stale index is a reference mismatch away from being caught.
+ */
+export interface SnapIndex {
+  nodes: PlantNode[]
+  edges: PlantEdge[] | undefined
+  boxes: { id: string; x: number; y: number; w: number; h: number }[]
+  byId: Map<string, PlantNode>
+  /** Only the lines with a port end on a given node — the rest can never
+   *  contribute a port alignment for a drag of that node. */
+  edgesByNode: Map<string, PlantEdge[]>
+}
+
+export function buildSnapIndex(nodes: PlantNode[], edges?: PlantEdge[]): SnapIndex {
+  const boxes = nodes.map((n) => {
+    const { w, h } = sizeOf(n)
+    return { id: n.id, x: n.x, y: n.y, w, h }
+  })
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  const edgesByNode = new Map<string, PlantEdge[]>()
+  for (const e of edges ?? []) {
+    for (const end of [e.source, e.target]) {
+      if (!isPortEnd(end)) continue
+      const list = edgesByNode.get(end.nodeId)
+      if (list) list.push(e)
+      else edgesByNode.set(end.nodeId, [e])
+    }
+  }
+  return { nodes, edges, boxes, byId, edgesByNode }
+}
+
+/**
  * Suggest a snapped position when the dragged node's edges/centers align with
  * others. When `edges` is given, alignment of CONNECTED PORTS takes priority
  * with a wider window (and may land off-grid): a transmitter dropped roughly
  * above a nozzle clicks into the exact position that lets its line run dead
  * straight — box centers can't do this because a 40px bubble and a 48px
  * vessel never share a center on the 8px grid.
+ *
+ * Pass `index` (from `buildSnapIndex`) to reuse the resolved geometry across a
+ * drag. Without it one is built per call, which is what tests and one-shot
+ * callers want.
  */
 export function snapGuides(
   dragged: PlantNode,
@@ -139,56 +183,60 @@ export function snapGuides(
   tolerance = 4,
   edges?: PlantEdge[],
   portTolerance = 8,
+  index?: SnapIndex,
 ): GuideHit {
-  const d = { ...sizeOf(dragged) }
-  const dCandidatesX = (x: number) => [x, x + d.w / 2, x + d.w]
-  const dCandidatesY = (y: number) => [y, y + d.h / 2, y + d.h]
+  const ix =
+    index && index.nodes === others && index.edges === edges ? index : buildSnapIndex(others, edges)
+  const d = sizeOf(dragged)
   const out: GuideHit = {}
   let bestDx = tolerance + 1
   let bestDy = tolerance + 1
-  for (const o of others) {
+
+  // Scratch arrays, allocated once per call rather than twice per candidate
+  // symbol: at 1,000 symbols the old form churned ~10,000 short-lived arrays
+  // per pointermove, which is GC pressure inside the drag loop.
+  const dragX = [dragged.x, dragged.x + d.w / 2, dragged.x + d.w]
+  const dragY = [dragged.y, dragged.y + d.h / 2, dragged.y + d.h]
+  const subX = [0, d.w / 2, d.w]
+  const subY = [0, d.h / 2, d.h]
+
+  for (const o of ix.boxes) {
     if (o.id === dragged.id) continue
-    const s = sizeOf(o)
-    const oxs = [o.x, o.x + s.w / 2, o.x + s.w]
-    const oys = [o.y, o.y + s.h / 2, o.y + s.h]
-    for (const ox of oxs) {
-      dCandidatesX(dragged.x).forEach((dx, i) => {
-        const delta = Math.abs(dx - ox)
+    for (let j = 0; j < 3; j++) {
+      const ox = j === 0 ? o.x : j === 1 ? o.x + o.w / 2 : o.x + o.w
+      for (let i = 0; i < 3; i++) {
+        const delta = Math.abs(dragX[i]! - ox)
         if (delta < bestDx && delta <= tolerance) {
           bestDx = delta
-          out.x = ox - [0, d.w / 2, d.w][i]!
+          out.x = ox - subX[i]!
           out.guideX = ox
         }
-      })
-    }
-    for (const oy of oys) {
-      dCandidatesY(dragged.y).forEach((dy, i) => {
-        const delta = Math.abs(dy - oy)
+      }
+      const oy = j === 0 ? o.y : j === 1 ? o.y + o.h / 2 : o.y + o.h
+      for (let i = 0; i < 3; i++) {
+        const delta = Math.abs(dragY[i]! - oy)
         if (delta < bestDy && delta <= tolerance) {
           bestDy = delta
-          out.y = oy - [0, d.h / 2, d.h][i]!
+          out.y = oy - subY[i]!
           out.guideY = oy
         }
-      })
+      }
     }
   }
 
   if (edges) {
-    const byId = new Map(others.map((n) => [n.id, n]))
     let bestPx = portTolerance + 1
     let bestPy = portTolerance + 1
-    for (const e of edges) {
-      const pairs: [PlantEdge['source'], PlantEdge['source']][] = [
-        [e.source, e.target],
-        [e.target, e.source],
-      ]
-      for (const [mine, far] of pairs) {
+    for (const e of ix.edgesByNode.get(dragged.id) ?? []) {
+      for (let k = 0; k < 2; k++) {
+        const mine = k === 0 ? e.source : e.target
+        const far = k === 0 ? e.target : e.source
         if (!isPortEnd(mine) || mine.nodeId !== dragged.id) continue
         const pa = portWorld(dragged, mine.portId)
         const pb = isPortEnd(far)
           ? far.nodeId === dragged.id
             ? null
-            : portWorld(byId.get(far.nodeId) ?? dragged, far.portId)
+            : portWorld(ix.byId.get(far.nodeId) ?? dragged, far.portId)
           : { x: far.x, y: far.y }
         if (!pa || !pb) continue
         const ddx = Math.abs(pa.x - pb.x)
