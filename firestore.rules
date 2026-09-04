@@ -12,6 +12,180 @@ service cloud.firestore {
         && request.resource.data.name.size() > 0
         && request.resource.data.name.size() <= 200;
     }
+
+    // The feedback inbox — a one-way drop box, not a user-owned collection.
+    //
+    // Deliberately NOT under /users/{uid}: a report is a record of something
+    // that happened, and the person who filed it must not be able to rewrite it
+    // after it has been read or delete it once it is being acted on. So it is
+    // create-only, with no client read, update or delete, ever. The inbox is
+    // read from the Firebase console and the Admin SDK, both of which bypass
+    // rules — which is what makes a write-only collection workable.
+    //
+    // Because clients can never update, any triage field added later from the
+    // console (status, dupeOf, notes) is unforgeable for free: `hasOnly` holds
+    // clients to exactly these keys, on the only operation they may perform.
+    //
+    // The screenshot rides in this same document rather than in a `shot`
+    // subcollection. Rules cannot require that a subcollection document's
+    // parent exists, so that shape would let anyone with a token write 500 kB
+    // children under report ids that will never exist — invisible to a listing
+    // and findable only by a collection-group query. One document has no such
+    // hole and is written in one atomic call.
+    //
+    // The same document is the message the "Trigger Email from Firestore"
+    // extension sends, which is why `toUids` and `message` are here. The
+    // maintainer's address is in NONE of this: the extension reads it from
+    // `users/{uid}.email`, matched by no rule in this file and therefore denied
+    // to every client by the catch-all at the bottom.
+    //
+    // The caps mirror src/feedback/report.ts and src/feedback/screenshot.ts.
+    // Keep them in step: a rules rejection reaches the user as an opaque
+    // permission-denied, so the client refuses an oversize report FIRST, with
+    // a sentence they can act on.
+    //
+    // What these lines can and cannot promise. They CANNOT tell a PNG from a
+    // renamed archive — bytes are bytes to Firestore. The "only screenshots"
+    // guarantee comes from the client sniffing magic bytes, bounding pixels
+    // before anything decodes, and re-encoding through a canvas so that what
+    // is stored is pixels the browser itself wrote. What these lines guarantee
+    // is the half that survives a bypassed client: bounded size, pinned to a
+    // real account, unreadable by anyone else, unmodifiable after the fact.
+    match /feedback/{reportId} {
+      // Explicit, though the catch-all below already denies: nobody reads this
+      // collection through a client, including whoever wrote the row.
+      allow read, update, delete: if false;
+
+      allow create: if request.auth != null
+        // The document id is the one string reaching triage that gets none of
+        // the scrubbing report.ts does to every other field, and the REST API
+        // lets a caller name it: 1500 bytes of anything, control characters and
+        // bidi overrides included, shown as the row heading in the console and
+        // reached for as a filename by any script. It also feeds the reference
+        // the success screen tells the user to quote, so an unconstrained id
+        // lets someone mint a report whose reference collides with a real one.
+        // A Firestore auto-id is 20 characters of [A-Za-z0-9], so this costs
+        // the real client nothing.
+        && reportId.size() <= 40
+        && reportId.matches('^[A-Za-z0-9_-]+$')
+        // No key that is not listed, and none of the required ones missing —
+        // the allowlist is what stops a padded document sliding past the
+        // per-field caps in a field nobody thought to validate.
+        && request.resource.data.keys().hasOnly(
+             ['uid', 'kind', 'title', 'body', 'version', 'diag', 'createdAt',
+              'toUids', 'message', 'shotMime', 'shotW', 'shotH'])
+        && request.resource.data.keys().hasAll(
+             ['uid', 'kind', 'title', 'body', 'version', 'createdAt',
+              'toUids', 'message'])
+        // Pinned, not trusted: the stored uid is the caller's, or there is no
+        // write. A report cannot be filed in somebody else's name.
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.kind in ['bug', 'suggestion']
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 80
+        && request.resource.data.body is string
+        && request.resource.data.body.size() > 0
+        && request.resource.data.body.size() <= 2000
+        && request.resource.data.version is string
+        && request.resource.data.version.size() > 0
+        && request.resource.data.version.size() <= 40
+        // serverTimestamp() resolves to request.time, so the clock is the
+        // server's: no backdating a report to the bottom of a sorted inbox.
+        && request.resource.data.createdAt == request.time
+        // diag is optional as a whole and optional key by key, so a client
+        // built before a field existed still submits. get(k, default)
+        // type-checks what IS there without erroring on what is not.
+        && request.resource.data.get('diag', {}) is map
+        && request.resource.data.get('diag', {}).keys().hasOnly(
+             ['workspace', 'ua', 'viewport', 'sheets', 'nodes', 'edges'])
+        && request.resource.data.get('diag', {}).get('workspace', 'draw') in ['draw', 'data', 'checks', 'hmi']
+        && request.resource.data.get('diag', {}).get('ua', '') is string
+        && request.resource.data.get('diag', {}).get('ua', '').size() <= 300
+        && request.resource.data.get('diag', {}).get('viewport', '') is string
+        && request.resource.data.get('diag', {}).get('viewport', '').size() <= 20
+        // Ranged, not merely typed: buildReport clamps all three with
+        // Math.max(0, Math.round(…)), so a bare `is int` would accept -1 and
+        // 2^63 — values the client cannot produce and the classic input that
+        // breaks whatever eventually renders the inbox.
+        && request.resource.data.get('diag', {}).get('sheets', 0) is int
+        && request.resource.data.get('diag', {}).get('sheets', 0) >= 0
+        && request.resource.data.get('diag', {}).get('sheets', 0) <= 100000
+        && request.resource.data.get('diag', {}).get('nodes', 0) is int
+        && request.resource.data.get('diag', {}).get('nodes', 0) >= 0
+        && request.resource.data.get('diag', {}).get('nodes', 0) <= 100000
+        && request.resource.data.get('diag', {}).get('edges', 0) is int
+        && request.resource.data.get('diag', {}).get('edges', 0) >= 0
+        && request.resource.data.get('diag', {}).get('edges', 0) <= 100000
+        // ---- the mail half -------------------------------------------
+        //
+        // This document is also the message the "Trigger Email from Firestore"
+        // extension sends. That is what keeps the maintainer's address out of
+        // the client entirely: the extension resolves `toUids` against
+        // `users/{uid}.email`, a document the rules above never match and the
+        // catch-all below therefore denies to every client. The bundle ships an
+        // opaque account id and nothing else.
+        //
+        // Pinned to ONE recipient. Without this the collection is an open mail
+        // relay: anyone with an account could address a message to any uid the
+        // project knows. Replace the id below with the owner's own uid — it is
+        // not a secret, it identifies an account to a backend that already
+        // knows it, and it reveals no address.
+        && request.resource.data.toUids == ['REPLACE_WITH_OWNER_UID']
+        && request.resource.data.message is map
+        // `text` and `subject` only. NO `html` key, ever, and no `from`,
+        // `replyTo`, `cc`, `bcc`, `headers`, `template` or `sendGrid`: every
+        // word of this document was typed by a stranger, and each of those
+        // fields is a way to put their markup, or their choice of recipient, in
+        // front of the one person who reads the inbox. Plain text carries
+        // exactly what the report already carries and nothing renders.
+        && request.resource.data.message.keys().hasOnly(['subject', 'text', 'attachments'])
+        && request.resource.data.message.keys().hasAll(['subject', 'text'])
+        && request.resource.data.message.subject is string
+        && request.resource.data.message.subject.size() > 0
+        && request.resource.data.message.subject.size() <= 140
+        && request.resource.data.message.text is string
+        && request.resource.data.message.text.size() > 0
+        && request.resource.data.message.text.size() <= 20000
+        // At most one attachment, and only when the metadata says there is a
+        // screenshot. base64 is ASCII, so size() in characters IS the byte
+        // count here — which is the reason the image travels in this form
+        // rather than as a bytes field the mailer could not read. 680 000
+        // leaves headroom over the client's own ceil(500000/3)*4 = 666 668.
+        && (!('attachments' in request.resource.data.message) || (
+              request.resource.data.message.attachments.size() == 1
+              && request.resource.data.message.attachments[0].keys()
+                   .hasOnly(['filename', 'content', 'encoding', 'contentType'])
+              && request.resource.data.message.attachments[0].encoding == 'base64'
+              // A filename is the one string a mail client may write to disk,
+              // so it is a fixed shape, not anything the reporter chose.
+              && request.resource.data.message.attachments[0].filename
+                   .matches('^screenshot\\.(png|jpg|webp)$')
+              // Never image/svg+xml: SVG carries script, and it is not a raster
+              // screenshot in the first place. These three are the complete set
+              // of things the client's canvas can emit.
+              && request.resource.data.message.attachments[0].contentType
+                   in ['image/png', 'image/jpeg', 'image/webp']
+              && request.resource.data.message.attachments[0].content is string
+              && request.resource.data.message.attachments[0].content.size() > 0
+              && request.resource.data.message.attachments[0].content.size() <= 680000
+            ))
+        // The screenshot metadata mirrors the attachment, and the two travel
+        // together or not at all — a report cannot claim a screenshot it does
+        // not carry, nor carry one it does not declare.
+        && ('attachments' in request.resource.data.message
+            ? (request.resource.data.keys().hasAll(['shotMime', 'shotW', 'shotH'])
+               && request.resource.data.shotMime
+                    == request.resource.data.message.attachments[0].contentType
+               && request.resource.data.shotW is int
+               && request.resource.data.shotW > 0
+               && request.resource.data.shotW <= 1600
+               && request.resource.data.shotH is int
+               && request.resource.data.shotH > 0
+               && request.resource.data.shotH <= 1600)
+            : !request.resource.data.keys().hasAny(['shotMime', 'shotW', 'shotH']));
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

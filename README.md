@@ -99,7 +99,6 @@ P&ID tool is a $2,600+/year desktop install. IPD Studio is the missing thing:
 - **CAD interop** — layered R12 **DXF export** (opens in AutoCAD/LibreCAD),
   and **DXF underlay import**: load a legacy drawing as a locked gray
   background and redraw intelligently on top
-  ([DWG findings](docs/DWG-IMPORT-SPIKE.md))
 - **Generated deliverables** — one-click **ISA-5.4-style loop diagrams**
   (field / marshalling / control room with numbered terminals) and
   **ISA-20-style instrument datasheets** (form editor, PDF, CSV matrix)
@@ -169,8 +168,7 @@ Drawings save as `.pnid.json` — versioned, human-readable JSON
 - Legend sheet generation (line classes + fluid colors in use)
 - Real-time collaboration (opt-in self-hosted sync; the no-backend
   local-first default stays), review comments
-- DEXPI conformance hardening; in-app DWG per the
-  [spike findings](docs/DWG-IMPORT-SPIKE.md)
+- DEXPI conformance hardening; in-app DWG import
 
 ## Contributing
 

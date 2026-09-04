@@ -15,6 +15,12 @@ import { createEmptyDoc, createSheet } from '../model/doc'
 import type { HmiPipe, HmiScreen, HmiTheme, HmiWidget } from '../hmi/model'
 import { createScreen } from '../hmi/model'
 
+/** What a rename did to the engineering record behind a tag or line number. */
+export interface RetagResult {
+  /** The new key already carried a record, so nothing was moved or copied. */
+  collision: boolean
+}
+
 export interface StoreState {
   doc: ProjectDoc
   activeSheetId: string
@@ -45,7 +51,13 @@ export interface StoreState {
   setArmPin(id: string | null): void
   addExtraPort(nodeId: string, port: { x: number; y: number; kind: 'process' | 'signal' | 'both' }): void
   removeExtraPort(nodeId: string, portId: string): void
-  setTag(id: string, tag: Tag | undefined): void
+  /** Renames an object and carries its engineering record across. The result
+   *  reports a COLLISION — the new key already had a record, so neither was
+   *  touched and the object now wears a tag whose record belongs to something
+   *  else. Callers must say so: `retagRegistry` refuses to merge because
+   *  merging two engineering records is unrecoverable, and a silent refusal
+   *  reads to the user as a rename that worked. */
+  setTag(id: string, tag: Tag | undefined): RetagResult
   setLabel(id: string, label: string): void
   setLabelPos(id: string, pos: 'below' | 'center'): void
   setTagOffset(id: string, off: { x: number; y: number } | undefined): void
@@ -77,7 +89,9 @@ export interface StoreState {
   deleteSheet(id: string): void
   setActiveSheet(id: string): void
   addEdge(partial: Omit<PlantEdge, 'id'>): string
-  setEdge(id: string, patch: Partial<Omit<PlantEdge, 'id'>>): void
+  /** Patches a line. Renumbering carries the record exactly as a retag does,
+   *  so this reports a collision the same way — see `setTag`. */
+  setEdge(id: string, patch: Partial<Omit<PlantEdge, 'id'>>): RetagResult
   setEdgeVertices(id: string, vertices: { x: number; y: number }[]): void
   /** Assign a service to a line; auto-spreads along the connected run
    *  (through valves/pumps/fittings, stopping at vessels). One undo step. */
@@ -318,6 +332,7 @@ export const useStore = create<StoreState>()(
          * See retagRegistry for the move / copy / collide rules.
          */
         setTag(id, tag) {
+          let collision = false
           set((s) => {
             const sheet = activeSheet(s)
             const node = sheet.nodes.find((n) => n.id === id)
@@ -330,9 +345,11 @@ export const useStore = create<StoreState>()(
             // Another symbol may still wear the old tag (a valve shown twice,
             // an off-page continuation) — then the record is copied, not moved.
             const stillUsed = oldKey !== null && liveKeys(sheets).has(oldKey)
-            const { registry } = retagRegistry(s.doc.registry, oldKey, newKey, { oldKeyStillUsed: stillUsed })
-            return { doc: touched({ ...s.doc, sheets, registry }), dirty: true }
+            const r = retagRegistry(s.doc.registry, oldKey, newKey, { oldKeyStillUsed: stillUsed })
+            collision = r.collision
+            return { doc: touched({ ...s.doc, sheets, registry: r.registry }), dirty: true }
           })
+          return { collision }
         },
 
         setLabel(id, label) {
@@ -511,6 +528,7 @@ export const useStore = create<StoreState>()(
         },
 
         setEdge(id, patch) {
+          let collision = false
           set((s) => {
             const sheet = activeSheet(s)
             const edge = sheet.edges.find((e) => e.id === id)
@@ -523,9 +541,11 @@ export const useStore = create<StoreState>()(
             const oldKey = keyOfEdge(edge)
             const newKey = keyOfEdge(next)
             const stillUsed = oldKey !== null && liveKeys(sheets).has(oldKey)
-            const { registry } = retagRegistry(s.doc.registry, oldKey, newKey, { oldKeyStillUsed: stillUsed })
-            return { doc: touched({ ...s.doc, sheets, registry }), dirty: true }
+            const r = retagRegistry(s.doc.registry, oldKey, newKey, { oldKeyStillUsed: stillUsed })
+            collision = r.collision
+            return { doc: touched({ ...s.doc, sheets, registry: r.registry }), dirty: true }
           })
+          return { collision }
         },
 
         setEdgeVertices(id, vertices) {

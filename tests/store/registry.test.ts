@@ -108,3 +108,57 @@ describe('record edits are undoable', () => {
     expect(doc().registry?.['FT-101']).toBeUndefined()
   })
 })
+
+describe('a rename onto a key that already has a record', () => {
+  it('refuses to merge, reports the collision, and leaves both records intact', () => {
+    const s = fresh()
+    const a = s.addNode({ symbolId: 'instr.bubble', kind: 'instrument', x: 0, y: 0, rotation: 0 })
+    const b = useStore.getState().addNode({ symbolId: 'instr.bubble', kind: 'instrument', x: 64, y: 0, rotation: 0 })
+    useStore.getState().setTag(a, { letters: 'FT', loop: '101' })
+    useStore.getState().setTag(b, { letters: 'FT', loop: '102' })
+    useStore.getState().setRecordField('FT-101', 'instrument', 'signal.range', '0-100 m3/h')
+    useStore.getState().setRecordField('FT-102', 'instrument', 'signal.range', '0-250 m3/h')
+
+    // FT-101 is renamed onto FT-102, which another symbol already owns.
+    const result = useStore.getState().setTag(a, { letters: 'FT', loop: '102' })
+
+    // Merging two engineering records is unrecoverable, so neither moved...
+    expect(result.collision).toBe(true)
+    expect(doc().registry?.['FT-101']?.fields['signal.range']).toBe('0-100 m3/h')
+    expect(doc().registry?.['FT-102']?.fields['signal.range']).toBe('0-250 m3/h')
+  })
+
+  it('reports no collision on an ordinary rename', () => {
+    const s = fresh()
+    const id = s.addNode({ symbolId: 'instr.bubble', kind: 'instrument', x: 0, y: 0, rotation: 0 })
+    useStore.getState().setTag(id, { letters: 'FT', loop: '101' })
+    useStore.getState().setRecordField('FT-101', 'instrument', 'signal.range', '0-100 m3/h')
+
+    const result = useStore.getState().setTag(id, { letters: 'FT', loop: '103' })
+
+    expect(result.collision).toBe(false)
+    expect(doc().registry?.['FT-103']?.fields['signal.range']).toBe('0-100 m3/h')
+  })
+
+  it('reports a collision when a line is renumbered onto an occupied number', () => {
+    const s = fresh()
+    const n1 = s.addNode({ symbolId: 'instr.bubble', kind: 'instrument', x: 0, y: 0, rotation: 0 })
+    const n2 = useStore.getState().addNode({ symbolId: 'instr.bubble', kind: 'instrument', x: 96, y: 0, rotation: 0 })
+    const e1 = useStore.getState().addEdge({ lineClass: 'process.major', source: { nodeId: n1, portId: 'e' }, target: { nodeId: n2, portId: 'w' } })
+    const e2 = useStore.getState().addEdge({ lineClass: 'process.major', source: { x: 0, y: 96 }, target: { x: 96, y: 96 } })
+    const A = { size: '3"', spec: 'CS150', service: 'P', seq: '001' }
+    const B = { size: '3"', spec: 'CS150', service: 'P', seq: '002' }
+    useStore.getState().setEdge(e1, { lineNumber: A })
+    useStore.getState().setEdge(e2, { lineNumber: B })
+    const keyA = '3"-CS150-P-001'
+    const keyB = '3"-CS150-P-002'
+    useStore.getState().setRecordField(keyA, 'line', 'line.material', 'CS')
+    useStore.getState().setRecordField(keyB, 'line', 'line.material', 'SS')
+
+    const result = useStore.getState().setEdge(e1, { lineNumber: B })
+
+    expect(result.collision).toBe(true)
+    expect(doc().registry?.[keyA]?.fields['line.material']).toBe('CS')
+    expect(doc().registry?.[keyB]?.fields['line.material']).toBe('SS')
+  })
+})

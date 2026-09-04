@@ -19,6 +19,7 @@ import { HMI_WORLD } from './model'
 import { worstAlarmByScreen } from './navAlarms'
 import Modal from '../panels/Modal'
 import { VersionChip } from '../panels/VersionNote'
+import { FeedbackChip } from '../panels/FeedbackDialog'
 import Faceplate from './Faceplate'
 import AlarmBanner from './AlarmBanner'
 
@@ -265,6 +266,7 @@ function StatusBar({ screenName, selection, notice }: { screenName?: string; sel
     <div className="hmi-status">
       <span>HMI workspace</span>
       <VersionChip />
+      <FeedbackChip />
       {screenName && <span>· {screenName}</span>}
       {notice && <span className="hmi-notice" data-testid="hmi-notice">{notice}</span>}
       {mode === 'run' ? (

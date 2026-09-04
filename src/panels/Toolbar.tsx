@@ -34,9 +34,26 @@ function ZoomCluster() {
       const sx = canvasRef.paper?.scale().sx
       if (sx) setPct(Math.round(sx * 100))
     }
-    tick()
-    const id = window.setInterval(tick, 220)
-    return () => window.clearInterval(id)
+    // The paper announces its own zoom, so read it when it changes rather than
+    // polling five times a second for the rest of the session. The toolbar
+    // mounts before the canvas does, so the listener is attached on the first
+    // tick that finds a paper; the slow interval is both that retry and a
+    // safety net if the paper is ever replaced under us.
+    let paper: { on(e: string, cb: () => void): void; off(e: string, cb: () => void): void } | undefined
+    const attach = () => {
+      const current = canvasRef.paper
+      if (current === paper) return
+      paper?.off('scale', tick)
+      paper = current
+      paper?.on('scale', tick)
+    }
+    const poll = () => { attach(); tick() }
+    poll()
+    const id = window.setInterval(poll, 1000)
+    return () => {
+      window.clearInterval(id)
+      paper?.off('scale', tick)
+    }
   }, [])
   const fit = () => {
     const { paper, graph } = canvasRef

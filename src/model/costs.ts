@@ -328,7 +328,20 @@ export interface CostReport {
  *  Nodes with a per-node cost group under their bucket at their own price
  *  (mixed prices in one bucket show the summed subtotal; unit = '—' case
  *  is handled by the dialog). */
+/** One estimate per document, however often the toolbar chip re-renders. The
+ *  chip watches `doc`, and `touched()` mints a new one on every edit, so
+ *  without this the whole project was re-priced on every keystroke and every
+ *  symbol move. Same shape as the QA cache in validate/engine.ts. */
+let cache: { doc: ProjectDoc; value: CostReport } | null = null
+
 export function projectCost(doc: ProjectDoc): CostReport {
+  if (cache && cache.doc === doc) return cache.value
+  const value = computeProjectCost(doc)
+  cache = { doc, value }
+  return value
+}
+
+function computeProjectCost(doc: ProjectDoc): CostReport {
   const budget = doc.budget
   const byKey = new Map<string, CostLine>()
   let unpriced = 0

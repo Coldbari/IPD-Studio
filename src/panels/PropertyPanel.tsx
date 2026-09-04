@@ -16,6 +16,7 @@ import DatasheetEditor from './DatasheetEditor'
 import FluidsDialog from './FluidsDialog'
 import InspectorWhereUsed from './InspectorWhereUsed'
 import InspectorEngineering from './InspectorEngineering'
+import { locateCell } from '../canvas/locate'
 
 const SHEETS: SheetSize[] = ['A4', 'A3', 'A2', 'A1', 'ANSI_B', 'ANSI_D']
 
@@ -294,6 +295,17 @@ export default function PropertyPanel({ onCollapse }: { onCollapse?: () => void 
   const node = single ? sheet.nodes.find((n) => n.id === single) : undefined
   const edge = single ? sheet.edges.find((e) => e.id === single) : undefined
 
+  // Selected, but living on another sheet. Every node/edge mutation goes
+  // through patchSheet, which only ever rewrites the ACTIVE sheet — so an
+  // editable inspector here would take input and silently discard it. Say
+  // where the object is and offer to go there instead.
+  const elsewhere = single && !node && !edge
+    ? doc.sheets.find(
+        (sh) => sh.id !== sheet.id
+          && (sh.nodes.some((n) => n.id === single) || sh.edges.some((e) => e.id === single)),
+      )
+    : undefined
+
   let body
   if (selection.length === 0) {
     body = <SheetProps />
@@ -306,7 +318,17 @@ export default function PropertyPanel({ onCollapse }: { onCollapse?: () => void 
           : <NodeProps key={single} node={node} />
       : edge
         ? <EdgeProps key={single} edge={edge} />
-        : <SheetProps />
+        : elsewhere
+          ? (
+            <div className="prop-group">
+              <div className="prop-title">On another sheet</div>
+              <p className="prop-note">
+                This object is on <b>{elsewhere.name}</b>. Open that sheet to edit it.
+              </p>
+              <button onClick={() => locateCell(single, elsewhere.id)}>Go to {elsewhere.name}</button>
+            </div>
+          )
+          : <SheetProps />
   } else {
     body = (
       <>

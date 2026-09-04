@@ -5,7 +5,7 @@
 import { useState } from 'react'
 import { useStore } from '../store/store'
 import { navigateWorkspace } from '../routes'
-import { qaFor } from '../validate/engine'
+import { useQa } from '../validate/live'
 import type { Severity } from '../validate/rules'
 import { locateCell } from '../canvas/locate'
 import { applyFix, describeFix, type FixSpec } from '../assist/fixes'
@@ -39,7 +39,7 @@ export default function ChecksWorkspace() {
   const [discipline, setDiscipline] = useState<string>('all')
   const [showIgnored, setShowIgnored] = useState(false)
 
-  const report = qaFor(doc)
+  const report = useQa()
   const groups = report.groups.filter((g) => discipline === 'all' || g.rule.discipline === discipline)
 
   const go = (sheetId?: string, targetId?: string) => {

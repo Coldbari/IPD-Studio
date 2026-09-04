@@ -96,6 +96,9 @@ export const duplicateParallelLine: Rule = {
           finding(duplicateParallelLine, e.key ?? e.edge.id, 'Two identical lines connect the same two points — delete one?', {
             targetId: e.edge.id,
             sheetId: e.sheet.id,
+            // Safe to offer: the SECOND line of the pair is the one flagged, so
+            // the surviving line keeps whatever the first one carried.
+            fix: { label: 'Delete the doubled line', spec: { kind: 'delete-duplicate-line', sheetId: e.sheet.id, edgeId: e.edge.id } },
           }),
         )
       } else seen.add(key)

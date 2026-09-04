@@ -3,6 +3,9 @@
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
 import { ulid } from 'ulid'
+import { SYMBOLS } from '../symbols/registry'
+import { validateLetters } from '../isa/tag'
+import { buildTypical, TYPICALS } from './typicals'
 
 /** A repair the QA report can apply for the user. Lives here, with the code
  *  that performs it, rather than with the rules that offer it. */
@@ -10,6 +13,13 @@ export type FixSpec =
   | { kind: 'insert-ip'; sheetId: string; edgeId: string }
   | { kind: 'purge-record'; key: string }
   | { kind: 'assign-tag'; nodeId: string; sheetId: string; letters: string }
+  | { kind: 'delete-duplicate-line'; sheetId: string; edgeId: string }
+  // Additions the assistant may PROPOSE. Note what is absent: no coordinates
+  // and no ids the proposer authored. The caller names WHAT; the app decides
+  // where it goes and what id it gets, so a bad proposal can be wrong but
+  // never malformed.
+  | { kind: 'place-typical'; typicalId: string; sheetId: string; nearNodeId?: string }
+  | { kind: 'place-symbol'; symbolId: string; sheetId: string; letters?: string; nearNodeId?: string }
 
 /** What a fix did. A fix that fails silently cannot be trusted by anything
  *  that reports back to a user — the report, or anything built on it later. */
@@ -48,6 +58,38 @@ export function describeFix(spec: FixSpec, doc: ProjectDoc): { title: string; bl
         affectedIds: [spec.nodeId],
       }
     }
+    case 'place-typical': {
+      const def = TYPICALS.find((t) => t.id === spec.typicalId)
+      const sheet = doc.sheets.find((s) => s.id === spec.sheetId)
+      return {
+        title: `Add a ${def?.name.toLowerCase() ?? spec.typicalId}`,
+        blastRadius: def
+          ? `Adds ${def.members.length} tagged instruments (${def.members.join(' → ')}) already wired together, on ${sheet?.name ?? 'the sheet'}. They share one new loop number. One undo removes all of it.`
+          : `Unknown typical "${spec.typicalId}".`,
+        affectedIds: [],
+      }
+    }
+    case 'place-symbol': {
+      const sheet = doc.sheets.find((s) => s.id === spec.sheetId)
+      const name = SYMBOLS.get(spec.symbolId)?.name ?? spec.symbolId
+      return {
+        title: `Add a ${name}`,
+        blastRadius: `Places one ${name} on ${sheet?.name ?? 'the sheet'}${spec.letters ? `, tagged ${spec.letters}-…` : ', untagged'}. Nothing is connected to it — you draw the lines.`,
+        affectedIds: [],
+      }
+    }
+    case 'delete-duplicate-line': {
+      const sheet = doc.sheets.find((s) => s.id === spec.sheetId)
+      const edge = sheet?.edges.find((e) => e.id === spec.edgeId)
+      const numbered = edge?.lineNumber
+        ? ` It carries line number ${[edge.lineNumber.size, edge.lineNumber.spec, edge.lineNumber.service, edge.lineNumber.seq].filter(Boolean).join('-')}, so check you are deleting the right one.`
+        : ''
+      return {
+        title: 'Delete the doubled line',
+        blastRadius: `Removes one of two lines joining the same pair of ports on ${sheet?.name ?? 'the sheet'}. The other stays.${numbered}`,
+        affectedIds: [spec.edgeId],
+      }
+    }
   }
 }
 
@@ -74,6 +116,61 @@ export function applyFix(fix: FixSpec): FixResult {
     return had
       ? { ok: true, changedIds: [] }
       : { ok: false, changedIds: [], message: `No record found for ${fix.key}.` }
+  }
+  if (fix.kind === 'place-typical' || fix.kind === 'place-symbol') {
+    const st = useStore.getState()
+    if (st.activeSheetId !== fix.sheetId) st.setActiveSheet(fix.sheetId)
+    const now = useStore.getState()
+    const sheet = now.doc.sheets.find((sh) => sh.id === fix.sheetId)
+    if (!sheet) return { ok: false, changedIds: [], message: 'That sheet is no longer in the drawing.' }
+
+    // Position is computed HERE, never supplied by the proposer: beside the
+    // object it relates to, else clear of everything already drawn.
+    const anchor = fix.nearNodeId ? sheet.nodes.find((n) => n.id === fix.nearNodeId) : undefined
+    const at = anchor
+      ? { x: snap8(anchor.x + 160), y: snap8(anchor.y) }
+      : { x: snap8(Math.max(160, ...sheet.nodes.map((n) => n.x + 160), 160)), y: 200 }
+
+    if (fix.kind === 'place-typical') {
+      if (!TYPICALS.some((t) => t.id === fix.typicalId)) {
+        return { ok: false, changedIds: [], message: `There is no typical called "${fix.typicalId}".` }
+      }
+      const built = buildTypical(fix.typicalId, now.doc, at)
+      now.addBatch(built.nodes, built.edges)
+      return { ok: true, changedIds: built.nodes.map((n) => n.id) }
+    }
+
+    // getSymbol THROWS on an unknown id, and an unknown id reaching addNode
+    // white-screens the app on the next validation pass. Check, never assume.
+    if (!SYMBOLS.has(fix.symbolId)) {
+      return { ok: false, changedIds: [], message: `"${fix.symbolId}" is not a symbol in the catalog.` }
+    }
+    const def = SYMBOLS.get(fix.symbolId)!
+    const letters = fix.letters?.trim().toUpperCase()
+    const validLetters = letters && validateLetters(letters).ok ? letters : undefined
+    const id = now.addNode({
+      symbolId: fix.symbolId,
+      kind: def.tagRule === 'valve' ? 'valve' : def.tagRule === 'isa-instrument' ? 'instrument' : 'equipment',
+      x: at.x,
+      y: at.y,
+      rotation: 0,
+      ...(def.defaultConfig ? { config: { ...def.defaultConfig } } : {}),
+      ...(validLetters ? { tag: { letters: validLetters, loop: nextLoopNumber(now.doc, validLetters) } } : {}),
+    })
+    return { ok: true, changedIds: [id] }
+  }
+  if (fix.kind === 'delete-duplicate-line') {
+    const st = useStore.getState()
+    if (st.activeSheetId !== fix.sheetId) st.setActiveSheet(fix.sheetId)
+    const now = useStore.getState()
+    const sheet = now.doc.sheets.find((sh) => sh.id === fix.sheetId)
+    if (!sheet?.edges.some((e) => e.id === fix.edgeId)) {
+      return { ok: false, changedIds: [], message: 'That line is no longer on the drawing.' }
+    }
+    // deleteIds also drops edges attached to deleted NODES; here the target is
+    // the edge itself, so nothing else can come with it.
+    now.deleteIds([fix.edgeId])
+    return { ok: true, changedIds: [fix.edgeId] }
   }
   if (fix.kind === 'assign-tag') {
     const st = useStore.getState()

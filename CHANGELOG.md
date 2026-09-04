@@ -6,7 +6,61 @@ All notable changes to IPD Studio. Format follows
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-09-03 — the feedback loop
+
+Two kinds of feedback landed together: the drawing telling you what it just
+did, and you telling us what it got wrong.
+
+### Added
+
+- **A Feedback button in the status bar** — one popup for both halves of
+  "tell me about this": a bug that needs fixing and a feature that does not
+  exist yet. They share a form rather than getting a button each, because the
+  difference is a single toggle and two buttons make people stop and classify
+  before they can start typing, which is exactly when they give up and say
+  nothing. Title, description, and an optional screenshot you can choose,
+  drop, paste, or capture from inside the app. A collapsed panel shows
+  precisely what is sent with it — version, workspace, counts, browser — and
+  says out loud that no part of your drawing travels.
+- **Screenshot attachments are re-encoded before they are sent.** The file is
+  identified by its magic bytes rather than its name (`File.type` is only the
+  extension in disguise, and `accept=` is a picker default with no effect on
+  drag or paste), its dimensions are read from the header *before* anything
+  decodes it — a 6 kB PNG can legally declare 202 GB of pixels — and then it
+  is decoded and re-encoded through a canvas. What leaves your machine is an
+  image the browser itself wrote, which drops EXIF and location and destroys
+  anything appended after the pixels. SVG and GIF are refused outright: no
+  screenshot tool produces either, and one of them is a scriptable document.
+
+### Fixed
+
+- **A half-written dialog no longer vanishes on a stray click.** Every modal
+  closed on a backdrop *click*, so selecting text and releasing outside the
+  card threw the form away. They close on a press that *started* on the
+  backdrop now, and they trap Tab, restore focus to whatever opened them, and
+  go inert while a request is in flight.
+
+- **A vertical symbol now docks to a horizontal one.** The magnet demanded
+  two ports face *exactly opposite* ways, which silently refused every
+  square-on pairing — including most of an instrument bubble's, whose four
+  ports face four different ways. It looked as though docking just didn't
+  work. Only two ports pointing the SAME way are refused now, which is the
+  one case that stands a symbol on the wrong side of the nozzle.
+- **A docked symbol can be dragged away again.** Docking was refused per pair
+  of *ports*, so two bubbles joined on one of their sixteen pairings still had
+  fifteen left, and every one of them grabbed the symbol back as the user
+  tried to pull it clear. It is refused per pair of *symbols* now.
+- **You can see the moment it connects** — a green ring flashes at the point
+  a line lands, on a palette drop as well as a drag. A symbol dropped *near*
+  a nozzle and one dropped *onto* it looked identical once the drag ended.
+
 ### Changed
+
+- **Shake frees a symbol that was already wired up.** Shaking used to cut
+  only a line the current drag had made; on a symbol that arrived connected
+  it did nothing. It now takes off every line the symbol has — the only way
+  to unpick a connection without hunting down the line and pressing Delete.
+  One undo puts them all back.
 
 - **Docking happens mid-drag, not on release.** The line is drawn the moment
   the two connection points meet, with the mouse button still down — keep
@@ -30,7 +84,7 @@ All notable changes to IPD Studio. Format follows
 ## [0.17.0] — 2026-09-02 — the QA engine
 
 Third step of the engineering-platform plan
-([docs/ENGINEERING-PLATFORM-PLAN.md](docs/ENGINEERING-PLATFORM-PLAN.md), §4.2).
+(engineering-platform plan, §4.2).
 Validation becomes a rule engine an engineer can actually work through.
 
 ### Added
@@ -103,7 +157,7 @@ Validation becomes a rule engine an engineer can actually work through.
 ## [0.15.0] — 2026-09-01 — the engineering registry
 
 Second step of the engineering-platform plan
-([docs/ENGINEERING-PLATFORM-PLAN.md](docs/ENGINEERING-PLATFORM-PLAN.md), §4.1).
+(engineering-platform plan, §4.1).
 Engineering data finally has a home of its own.
 
 ### ⚠️ Document format: schemaVersion 4 → 5
@@ -153,7 +207,7 @@ it). Opening an older document is unaffected — v1 through v4 all migrate in.
 ## [0.14.0] — 2026-09-01 — the navigation shell
 
 First step of the engineering-platform plan
-([docs/ENGINEERING-PLATFORM-PLAN.md](docs/ENGINEERING-PLATFORM-PLAN.md), §4.0).
+(engineering-platform plan, §4.0).
 No new document data: this release makes room for the five features that follow
 and improves navigation on its own merits.
 
@@ -238,7 +292,7 @@ IPD Studio moved from **AGPL-3.0-only** to
 - [docs/LICENSE-ENFORCEMENT.md](docs/LICENSE-ENFORCEMENT.md) rewritten for the
   new licence, including the PolyForm 32-day cure clock and a warning to
   establish a copy's version before alleging any violation
-- [docs/DWG-IMPORT-SPIKE.md](docs/DWG-IMPORT-SPIKE.md) — the GPLv3 LibreDWG
+- DWG import spike — the GPLv3 LibreDWG
   option is now closed; GPL code cannot be combined with a noncommercial
   licence. ODA/Teigha becomes the only viable path.
 

@@ -195,3 +195,54 @@ test('shaking the symbol mid-drag cuts the line that drag just made', async ({ p
   await page.evaluate(() => window.__pid.useStore.getState().undo())
   expect((await sheet(page)).nodes.find((n: any) => n.id === moving)).toMatchObject({ x: 400, y: 300 })
 })
+
+test('a docked symbol can still be dragged away, and takes its pipe with it', async ({ page }) => {
+  // The bug: a bubble has four ports, so once two symbols were joined on one
+  // pair the other fifteen pairings kept re-catching the symbol. It read as
+  // "it connects, then it will not go anywhere".
+  const gate = await withGateValve(page)
+  await dropSymbol(page, 'valve.gate', { x: 254, y: 210 })
+  await expect.poll(async () => (await sheet(page)).edges.length).toBe(1)
+  const dropped = (await sheet(page)).nodes.find((n: any) => n.id !== gate)
+
+  await drag(page, await clientPoint(page, 272, 208), await clientPoint(page, 672, 208))
+
+  const after = await sheet(page)
+  expect(after.nodes.find((n: any) => n.id === dropped.id).x).toBeGreaterThan(600)
+  // it moved, it is still connected, and no second line was stacked on
+  expect(after.edges).toHaveLength(1)
+})
+
+test('shaking a symbol that was already wired up frees it from every line', async ({ page }) => {
+  const gate = await withGateValve(page)
+  const moving = await page.evaluate((fixed) => {
+    const s = window.__pid.useStore.getState()
+    const id = s.addNode({ symbolId: 'valve.gate', kind: 'valve', x: 400, y: 200, rotation: 0 })
+    s.addEdge({
+      lineClass: 'process.major',
+      source: { nodeId: fixed, portId: 'e' },
+      target: { nodeId: id, portId: 'w' },
+    })
+    s.setSelection([])
+    return id as string
+  }, gate)
+  await expect.poll(async () => (await sheet(page)).edges.length).toBe(1)
+
+  // Drag it — no new connection is made this gesture — then waggle.
+  const grab = await clientPoint(page, 416, 208)
+  await page.mouse.move(grab.x, grab.y)
+  await page.mouse.down()
+  const over = await clientPoint(page, 456, 208)
+  await page.mouse.move(over.x, over.y, { steps: 8 })
+  await shakePointer(page, over)
+
+  await expect.poll(async () => (await sheet(page)).edges.length).toBe(0)
+  await page.mouse.up()
+  expect((await sheet(page)).edges).toHaveLength(0)
+  // the symbol itself is untouched, just unhooked
+  expect((await sheet(page)).nodes.find((n: any) => n.id === moving)).toBeTruthy()
+
+  // and one undo puts the line back
+  await page.evaluate(() => window.__pid.useStore.getState().undo())
+  await expect.poll(async () => (await sheet(page)).edges.length).toBe(1)
+})

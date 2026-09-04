@@ -38,3 +38,24 @@ export const firebaseConfig = {
 export const firebaseReady: boolean = Boolean(
   firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId,
 )
+
+/**
+ * Whose inbox a feedback report is mailed to — as a Firebase UID, never as an
+ * address.
+ *
+ * This is the whole privacy design in one constant. The "Trigger Email from
+ * Firestore" extension resolves `toUids` against a users collection, reading
+ * the `email` field off `users/{uid}`. So the address lives in one Firestore
+ * document that no client can read — `firestore.rules` matches only
+ * `users/{uid}/drawings/{id}`, and the parent document falls through to the
+ * deny-all catch-all — while the bundle carries nothing but this opaque id.
+ *
+ * A UID is not a secret: it identifies an account to a backend that already
+ * knows it, and it reveals no address. An email address in a bundle is a
+ * published address, scraped within a week and impossible to take back, which
+ * is why one has never appeared in this feature's source.
+ *
+ * Empty in a fork or in CI, exactly like the rest of the config. Feedback then
+ * falls back to Copy as text.
+ */
+export const feedbackOwnerUid: string = env.VITE_FEEDBACK_OWNER_UID ?? ''

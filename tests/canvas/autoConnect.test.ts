@@ -149,3 +149,40 @@ describe('dockRadius', () => {
     expect(dockRadius(0.05)).toBe(48) // clamped: never grabbier than 48
   })
 })
+
+/* Regressions from real use on 2026-09-02 (screenshots): a bubble dropped
+   beside another would not catch, and a symbol that HAD caught could not be
+   dragged away again. */
+describe('findDock — pairings real drawings need', () => {
+  it('joins a vertical symbol to a horizontal one (perpendicular ports)', () => {
+    const flat = mk('valve.gate', 200, 200) // e at (232, 208), facing right
+    // Quarter-turned: this valve's e port faces DOWN, and sits at (232, 200).
+    const upright: PlantNode = { ...mk('valve.gate', 216, 176), rotation: 90 }
+    expect(portWorld(upright, 'e')).toEqual({ x: 232, y: 200 })
+    const dock = findDock(upright, [flat], [], 'process.major', 18)
+    expect(dock).not.toBeNull()
+    expect(dock!.movingPortId).toBe('e')
+    expect(dock!.targetPortId).toBe('e')
+  })
+
+  it('still refuses two ports pointing the same way', () => {
+    const fixed = mk('valve.gate', 200, 200) // e at (232, 208), facing right
+    const moving = mk('valve.gate', 208, 200) // e at (240, 208), also facing right
+    expect(findDock(moving, [fixed], [], 'process.major', 18)?.movingPortId).not.toBe('e')
+  })
+
+  it('never re-docks two symbols that already have a line between them', () => {
+    // An instrument bubble has four ports, so a pair joined on one of them
+    // still has fifteen other pairings — every one of which used to grab the
+    // symbol back as the user tried to drag it away.
+    const a = mk('instr.bubble', 100, 100, 'instrument') // n(120,100) e(140,120)
+    const b = mk('instr.bubble', 100, 68, 'instrument') // s at (120, 108)
+    const joined: PlantEdge = {
+      id: 'e1',
+      lineClass: 'signal.electric',
+      source: { nodeId: a.id, portId: 'e' },
+      target: { nodeId: b.id, portId: 'w' },
+    }
+    expect(findDock(b, [a], [joined], 'process.major', 18)).toBeNull()
+  })
+})

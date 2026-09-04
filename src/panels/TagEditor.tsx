@@ -2,7 +2,7 @@
 // Copyright © 2026 Praharsh Nagpure — IPD Studio. Noncommercial use only;
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { expandLetters, validateLetters } from '../isa/tag'
 import { isDuplicateTag, suggestLoop } from '../isa/autonumber'
 import { pauseHistory, resumeHistory, useStore } from '../store/store'
@@ -13,6 +13,7 @@ export default function TagEditor({ node }: { node: PlantNode }) {
   const doc = useStore((s) => s.doc)
   const tag = node.tag ?? { letters: '', loop: '' }
   const autoLoop = useRef<string | null>(null)
+  const [clash, setClash] = useState(false)
 
   const validation = useMemo(() => (tag.letters ? validateLetters(tag.letters) : null), [tag.letters])
   const expansion = useMemo(() => (tag.letters ? expandLetters(tag.letters) : ''), [tag.letters])
@@ -23,8 +24,14 @@ export default function TagEditor({ node }: { node: PlantNode }) {
 
   const update = (patch: Partial<typeof tag>) => {
     const next = { ...tag, ...patch }
-    if (!next.letters && !next.loop) setTag(node.id, undefined)
-    else setTag(node.id, { letters: next.letters, loop: next.loop, ...(next.suffix ? { suffix: next.suffix } : {}) })
+    const result =
+      !next.letters && !next.loop
+        ? setTag(node.id, undefined)
+        : setTag(node.id, { letters: next.letters, loop: next.loop, ...(next.suffix ? { suffix: next.suffix } : {}) })
+    // A refused record move is invisible on the drawing: the tag changes and
+    // the datasheet does not follow. The QA report catches the orphan later,
+    // but the moment of the rename is when the user can still act on it.
+    setClash(result.collision)
     pauseHistory() // typing bursts undo as one step; resumes on blur/pointerup
   }
 
@@ -81,6 +88,12 @@ export default function TagEditor({ node }: { node: PlantNode }) {
       {expansion && <div className="tag-expansion">{expansion}</div>}
       {validation && !validation.ok && <div className="tag-error">{validation.reason}</div>}
       {duplicate && <div className="tag-error">Duplicate tag in this drawing</div>}
+      {clash && (
+        <div className="tag-error">
+          That tag already has an engineering record. Nothing was merged — this symbol’s own
+          record is still filed under its previous tag.
+        </div>
+      )}
     </div>
   )
 }

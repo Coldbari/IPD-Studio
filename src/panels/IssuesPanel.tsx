@@ -2,8 +2,7 @@
 // Copyright © 2026 Praharsh Nagpure — IPD Studio. Noncommercial use only;
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
-import { useStore } from '../store/store'
-import { qaFor } from '../validate/engine'
+import { useQa } from '../validate/live'
 import { locateCell } from '../canvas/locate'
 import { navigateWorkspace } from '../routes'
 import { applyFix } from '../assist/fixes'
@@ -14,8 +13,7 @@ import { applyFix } from '../assist/fixes'
  * — lives in the Checks workspace, one click away.
  */
 export default function IssuesPanel() {
-  const doc = useStore((s) => s.doc)
-  const report = qaFor(doc)
+  const report = useQa()
 
   const go = (sheetId?: string, targetId?: string) => locateCell(targetId, sheetId)
 
