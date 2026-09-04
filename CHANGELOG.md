@@ -6,6 +6,46 @@ All notable changes to IPD Studio. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **The project assistant** — a panel beside the inspector that answers
+  questions about *this* drawing. It is retrieval over the engineering model,
+  not a chatbot: the common questions ("is this loop complete", "what controls
+  this", "which instruments have no datasheet", "what is downstream") are
+  matched by keyword and answered by a query against the document with **no
+  model call at all** — instant, free, and incapable of inventing anything.
+  Anything else goes to a model that has ten read-only tools and must build
+  every claim out of what they return.
+- **An answer is a list of real objects, not prose.** The only sentence the
+  app writes is a headline composed from counts and values read out of the
+  document. Everything the user acts on is a row carrying the id of something
+  actually on a sheet, so "Show on drawing" always lands and an answer
+  structurally cannot name an object that does not exist.
+- **Invented tags are caught before they reach the screen.** Every tag-shaped
+  token in the model's prose is checked against what is drawn plus whatever the
+  tools returned that turn; a failure regenerates once and then falls back to
+  showing the raw findings. Stated honestly in the source: this catches
+  invented *names*, not false *relationships* — topology claims are constrained
+  by only ever giving the model `walk_signal`/`get_object` results to reason
+  from.
+- **The drawing never leaves the browser.** What is sent is a projection — a
+  selection brief and tool results — governed by an explicit per-key allowlist.
+  `meta` is never sent because it carries the author's name; underlays are
+  never sent. The control is not the comment, it is `tests/assist/redact.test.ts`,
+  which enumerates the keys of `ProjectDoc` and fails when a new one appears
+  unclassified.
+- **Proposals, never silent edits.** The assistant can propose a repair, a
+  symbol, or a whole pre-wired pre-tagged typical loop — nothing is applied
+  until Allow is pressed. It cannot route lines, move, or delete, and it is
+  instructed to say so plainly and then say what to do by hand instead.
+- **Bring your own key.** OpenRouter, Groq, or Anthropic, detected from the
+  key's own prefix and held in local storage — no backend, no proxy, no
+  running cost, and the models offered are the ones the account can actually
+  use rather than a hardcoded guess. With no key set, the keyword path still
+  answers.
+- **A resizable right column.** The inspector and the assistant share it, and
+  the width is remembered.
+
 ## [0.18.0] — 2026-09-03 — the feedback loop
 
 Two kinds of feedback landed together: the drawing telling you what it just

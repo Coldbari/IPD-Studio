@@ -6,7 +6,7 @@ import { useState } from 'react'
 import Canvas from './canvas/Canvas'
 import Toolbar from './panels/Toolbar'
 import Palette from './panels/Palette'
-import PropertyPanel from './panels/PropertyPanel'
+import RightColumn from './panels/RightColumn'
 import Drawer from './panels/Drawer'
 import SheetTabs from './panels/SheetTabs'
 import StatusBar from './panels/StatusBar'
@@ -30,17 +30,37 @@ function writePref(key: string, value: boolean): void {
   }
 }
 
+function readWidth(key: string, fallback: number): number {
+  try {
+    const n = Number(localStorage.getItem(key))
+    return Number.isFinite(n) && n > 0 ? n : fallback
+  } catch {
+    return fallback
+  }
+}
+
 /** The Draw workspace: the drawing sheet and everything that serves it.
  *  Workspace switching, the command palette and the update toast belong to the
  *  shell (EditorRoot) so they survive moving between workspaces. */
 export default function App() {
   const [showPalette, setShowPalette] = useState(() => readPref('pid.ui.palette', true))
   const [showProps, setShowProps] = useState(() => readPref('pid.ui.props', true))
+  const [propsW, setPropsW] = useState(() => readWidth('pid.ui.propsW', 288))
   const togglePalette = (v: boolean) => { setShowPalette(v); writePref('pid.ui.palette', v) }
   const toggleProps = (v: boolean) => { setShowProps(v); writePref('pid.ui.props', v) }
+  const resizeProps = (px: number) => {
+    setPropsW(px)
+    try { localStorage.setItem('pid.ui.propsW', String(px)) } catch { /* ignore */ }
+  }
 
   return (
-    <div className={`app${showPalette ? '' : ' no-palette'}${showProps ? '' : ' no-props'}`}>
+    <div
+      className={`app${showPalette ? '' : ' no-palette'}${showProps ? '' : ' no-props'}`}
+      // Only while the column is shown: `.no-props` sets --props-w to the
+      // collapsed strip width via a class, and an inline value would win over
+      // it and leave a full-width panel behind the collapse button.
+      style={showProps ? ({ '--props-w': `${propsW}px` } as React.CSSProperties) : undefined}
+    >
       <Toolbar />
       {showPalette ? (
         <Palette onCollapse={() => togglePalette(false)} />
@@ -55,9 +75,9 @@ export default function App() {
         <Drawer />
       </div>
       {showProps ? (
-        <PropertyPanel onCollapse={() => toggleProps(false)} />
+        <RightColumn onCollapse={() => toggleProps(false)} onWidth={resizeProps} />
       ) : (
-        <button className="panel-strip strip-right" title="Show properties" onClick={() => toggleProps(true)}>
+        <button className="panel-strip strip-right" title="Show properties and assistant" onClick={() => toggleProps(true)}>
           ◂ Properties
         </button>
       )}
