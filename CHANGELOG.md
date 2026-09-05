@@ -6,6 +6,53 @@ All notable changes to IPD Studio. Format follows
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-09-05 — the design page learns to talk
+
+A UX cycle on the P&ID design page: dead ends closed, one authoritative
+registry behind every shortcut and every command, failures that say what
+happened and why, the drawing worked without a pointer, connection points
+that have names, and — after an evidence-based audit of the result — the
+three things that audit found.
+
+### Fixed
+
+- **Placing twice no longer stacks two symbols on one pixel.** Five clicks on
+  the Gate Valve tile produced five valves at the same coordinates: a document
+  holding five objects, a drawing showing one, and an instrument index that
+  exported five rows with no signal anywhere that anything was wrong.
+  Successive centre placements now step down and to the right, three grid
+  squares at a time, and the cascade restarts whenever the view moves. A drop
+  is untouched — the pointer already said where.
+- **Escape out of a keyboard-opened context menu no longer drops the
+  keyboard.** Shift+F10 then Escape left focus on the document body with the
+  selection cleared, so the R and Delete the user reached for next went
+  nowhere. Escape now closes through the same path choosing an item uses.
+  Dismissing by clicking elsewhere still leaves that click alone.
+- **Enter opens the inspector on the tag, not on the button that hides it.**
+  The first focusable thing in the panel is "Hide the properties panel", so
+  Enter landed there and the field the engineer came for was four Tab presses
+  away — press Enter twice and the panel you opened closed again.
+
+### Changed
+
+- **Symbol search ranks by what a thing IS.** The catalogue was filtered by
+  substring and listed alphabetically, which handled two-letter ISA codes —
+  the queries instrument engineers actually type — worst of all: "FT" returned
+  Crystallizer and Fan (Axial) on "draft", "LT" returned eleven wrong answers
+  of twelve, and "CV" put three regulators above the control valves. Matches
+  are now scored, a name or id beats a keyword, and a query of three
+  characters or fewer only matches at a word boundary. "Foot Valve" carries
+  the keyword "pump"; it is not a pump, and it no longer ranks like one.
+  Search also got about twice as fast, because the word-splitting moved out of
+  the keystroke and into an index built once.
+- **The command palette stops denying commands it has.** With nothing
+  selected, typing "rotate" answered "No command or symbol matches 'rotate'" —
+  a claim about the application, and a false one. It now names the command and
+  the precondition: *Rotate 90° — select a symbol first*. The rows are not
+  runnable, not focusable and not reachable by Enter, and they are derived
+  from the same command registry rather than written beside it, so a command
+  added tomorrow is explained tomorrow for free.
+
 ### Added
 
 - **Connection points have names.** The drawing model addresses ports by short
