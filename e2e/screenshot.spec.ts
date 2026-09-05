@@ -1,5 +1,6 @@
 import { test } from '@playwright/test'
 import fs from 'node:fs'
+import { openTemplate } from './helpers'
 
 // Not a test — a design-verification harness. Run explicitly:
 //   npx playwright test e2e/screenshot.spec.ts
@@ -39,7 +40,7 @@ test('capture imported sample-plant HMI', async ({ page }) => {
   await page.setViewportSize({ width: 1680, height: 1000 })
   await page.goto('/app')
   await page.waitForFunction(() => '__pid' in window)
-  await page.locator('select.tb-template').selectOption('sample')
+  await openTemplate(page, 'sample')
   await page.getByTestId('rail-hmi').click()
   await page.getByTestId('hmi-import-empty').click()
   await page.waitForTimeout(400)
@@ -403,7 +404,7 @@ test('capture the tag picker and value-source rows', async ({ page }) => {
   await page.setViewportSize({ width: 1680, height: 1000 })
   await page.goto('/app')
   await page.waitForFunction(() => '__pid' in window)
-  await page.locator('select.tb-template').selectOption('sample')
+  await openTemplate(page, 'sample')
   await page.getByTestId('rail-hmi').click()
   await page.getByRole('button', { name: 'New screen' }).click()
   const canvas = page.getByTestId('hmi-canvas')

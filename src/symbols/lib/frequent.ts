@@ -28,7 +28,7 @@ export const frequentItems: SymbolDef[] = [
     ports: [
       { id: 'w', x: 0, y: 16, kind: 'process' },
       { id: 'e', x: 32, y: 16, kind: 'process' },
-      { id: 'sig', x: 16, y: 0, kind: 'signal' },
+      { id: 'sig', x: 16, y: 0, kind: 'signal', name: 'Signal' },
     ],
     tagRule: 'valve',
     keywords: ['valve', 'solenoid', 'xv', 'on-off', 'shutdown', 'esd', 'trip'],
@@ -42,7 +42,7 @@ export const frequentItems: SymbolDef[] = [
     ports: [
       { id: 'w', x: 0, y: 16, kind: 'process' },
       { id: 'e', x: 32, y: 16, kind: 'process' },
-      { id: 'sig', x: 16, y: 0, kind: 'signal' },
+      { id: 'sig', x: 16, y: 0, kind: 'signal', name: 'Signal' },
     ],
     tagRule: 'valve',
     keywords: ['valve', 'motor', 'mov', 'motorized', 'electric', 'actuated'],

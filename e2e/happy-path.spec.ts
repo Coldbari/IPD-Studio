@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { openTemplate } from './helpers'
 
 test('place, connect, tag, validate, export', async ({ page }) => {
   await page.goto('/app')
@@ -52,7 +53,7 @@ test('place, connect, tag, validate, export', async ({ page }) => {
   expect(csv).toContain('FIC-101,Flow Indicating Controller,101,Instrument,Sheet 1')
 
   // Sample plant loads clean (v1 file exercises schema migration)
-  await page.locator('.tb-template').selectOption('sample')
+  await openTemplate(page, 'sample')
   await expect(page.locator('.status')).not.toContainText('critical')
   await expect(page.locator('.doc-name')).toContainText('Sample Plant')
 

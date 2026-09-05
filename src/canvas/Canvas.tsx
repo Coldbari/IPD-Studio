@@ -3,11 +3,12 @@
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
 import { useEffect, useRef } from 'react'
-import { canvasRef, createPaper, fitView, renderSheet, viewState, zoomAt } from './paperSetup'
+import { canvasRef, createPaper, fitView, renderSheet, setCanvas, viewState, zoomAt } from './paperSetup'
 import { reconcile } from './reconciler'
 import { decorateLinks } from './decorations'
 import { attachDropHandling } from './dropHandling'
 import { attachInteractions, attachMarquee } from './interactions'
+import { attachKeyboardNav } from './keyboardNav'
 import { renderUnderlay } from './underlay'
 import '../symbols/lib/index'
 import { activeSheet, pauseHistory, resumeHistory, useStore } from '../store/store'
@@ -33,8 +34,7 @@ export default function Canvas() {
     const paperEl = document.createElement('div')
     host.appendChild(paperEl)
     const { paper, graph } = createPaper(paperEl, activeSheet(useStore.getState()).sheetSize)
-    canvasRef.paper = paper
-    canvasRef.graph = graph
+    setCanvas(paper, graph)
     renderSheet(paper, activeSheet(useStore.getState()).sheetSize)
 
     // The paper is a viewport now, so it has to track its container: panel
@@ -53,6 +53,10 @@ export default function Canvas() {
     const detachDrop = attachDropHandling(host, paper)
     const detachInteractions = attachInteractions(paper, graph)
     const detachMarquee = attachMarquee(host, paper, graph)
+    // Tab / Enter / Shift+F10 while the drawing itself has focus. Scoped to
+    // the host rather than the window, or every button on the page would lose
+    // them. See canvas/keyboardNav.ts.
+    const detachNav = attachKeyboardNav(host, paper)
 
     let prevSheetId = useStore.getState().activeSheetId
     let prevSheet = activeSheet(useStore.getState())
@@ -189,6 +193,7 @@ export default function Canvas() {
     window.addEventListener('keyup', onKey)
 
     return () => {
+      detachNav()
       detachMarquee()
       detachInteractions()
       detachDrop()
@@ -201,8 +206,7 @@ export default function Canvas() {
       window.removeEventListener('keyup', onKey)
       paper.remove()
       ro.disconnect()
-      canvasRef.paper = undefined
-      canvasRef.graph = undefined
+      setCanvas()
       host.innerHTML = ''
     }
   }, [])
@@ -215,5 +219,24 @@ export default function Canvas() {
     fitView(paper, graph, sheetSize)
   }, [sheetSize])
 
-  return <div ref={hostRef} className="canvas-host" data-testid="canvas" />
+  return (
+    <div
+      ref={hostRef}
+      className="canvas-host"
+      data-testid="canvas"
+      /* ONE tab stop for the whole drawing. Not one per symbol: a symbol is 69
+         DOM nodes, the paper virtualizes above 400 cells for that reason, and
+         a thousand tab stops would be a keyboard trap with a progress bar. */
+      tabIndex={0}
+      /* `application` rather than `img` or `group`: this surface really does
+         own its own key model while focused — Tab walks the drawing, Enter
+         opens properties — and telling a screen reader to pass keys through is
+         the honest description of that. It is the one role that does not
+         misrepresent what happens here. */
+      role="application"
+      aria-label="P&ID drawing"
+      aria-describedby="canvas-help"
+      aria-keyshortcuts="Tab Enter Escape Shift+F10"
+    />
+  )
 }

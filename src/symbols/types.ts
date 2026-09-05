@@ -19,6 +19,9 @@ export type SymbolCategory =
 
 export type PortKind = 'process' | 'signal' | 'both'
 
+/** Which face of the symbol a port sits on. */
+export type PortSide = 'left' | 'right' | 'top' | 'bottom'
+
 export interface PortDef {
   id: string
   x: number
@@ -30,7 +33,23 @@ export interface PortDef {
   hit?: number
   /** Explicit link departure direction, for ports that sit too deep inside
    *  the frame for edge-distance detection (e.g. positioner bosses). */
-  dir?: 'left' | 'right' | 'top' | 'bottom'
+  dir?: PortSide
+  /**
+   * What this connection IS, in engineering language — "Suction",
+   * "Discharge", "Inlet", "Signal".
+   *
+   * Present only where this definition establishes the meaning: the id says
+   * it, or the drawing does. A port at the top of a vessel is NOT an inlet
+   * because it is at the top, so `vessel.vertical` names none of its eleven
+   * nozzles — the drawing's author decides what each one carries, and the
+   * catalogue has no business guessing. Unnamed ports are described by where
+   * they sit instead (see portLabels.ts), which is true of every symbol.
+   *
+   * Never persisted. Documents store the port ID and only the ID; renaming
+   * here can never orphan a connection, and adding a name can never change
+   * one. See `id`, which is the stable identifier and must not change.
+   */
+  name?: string
 }
 
 export interface SymbolDef {

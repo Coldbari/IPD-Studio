@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { openTemplate } from './helpers'
 
 declare global {
   interface Window { __pid: any }
@@ -27,7 +28,7 @@ test('fluids dialog survives a doc with no fluids field (pre-0.9.13 docs, templa
   await page.goto('/app')
   await page.waitForFunction(() => '__pid' in window)
   await page.waitForFunction(() => Boolean(window.__pid))
-  await page.locator('select.tb-template').selectOption('sample') // sample doc has no fluids[]
+  await openTemplate(page, 'sample') // sample doc has no fluids[]
   await page.waitForSelector('[model-id]')
   await page.getByTestId('tb-fluids').click()
   await expect(page.getByRole('dialog', { name: 'Fluids / services' })).toBeVisible()

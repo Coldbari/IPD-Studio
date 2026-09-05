@@ -1,10 +1,11 @@
 import { expect, test } from '@playwright/test'
+import { openTemplate, restoreIfOffered } from './helpers'
 
 test('one click: sample P&ID becomes a running HMI', async ({ page }) => {
   page.on('dialog', (d) => void d.accept())
   await page.goto('/app')
   await page.waitForFunction(() => '__pid' in window)
-  await page.locator('select.tb-template').selectOption('sample')
+  await openTemplate(page, 'sample')
   await page.getByTestId('rail-hmi').click()
   // the doc has no screens yet -> empty-state import button
   await page.getByTestId('hmi-import-empty').click()
@@ -120,7 +121,7 @@ test('bind with the tag picker and pick-on-canvas', async ({ page }) => {
   await page.goto('/app')
   await page.waitForFunction(() => '__pid' in window)
   // the sample plant fills the picker with real P&ID tags
-  await page.locator('select.tb-template').selectOption('sample')
+  await openTemplate(page, 'sample')
   await page.getByTestId('rail-hmi').click()
   await page.getByRole('button', { name: 'New screen' }).click()
   const canvas = page.getByTestId('hmi-canvas')
@@ -459,9 +460,11 @@ test('build an HMI screen by hand and keep it across reload', async ({ page }) =
   await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.8)
   await page.keyboard.press('Enter')
   await expect(canvas.locator('polyline')).not.toHaveCount(0)
-  // autosave (500ms debounce) then reload; restore confirm auto-accepted
+  // autosave (500ms debounce) then reload; the restore question is the app's
+  // own dialog now, not a browser confirm
   await page.waitForTimeout(1200)
   await page.reload()
+  await restoreIfOffered(page)
   await expect(page.getByTestId('hmi-canvas')).toBeVisible()
   await expect(page.getByTestId('hmi-canvas').locator('g.hmi-widget')).toHaveCount(2)
 })

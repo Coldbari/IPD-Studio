@@ -32,7 +32,14 @@ export function byCategory(): Map<SymbolCategory, SymbolDef[]> {
 export function searchSymbols(query: string): SymbolDef[] {
   const q = query.trim().toLowerCase()
   if (!q) return [...SYMBOLS.values()]
-  return [...SYMBOLS.values()].filter(
-    (d) => d.name.toLowerCase().includes(q) || d.keywords.some((k) => k.includes(q)),
-  )
+  // EVERY word has to land somewhere, rather than the whole phrase having to
+  // be one substring. "heat exchanger" used to find nothing at all: no symbol
+  // is named that and no keyword contains the space, even though "heat" and
+  // "exchanger" are both right there in the metadata. Matching per word reads
+  // the catalogue that already exists instead of inventing synonyms for it.
+  const words = q.split(/\s+/).filter(Boolean)
+  return [...SYMBOLS.values()].filter((d) => {
+    const hay = `${d.name.toLowerCase()} ${d.keywords.join(' ')}`
+    return words.every((w) => hay.includes(w))
+  })
 }

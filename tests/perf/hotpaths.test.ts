@@ -131,3 +131,39 @@ test.skipIf(!process.env.PERF)('symbol markup build cost', () => {
   const ms = performance.now() - t0
   process.stderr.write(`\n  render+parse markup: ${(ms / N).toFixed(4)} ms/node  => ${ms.toFixed(0)} ms for 1000 nodes\n`)
 })
+
+import { SYMBOLS } from '../../src/symbols/registry'
+import { portLabels, resetPortLabels } from '../../src/symbols/portLabels'
+
+/**
+ * Port labels are catalogue metadata resolved statically, so the only number
+ * that matters is what it costs to answer for a symbol the first time — the
+ * inspector asks once per selection and nothing on the drag path asks at all.
+ */
+test.skipIf(!process.env.PERF)('port label cost', () => {
+  const ids = [...SYMBOLS.keys()]
+  const ports = [...SYMBOLS.values()].reduce((n, d) => n + d.ports.length, 0)
+
+  resetPortLabels()
+  const t0 = performance.now()
+  for (const id of ids) portLabels(id)
+  const cold = performance.now() - t0
+
+  const t1 = performance.now()
+  const N = 100
+  for (let i = 0; i < N; i++) for (const id of ids) portLabels(id)
+  const warm = (performance.now() - t1) / N
+
+  // The worst realistic single answer: eleven nozzles, turned.
+  resetPortLabels()
+  const t2 = performance.now()
+  portLabels('vessel.vertical', 90)
+  const worst = performance.now() - t2
+
+  process.stderr.write(
+    `\n  port labels: ${ids.length} symbols / ${ports} ports` +
+    `\n    cold, whole catalogue : ${cold.toFixed(3)} ms` +
+    `\n    warm, whole catalogue : ${warm.toFixed(3)} ms` +
+    `\n    one 11-nozzle vessel  : ${worst.toFixed(4)} ms\n`,
+  )
+})

@@ -4,6 +4,7 @@
 
 import { useState } from 'react'
 import { useStore } from '../store/store'
+import { confirmAction } from '../feedback/notices'
 
 /**
  * Says out loud that IPD Studio ships often, and gives people the one action
@@ -40,15 +41,22 @@ export function VersionChip() {
   const dirty = useStore((s) => s.dirty)
   const [busy, setBusy] = useState(false)
 
-  const refresh = () => {
-    if (dirty && !window.confirm('Reload to get the latest version? Your unsaved changes are autosaved, but any edit from the last moment may be lost.')) return
+  const refresh = async () => {
+    if (dirty) {
+      const ok = await confirmAction({
+        title: 'Reload for the latest version?',
+        body: 'This drawing has unsaved changes. They are autosaved on this machine and will be offered back when the page returns, but an edit from the last few seconds may not have reached the autosave yet.',
+        confirmLabel: 'Reload',
+      })
+      if (!ok) return
+    }
     setBusy(true)
     void forceRefresh()
   }
 
   return (
     <button type="button" className="version-chip" data-testid="version-chip"
-      onClick={refresh} disabled={busy} title={BLURB}>
+      onClick={() => void refresh()} disabled={busy} title={BLURB}>
       v{__APP_VERSION__} · {busy ? 'refreshing…' : 'updates often'}
     </button>
   )

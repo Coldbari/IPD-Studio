@@ -9,6 +9,8 @@ import { useQa } from '../validate/live'
 import type { Severity } from '../validate/rules'
 import { locateCell } from '../canvas/locate'
 import { applyFix, describeFix, type FixSpec } from '../assist/fixes'
+import { showStatus } from '../feedback/notices'
+import AcceptFindingDialog, { type AcceptTarget } from '../panels/AcceptFindingDialog'
 
 const SEVERITY_LABEL: Record<Severity, string> = {
   critical: 'Critical',
@@ -38,6 +40,7 @@ export default function ChecksWorkspace() {
   const unignoreFinding = useStore((s) => s.unignoreFinding)
   const [discipline, setDiscipline] = useState<string>('all')
   const [showIgnored, setShowIgnored] = useState(false)
+  const [accepting, setAccepting] = useState<AcceptTarget | null>(null)
 
   const report = useQa()
   const groups = report.groups.filter((g) => discipline === 'all' || g.rule.discipline === discipline)
@@ -49,15 +52,16 @@ export default function ChecksWorkspace() {
   }
 
   // A fix can fail — the symbol may have moved on since the report was built.
-  // Saying so beats a button that appears to do nothing.
+  // Saying so beats a button that appears to do nothing. It is a status line
+  // rather than a dialog: nothing is broken, the report is simply stale, and
+  // re-reading it is the whole of the recovery.
   const runFix = (spec: FixSpec) => {
     const result = applyFix(spec)
-    if (!result.ok) window.alert(result.message ?? 'That fix could not be applied.')
-  }
-
-  const accept = (key: string, message: string) => {
-    const reason = window.prompt(`Accept this finding?\n\n${message}\n\nWhy is it acceptable? (recorded on the drawing)`)
-    if (reason && reason.trim()) ignoreFinding(key, reason.trim())
+    if (result.ok) return
+    showStatus(
+      result.message ?? 'That fix no longer applies — the drawing has moved on since this finding was raised.',
+      { kind: 'warning' },
+    )
   }
 
   // one heading per severity, emitted the first time that severity appears
@@ -125,7 +129,7 @@ export default function ChecksWorkspace() {
                     <button
                       className="ws-issue-ignore"
                       title="Accept this finding, with a reason"
-                      onClick={() => accept(f.key, f.message)}
+                      onClick={() => setAccepting({ key: f.key, rule: g.rule.title, message: f.message, why: g.rule.why })}
                     >
                       Accept
                     </button>
@@ -157,6 +161,13 @@ export default function ChecksWorkspace() {
           </div>
         )}
       </div>
+      {accepting && (
+        <AcceptFindingDialog
+          target={accepting}
+          onAccept={(reason) => ignoreFinding(accepting.key, reason)}
+          onClose={() => setAccepting(null)}
+        />
+      )}
     </div>
   )
 }

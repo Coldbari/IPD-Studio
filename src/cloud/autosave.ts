@@ -6,6 +6,34 @@ import { create } from 'zustand'
 import { useStore } from '../store/store'
 import { useAuthStore } from '../auth/authStore'
 import { saveToCloud } from './sync'
+import { notify } from '../feedback/notices'
+
+/**
+ * A save failure in the engineer's words.
+ *
+ * Firestore errors arrive as "FirebaseError: Missing or insufficient
+ * permissions." and similar, which the status bar was showing verbatim. The
+ * three that actually happen get a sentence; anything else says what happened
+ * without guessing at why, and the raw text goes behind Details.
+ */
+export function cloudErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  if (/offline|network|unavailable|failed to fetch/i.test(raw)) {
+    return 'Your browser could not reach the server. This usually means the connection dropped.'
+  }
+  if (/permission|unauthenticated|insufficient/i.test(raw)) {
+    return 'Your account is not allowed to write this drawing. Your sign-in may have expired.'
+  }
+  if (/quota|resource-exhausted|too large|exceeded/i.test(raw)) {
+    return 'The drawing is too large for the storage this account has left.'
+  }
+  // Deliberately NOT falling back to the raw text. authErrorMessage returns
+  // the exception's own message when it recognises nothing, which would have
+  // put "FirebaseError: kaboom" in the position where the user reads an
+  // explanation — the exact leak this phase exists to stop. The raw text is
+  // still carried, behind Details, where it is evidence rather than a reason.
+  return 'The server refused the write and did not say why.'
+}
 
 export type CloudState = 'off' | 'saving' | 'saved' | 'error'
 
@@ -28,7 +56,17 @@ let inflight = false
  *  so the cloud copy never settles one revision behind the screen. */
 let queued = false
 
-async function write(): Promise<void> {
+/**
+ * Whether a failure gets a dialog.
+ *
+ * A background autosave that fails is already reported honestly: `markSaved`
+ * is not called, so `dirty` stays true and the status bar reads "Not saved to
+ * your account". Going offline for a minute must not stack up dialogs on top
+ * of that. But someone who pressed Save is WAITING for an answer, and silence
+ * plus a small grey status line is not one — so an explicit save that fails
+ * says so, and offers the retry.
+ */
+async function write(explicit = false): Promise<void> {
   const user = useAuthStore.getState().user
   const { doc, cloudId, setCloudId, markSaved } = useStore.getState()
   if (!user) return
@@ -43,10 +81,25 @@ async function write(): Promise<void> {
     if (!queued) markSaved()
     useCloudStatus.setState({ state: 'saved', message: null, savedAt: Date.now() })
   } catch (err) {
-    useCloudStatus.setState({
-      state: 'error',
-      message: err instanceof Error ? err.message : 'Could not save to your account.',
-    })
+    // markSaved() is deliberately NOT called: `dirty` stays true, so nothing
+    // in the UI claims this drawing is stored when it is not.
+    useCloudStatus.setState({ state: 'error', message: cloudErrorMessage(err) })
+    if (explicit) {
+      notify({
+        kind: 'error',
+        title: 'Your changes could not be saved to your account',
+        body: cloudErrorMessage(err),
+        hint: 'The drawing on screen is untouched and still has every change. It stays autosaved on this machine either way — you can also download a .pnid from the File menu.',
+        details: err instanceof Error ? err.message : String(err),
+        actions: [
+          { label: 'Try saving again', primary: true, run: () => saveNow() },
+          { label: 'Download a .pnid instead', run: async () => {
+            const { saveFile } = await import('../persist/file')
+            await saveFile()
+          } },
+        ],
+      })
+    }
   } finally {
     inflight = false
     if (queued) {
@@ -64,7 +117,7 @@ function schedule(): void {
       queued = true
       return
     }
-    void write()
+    void write(false)
   }, DEBOUNCE_MS)
 }
 
@@ -88,7 +141,7 @@ export async function saveNow(): Promise<void> {
     queued = true
     return
   }
-  await write()
+  await write(true)
 }
 
 /**

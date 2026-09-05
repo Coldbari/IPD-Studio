@@ -12,6 +12,8 @@ import { nextLoopNumber } from '../isa/autonumber'
 import { buildTypical } from '../assist/typicals'
 import { activeSheet, useStore } from '../store/store'
 import { canvasRef } from './paperSetup'
+import { focusCanvas } from './keyboardNav'
+import { notePlacement } from '../panels/componentPrefs'
 import { type Dock, type DockIndex, buildDockIndex, dockEdge, dockRadius, findDock, flashDockMade, showDockHint } from './autoConnect'
 
 export function kindForSymbol(def: Pick<SymbolDef, 'tagRule' | 'category'>): NodeKind {
@@ -53,6 +55,12 @@ export function placeAtCenter(symbolId: string, presetLetters?: string): void {
   }
   const id = store.addNode(node)
   store.setSelection([id])
+  notePlacement(def.id, presetLetters)
+  // The keyboard follows the symbol onto the sheet. Without this, placing from
+  // the palette left focus in the search field with the new symbol selected
+  // behind it, so Delete and R — which act on the selection — went to a text
+  // input instead of the drawing.
+  focusCanvas()
 }
 
 /** Place a fully wired typical loop with its top-left near the canvas center. */
@@ -65,6 +73,7 @@ export function placeTypicalAtCenter(typicalId: string): void {
   const store = useStore.getState()
   const { nodes, edges } = buildTypical(typicalId, store.doc, { x: local.x - 96, y: local.y - 96 })
   store.addBatch(nodes, edges)
+  focusCanvas()
 }
 
 /** Open a file the user dropped on the canvas, routed by extension. */
@@ -73,20 +82,29 @@ async function openDroppedFile(file: File): Promise<void> {
   const text = await file.text()
   const store = useStore.getState()
   if (name.endsWith('.dxf')) {
-    const { parseDxfUnderlay } = await import('../import/dxfUnderlay')
-    const { sheetPx } = await import('../model/doc')
-    const { activeSheet } = await import('../store/store')
-    const { polylines, warnings } = parseDxfUnderlay(text, sheetPx(activeSheet(store).sheetSize))
-    store.setUnderlay({ name: file.name, polylines })
-    if (warnings.length) window.alert(warnings.join('\n'))
+    const { loadUnderlayText } = await import('../persist/underlay')
+    await loadUnderlayText(file.name, text)
     return
   }
-  if (store.dirty && !window.confirm(`Open “${file.name}”? Unsaved changes will be lost.`)) return
+  // Opening replaces the whole document, and Undo does not reach across a
+  // load — so this is one of the few places a question is right.
+  if (store.dirty) {
+    const { confirmAction } = await import('../feedback/notices')
+    const ok = await confirmAction({
+      title: 'Open this drawing?',
+      body: `“${file.name}” replaces what is open now, and this cannot be undone. Your unsaved changes are autosaved and can be recovered from File ▸ Version history.`,
+      confirmLabel: 'Open it',
+      danger: true,
+    })
+    if (!ok) return
+  }
   const { loadAnyText } = await import('../persist/file')
+  const { notify } = await import('../feedback/notices')
+  const { openFailureNotice } = await import('../persist/openErrors')
   try {
     loadAnyText(file.name, text)
-  } catch {
-    window.alert(`Could not read ${file.name} as an IPD Studio drawing`)
+  } catch (err) {
+    notify(openFailureNotice(file.name, err))
   }
 }
 
@@ -209,6 +227,7 @@ export function attachDropHandling(host: HTMLElement, paper: dia.Paper): () => v
     // One batch either way: the symbol and the line it docked onto arrive
     // together, and one undo takes both back. addBatch selects the new node.
     store.addBatch([node], dock ? [{ ...dockEdge(id, dock), id: ulid() }] : [])
+    notePlacement(payload.symbolId, payload.presetLetters)
     // Say so, plainly. A symbol dropped near a nozzle and a symbol dropped ONTO
     // one look much the same once the drag ghost is gone.
     if (dock) flashDockMade(paper, dock.at)

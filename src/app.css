@@ -16,7 +16,10 @@ html, body, #root { height: 100%; }
   --c-line-soft: #e5e8ec;
   --c-ink: #1b2430;
   --c-ink-2: #5a6673;
-  --c-ink-3: #8a94a0;
+  /* 4.6:1 on --c-chrome, 4.9:1 on --c-panel, 5.1:1 on white. Was #8a94a0,
+     which is 2.8:1 — below AA at every size this token is used at, and it
+     is used for panel headings, status chips and every quiet caption. */
+  --c-ink-3: #65707c;
   --c-accent: #0e6e7a;
   --c-accent-soft: #e6f1f3;
   --c-warn: #9a6a15;
@@ -123,7 +126,7 @@ body { font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: 
 .prop-check { display: flex; align-items: center; gap: 6px; margin: 8px 0; }
 .prop-group { margin: 10px 0; }
 .prop-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-.prop-hint { color: #888; font-size: 11px; }
+.prop-hint { color: var(--c-ink-3); font-size: 11px; }
 .scale-value { min-width: 36px; text-align: center; font-size: 12px; color: #333; }
 .prop-row button:disabled { opacity: 0.4; cursor: default; }
 .tag-row { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
@@ -145,7 +148,7 @@ button { font: inherit; }
 .drawer-group { font-weight: 600; font-size: 12px; margin: 6px 0 2px; color: #555; }
 .drawer-item { display: block; width: 100%; text-align: left; background: none; border: none; padding: 3px 6px; cursor: pointer; font-size: 12px; color: #333; border-radius: 3px; }
 .drawer-item:hover { background: #eef2f7; }
-.drawer-empty { padding: 10px; font-size: 12px; color: #888; background: #fff; border-top: 1px solid #d5d5d5; }
+.drawer-empty { padding: 10px; font-size: 12px; color: var(--c-ink-3); background: #fff; border-top: 1px solid #d5d5d5; }
 .status-warn { color: #b7791f; font-weight: 600; }
 .loop-hint { color: #b7791f; }
 
@@ -182,7 +185,7 @@ button { font: inherit; }
 .sheet-tab:hover { background: #e9ebef; }
 .sheet-tab.active { background: var(--c-surface); color: var(--c-ink); font-weight: 600; box-shadow: 0 1px 0 var(--c-surface); }
 .sheet-tab input { font: inherit; width: 92px; border: 1px solid var(--c-line); border-radius: 3px; padding: 1px 4px; }
-.sheet-close { border: none; background: none; cursor: pointer; color: #888; padding: 0 2px; font-size: 13px; }
+.sheet-close { border: none; background: none; cursor: pointer; color: var(--c-ink-3); padding: 0 2px; font-size: 13px; }
 .sheet-close:hover { color: #c00; }
 .sheet-add { border: none; background: none; cursor: pointer; padding: 2px 8px; font-size: 13px; color: #555; }
 
@@ -194,8 +197,8 @@ button { font: inherit; }
 .search-box ul { list-style: none; max-height: 300px; overflow-y: auto; border-top: 1px solid #e5e5ea; }
 .search-box li { padding: 7px 14px; cursor: pointer; font-size: 13px; display: flex; justify-content: space-between; }
 .search-box li.active { background: #eef2f7; }
-.search-sheet { color: #888; font-size: 12px; }
-.search-empty { padding: 10px 14px; color: #888; font-size: 13px; border-top: 1px solid #e5e5ea; }
+.search-sheet { color: var(--c-ink-3); font-size: 12px; }
+.search-empty { padding: 10px 14px; color: var(--c-ink-3); font-size: 13px; border-top: 1px solid #e5e5ea; }
 .align-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-bottom: 10px; }
 .align-grid button { padding: 4px 2px; font-size: 11px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; }
 .align-grid button:hover { background: #eef2f7; }
@@ -223,8 +226,8 @@ button { font: inherit; }
 .advisor-fix { border: 1px solid #2b6cb0; color: #2b6cb0; background: #fff; border-radius: 4px; padding: 2px 10px; font-size: 11px; cursor: pointer; white-space: nowrap; }
 .advisor-fix:hover { background: #2b6cb0; color: #fff; }
 
-.export-menu { position: relative; }
-.export-menu > button.on { background: #dbeafe; border-color: #2b6cb0; }
+.tb-menu { position: relative; }
+.tb-menu > button.on { background: #dbeafe; border-color: #2b6cb0; }
 .export-pop { z-index: 60; background: #fff; border: 1px solid #c5c5d5; border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); padding: 6px; min-width: 190px; }
 .export-title { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #889; padding: 6px 8px 2px; }
 .export-item { display: block; width: 100%; text-align: left; border: none; background: none; padding: 5px 8px; border-radius: 4px; cursor: pointer; font: inherit; font-size: 12.5px; color: #223; }
@@ -348,7 +351,7 @@ button { font: inherit; }
 .bd { display: flex; flex-direction: column; gap: 12px; }
 .bd-summary { display: flex; gap: 28px; flex-wrap: wrap; padding: 12px 14px; border: 1px solid #e2e2e8; border-radius: 8px; background: #fafafc; }
 .bd-figure { display: flex; flex-direction: column; gap: 1px; }
-.bd-k { font-size: 10px; letter-spacing: .09em; text-transform: uppercase; color: #8a95a0; }
+.bd-k { font-size: 10px; letter-spacing: .09em; text-transform: uppercase; color: var(--c-ink-3); }
 .bd-total { font-size: 25px; font-weight: 700; line-height: 1.15; font-variant-numeric: tabular-nums; color: #16202a; }
 .bd-total.bd-good { color: #2f7d55; }
 .bd-total.bd-bad { color: #c53030; }
@@ -366,14 +369,14 @@ button { font: inherit; }
 
 .bd-table-wrap { max-height: 320px; overflow-y: auto; border: 1px solid #d5d5da; border-radius: 6px; }
 .bd-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.bd-table thead th { position: sticky; top: 0; z-index: 1; background: #f2f2f6; text-align: left; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: #8a95a0; font-weight: 600; padding: 7px 9px; border-bottom: 1px solid #d5d5da; }
+.bd-table thead th { position: sticky; top: 0; z-index: 1; background: #f2f2f6; text-align: left; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--c-ink-3); font-weight: 600; padding: 7px 9px; border-bottom: 1px solid #d5d5da; }
 .bd-table th.r, .bd-table td.r { text-align: right; }
 .bd-table tbody tr { border-top: 1px solid #ececf0; }
 .bd-table tbody tr:hover { background: #fafafc; }
 .bd-table td { padding: 6px 9px; vertical-align: top; }
 .bd-num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bd-item { font-weight: 500; }
-.bd-basis { display: block; font-size: 10.5px; color: #9aa4ae; line-height: 1.3; max-width: 330px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bd-basis { display: block; font-size: 10.5px; color: var(--c-ink-3); line-height: 1.3; max-width: 330px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bd-est { display: inline-block; margin-left: 6px; padding: 0 4px; border-radius: 2px; background: #f4ebdb; color: #9a6a15; font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase; vertical-align: 1px; cursor: help; }
 .bd-unit { width: 92px; text-align: right; font: inherit; font-size: 12.5px; font-variant-numeric: tabular-nums; padding: 3px 5px; border: 1px solid #d5d5da; border-radius: 3px; background: #fff; color: #16202a; }
 .bd-unit.bd-overridden { font-weight: 700; border-color: #0e6e7a; background: #f2fafb; }
@@ -389,7 +392,7 @@ button { font: inherit; }
 .bd-target { display: flex; gap: 4px; }
 .bd-target input { width: 96px; }
 .bd-target select { padding: 5px 4px; }
-.bd-hint { font-size: 10.5px; color: #8a95a0; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.bd-hint { font-size: 10.5px; color: var(--c-ink-3); font-variant-numeric: tabular-nums; margin-top: 2px; }
 
 /* --- per-component price block in the property panel --- */
 .prop-cost { gap: 4px; }
@@ -398,9 +401,9 @@ button { font: inherit; }
 .prop-cost-row input { flex: 1; min-width: 0; text-align: right; font-variant-numeric: tabular-nums; }
 .prop-cost-reset { padding: 3px 7px; border: 1px solid #ccc; border-radius: 4px; background: #fff; font: inherit; font-size: 12px; cursor: pointer; color: #556; }
 .prop-cost-reset:hover { background: #eef2f7; }
-.prop-cost-note { font-size: 10.5px; color: #8a95a0; text-transform: none; font-variant-numeric: tabular-nums; }
+.prop-cost-note { font-size: 10.5px; color: var(--c-ink-3); text-transform: none; font-variant-numeric: tabular-nums; }
 .prop-cost-note.prop-cost-on { color: #0e6e7a; font-weight: 600; }
-.prop-cost-basis { font-size: 10px; line-height: 1.35; color: #a4adb6; text-transform: none; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.prop-cost-basis { font-size: 10px; line-height: 1.35; color: var(--c-ink-3); text-transform: none; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .prop-est { padding: 0 4px; border-radius: 2px; background: #f4ebdb; color: #9a6a15; font-size: 9px; letter-spacing: .05em; text-transform: uppercase; cursor: help; }
 
 /* the palette's own chrome, aligned to the panel header above it */
@@ -424,8 +427,6 @@ button { font: inherit; }
 .toolbar .tb-template { max-width: 124px; }
 .toolbar .tb-line select { max-width: 148px; }
 .tb-line { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--c-ink-2); white-space: nowrap; }
-@media (max-width: 1560px) {
-}
 @media (max-width: 1360px) {
   .toolbar .tb-line-label { display: none; }
   .toolbar .tb-template { max-width: 104px; }
@@ -438,9 +439,6 @@ button { font: inherit; }
   .toolbar { gap: 3px; padding: 4px 6px; }
   .toolbar button, .toolbar select { padding: 0 7px; }
   .toolbar .doc-name { max-width: 96px; }
-}
-/* collapsed coffee button keeps the toolbar's button geometry, not a blob */
-@media (max-width: 1560px) {
 }
 
 /* Route-level suspense fallback — shown while the editor or homepage chunk loads. */
@@ -959,3 +957,383 @@ button.used-row:hover { background: var(--c-accent-soft); color: var(--c-accent)
 .assist-free { font-size: 11.5px; line-height: 1.5; padding: 7px 9px; margin: 6px 0; border-left: 3px solid #2f855a; background: #f0fff4; border-radius: 0 var(--r) var(--r) 0; }
 .assist-free code { font-size: 11px; }
 .assist-free a { color: #2f855a; font-weight: 600; }
+
+/* ── Phase 1: removing the dead ends ──────────────────────────────────────
+   Three surfaces that answer "how do I start?", "what does this key do?" and
+   "where did the other findings go?" — the questions the Design Page left
+   hanging. Styles reuse the existing tokens; nothing new was invented. */
+
+/* The palette never said how a symbol gets onto the sheet. One line, under
+   the search box, where the eye already is on the way to the tiles. */
+.palette-how {
+  margin: 0 0 6px; padding: 0 10px;
+  font-size: 10.5px; line-height: 1.4; color: var(--c-ink-3);
+}
+/* The tile is a <button> now; strip the UA chrome the div never had. */
+.palette-entry {
+  width: 100%; background: none; font: inherit; text-align: center;
+  -webkit-appearance: none; appearance: none;
+}
+/* Reachable by ↓ from the search box, so this rule can finally match
+   something — it has been in the stylesheet, dead, since the tiles were divs. */
+.palette-entry:focus-visible {
+  outline: 2px solid var(--c-accent); outline-offset: 1px;
+  border-color: var(--c-accent); background: var(--c-surface);
+}
+
+/* Empty sheet: three ways in, ahead of the document fields. */
+.prop-start { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--c-line-soft); }
+.start-act {
+  display: flex; flex-direction: column; gap: 1px; width: 100%; margin-bottom: 5px;
+  padding: 8px 10px; text-align: left; cursor: pointer;
+  border: 1px solid var(--c-line); border-radius: var(--r);
+  background: var(--c-surface); color: var(--c-ink); font: inherit;
+}
+.start-act:hover { border-color: var(--c-accent); background: var(--c-accent-soft); }
+.start-act:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; }
+.start-act b { font-size: 12.5px; font-weight: 600; }
+.start-act span { font-size: 11px; line-height: 1.35; color: var(--c-ink-3); }
+.prop-note { font-size: 12px; line-height: 1.5; color: var(--c-ink-2); margin: 0; }
+.prop-how { margin-top: 10px; font-size: 11.5px; }
+.prop-how b { color: var(--c-ink); font-weight: 600; }
+
+/* Findings the Issues panel deliberately does not list still get a line. */
+.drawer-aside {
+  padding: 4px 6px 6px; font-size: 11.5px; color: var(--c-ink-3);
+}
+
+/* ── shortcut sheet ─────────────────────────────────────────────────────── */
+.ks { display: flex; flex-direction: column; gap: 18px; }
+.ks-group { display: flex; flex-direction: column; gap: 6px; }
+.ks-head {
+  margin: 0; font-size: 10px; font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--c-ink-3);
+}
+.ks-list { margin: 0; display: flex; flex-direction: column; gap: 5px; }
+/* Keys in a fixed left column so the eye can run down them; the description
+   wraps in the rest, and the note sits under it rather than beside it. */
+.ks-row { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 4px 12px; align-items: baseline; }
+.ks-keys { margin: 0; display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; }
+.ks-what { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--c-ink); }
+.ks-note { display: block; font-size: 11px; line-height: 1.4; color: var(--c-ink-3); margin-top: 1px; }
+.ks-or { font-size: 10px; color: var(--c-ink-3); margin: 0 3px; }
+.ks kbd {
+  font: 500 11.5px/1.6 ui-monospace, "SF Mono", Menlo, monospace;
+  background: var(--c-chrome); border: 1px solid var(--c-line);
+  border-bottom-width: 2px; border-radius: 4px; padding: 0 5px;
+  color: var(--c-ink); white-space: nowrap;
+}
+/* A gesture is not a key: same row, softer chip, so the two never get
+   confused for one another while still living in one table. */
+.ks kbd.ks-gesture {
+  font-family: inherit; font-size: 11px; font-weight: 500;
+  background: none; border-style: dashed; border-bottom-width: 1px;
+  color: var(--c-ink-2);
+}
+@media (max-width: 560px) {
+  .ks-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ── Phase 2: giving the canvas room ──────────────────────────────────────
+   The drawing is the product. Three changes, all layout: the toolbar stops
+   being able to hide its own primary action, the drawer stops charging the
+   canvas rent for a closed panel, and the side panels yield as the window
+   narrows instead of holding a constant 584px. */
+
+/* Split toolbar. Only the left half scrolls, so what falls off the end is a
+   line-class dropdown rather than Export and the account menu. */
+.toolbar { padding: 4px 0; gap: 0; overflow: visible; }
+.tb-scroll {
+  display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1 1 auto;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
+  padding: 0 4px 0 10px;
+}
+.tb-scroll > * { flex: none; }
+.tb-fixed {
+  display: flex; align-items: center; gap: 4px; flex: none;
+  padding: 0 10px 0 8px;
+  /* A hairline and a sliver of the chrome behind it, so a row scrolled up to
+     the divider reads as "there is more that way" rather than as clipped. */
+  border-left: 1px solid var(--c-line);
+}
+
+/* The canvas layer the drawer floats over. */
+.canvas-wrap { position: relative; flex: 1 1 0; min-height: 0; display: flex; }
+
+.drawer {
+  position: absolute; left: 0; bottom: 0; z-index: 6;
+  max-height: 60%; width: auto;
+  border-top: 1px solid var(--c-line); border-right: 1px solid var(--c-line);
+  border-radius: 0 var(--r) 0 0;
+  background: var(--c-panel);
+  box-shadow: 0 -2px 10px rgba(20, 28, 36, .07);
+}
+.drawer-open { right: 0; border-radius: 0; }
+.drawer-open .drawer-list, .drawer-open .drawer-empty { max-height: 168px; }
+/* Closed, the strip is a pair of tabs on a transparent ground rather than a
+   full-width bar: it covers as little of the drawing as it can while still
+   being where people already look for it. */
+.drawer:not(.drawer-open) { border-right-color: transparent; box-shadow: none; background: none; }
+.drawer:not(.drawer-open) .drawer-tabs { background: none; }
+.drawer:not(.drawer-open) .drawer-tabs button { background: var(--c-chrome-2); opacity: .92; }
+.drawer:not(.drawer-open) .drawer-tabs button:hover { opacity: 1; }
+
+/* The inspector's width on a laptop is decided in panelDefaults(), not here:
+   .app carries an inline --props-w whenever the column is shown, so a media
+   rule for it would never apply. */
+
+/* The tightening the toolbar used to do to itself now belongs to the half
+   that scrolls. */
+@media (max-width: 1360px) {
+  .tb-scroll { gap: 3px; padding-left: 8px; }
+  .tb-fixed { padding-left: 6px; padding-right: 8px; }
+}
+@media (max-width: 1240px) {
+  .tb-scroll { gap: 3px; padding-left: 6px; }
+}
+
+/* ── Phase 3: the context menu ────────────────────────────────────────────
+   The fast path for people who know what they want, and the app's main
+   shortcut-teaching surface for everyone else — which is why every row that
+   has a key prints it. */
+.ctx {
+  z-index: 70; min-width: 208px; padding: 4px;
+  display: flex; flex-direction: column;
+  background: var(--c-surface); border: 1px solid var(--c-line);
+  border-radius: var(--r); box-shadow: 0 10px 28px rgba(20, 28, 36, .18);
+}
+.ctx-item {
+  display: flex; align-items: center; gap: 14px;
+  width: 100%; padding: 5px 8px; border: 0; border-radius: 4px;
+  background: none; font: inherit; font-size: 12.5px; color: var(--c-ink);
+  text-align: left; cursor: pointer;
+}
+.ctx-item > span:first-child { flex: 1; }
+.ctx-item:hover:not(:disabled) { background: var(--c-accent-soft); color: var(--c-accent); }
+.ctx-item:focus-visible { outline: 2px solid var(--c-accent); outline-offset: -2px; }
+.ctx-item:disabled { color: var(--c-ink-3); cursor: default; }
+.ctx-danger:hover:not(:disabled) { background: #fdecea; color: var(--c-bad); }
+/* The shortcut is the point of the row being here, so it is quiet but never
+   hidden — this is where the seven undocumented bindings get learned. */
+.ctx-key {
+  font: 500 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--c-ink-3); white-space: nowrap;
+}
+.ctx-item:hover:not(:disabled) .ctx-key { color: inherit; opacity: .8; }
+.ctx-sep { height: 1px; margin: 4px 6px; background: var(--c-line-soft); }
+.ctx-align { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; padding: 2px 4px 6px; }
+.ctx-align button {
+  height: 26px; border: 1px solid var(--c-line); border-radius: 4px;
+  background: var(--c-surface); color: var(--c-ink-2);
+  font: inherit; font-size: 13px; cursor: pointer;
+}
+.ctx-align button:hover { border-color: var(--c-accent); background: var(--c-accent-soft); color: var(--c-accent); }
+.ctx-align button:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; }
+
+/* Advanced properties: present, one disclosure away, never in front. */
+.prop-adv { margin-top: 8px; }
+.prop-adv > summary {
+  cursor: pointer; font-size: 11px; color: var(--c-ink-3);
+  padding: 2px 0; list-style: none;
+}
+.prop-adv > summary::-webkit-details-marker { display: none; }
+.prop-adv > summary::before { content: '▸ '; }
+.prop-adv[open] > summary::before { content: '▾ '; }
+.prop-adv > summary:hover { color: var(--c-accent); }
+.prop-adv > summary:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; border-radius: 3px; }
+
+/* The symbol's connection points. A reference table, so it reads quietly:
+   the name carries the weight and the kind and state sit back. */
+.prop-ports { list-style: none; margin: 4px 0 0; padding: 0; }
+.prop-ports li {
+  display: flex; align-items: baseline; gap: 6px;
+  padding: 2px 0; font-size: 11px; color: var(--c-ink-3);
+}
+.prop-ports .port-name { flex: 1 1 auto; color: var(--c-ink-2); }
+.prop-ports .port-kind { flex: 0 0 auto; opacity: 0.75; }
+.prop-ports .port-state { flex: 0 0 auto; min-width: 56px; text-align: right; opacity: 0.75; }
+.prop-ports .port-used .port-state { color: var(--c-accent); opacity: 1; }
+
+/* Destructive actions read as destructive, and sit at the end of the panel
+   rather than among the edits. */
+.prop-destroy { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--c-line-soft); }
+.prop-delete {
+  padding: 4px 10px; border: 1px solid var(--c-line); border-radius: var(--r);
+  background: var(--c-surface); color: var(--c-ink-2); font: inherit; font-size: 12px; cursor: pointer;
+}
+.prop-delete:hover { border-color: var(--c-bad); background: #fdecea; color: var(--c-bad); }
+.prop-delete:focus-visible { outline: 2px solid var(--c-bad); outline-offset: 1px; }
+
+/* ── Phase 5: failure, said out loud ──────────────────────────────────────
+   Four surfaces, in order of how much they interrupt: a mark on the canvas, a
+   line in the status bar, a dialog, a question. Nothing here is a toast
+   stack — this is engineering software and a failure is a thing to read once,
+   not a thing to dismiss. */
+
+/* Level 1 — a refusal, at the point on the drawing where it happened. Same red
+   as the shake-to-disconnect flash: one vocabulary for "no". */
+.pid-refusal-ring { fill: none; stroke: var(--c-bad); stroke-width: 2; }
+.pid-refusal-bar { stroke: var(--c-bad); stroke-width: 2; stroke-linecap: round; }
+.pid-refusal-plate { fill: var(--c-bad); }
+.pid-refusal-text {
+  fill: #fff; stroke: none;
+  font: 600 11px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.pid-refusal { animation: pid-refusal-in .18s ease-out; }
+@keyframes pid-refusal-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .pid-refusal { animation: none; } }
+
+/* Level 3 — the status line. Quiet, transient, never focusable. */
+.status-msg { display: inline-flex; align-items: center; gap: 6px; max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-more {
+  border: 0; background: none; padding: 0 2px; font: inherit; font-size: 11px;
+  color: var(--c-accent); text-decoration: underline; cursor: pointer;
+}
+.status-more:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; border-radius: 2px; }
+
+/* Level 4/5 — the dialog. Structure is the message: what happened is the
+   title, why is the body, what to do next is the hint. */
+.nx { display: flex; flex-direction: column; gap: 10px; }
+.nx-body { margin: 0; font-size: 13px; line-height: 1.5; color: var(--c-ink); }
+.nx-hint { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--c-ink-2); }
+.nx-details > summary { cursor: pointer; font-size: 11.5px; color: var(--c-ink-3); }
+.nx-details > summary:hover { color: var(--c-accent); }
+.nx-details pre {
+  margin: 6px 0 0; padding: 8px 10px; max-height: 150px; overflow: auto;
+  background: var(--c-chrome-2); border: 1px solid var(--c-line-soft); border-radius: var(--r);
+  font: 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace; color: var(--c-ink-2);
+  white-space: pre-wrap; word-break: break-word;
+}
+.nx-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.nx-actions button {
+  padding: 6px 14px; border: 1px solid var(--c-line); border-radius: var(--r);
+  background: var(--c-surface); color: var(--c-ink); font: inherit; font-size: 12.5px; cursor: pointer;
+}
+.nx-actions button:hover:not(:disabled) { background: var(--c-accent-soft); border-color: #bcc6cd; }
+.nx-actions button:disabled { opacity: .5; cursor: default; }
+.nx-actions .nx-primary { background: var(--c-accent); border-color: var(--c-accent); color: #fff; font-weight: 600; }
+.nx-actions .nx-primary:hover:not(:disabled) { background: #0b5b65; border-color: #0b5b65; }
+.nx-actions .nx-danger { background: var(--c-bad); border-color: var(--c-bad); color: #fff; font-weight: 600; }
+.nx-actions .nx-danger:hover:not(:disabled) { background: #a72626; border-color: #a72626; }
+.nx-actions button:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; }
+.nx-actions .nx-danger:focus-visible { outline-color: var(--c-bad); }
+
+/* Accepting a QA finding — the finding stays readable the whole time. */
+.af { display: flex; flex-direction: column; gap: 12px; }
+.af-finding { padding: 10px 12px; border-left: 3px solid var(--c-warn); background: var(--c-chrome-2); border-radius: 0 var(--r) var(--r) 0; }
+.af-rule { font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--c-ink-3); }
+.af-msg { margin: 3px 0 0; font-size: 13px; line-height: 1.45; color: var(--c-ink); }
+.af-why { margin: 6px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--c-ink-2); }
+.af-field { display: flex; flex-direction: column; gap: 4px; }
+.af-label { font-size: 12px; color: var(--c-ink-2); }
+.af-req { font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--c-warn); }
+.af textarea {
+  width: 100%; min-height: 84px; resize: vertical; font: inherit; font-size: 13px; line-height: 1.5;
+  padding: 7px 9px; border: 1px solid var(--c-line); border-radius: var(--r);
+  background: var(--c-surface); color: var(--c-ink);
+}
+.af textarea:focus-visible { outline: 2px solid var(--c-accent); outline-offset: -1px; border-color: var(--c-accent); }
+.af textarea[aria-invalid="true"] { border-color: var(--c-bad); }
+.af-err { font-size: 11.5px; color: var(--c-bad); }
+.af-consequence { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--c-ink-3); }
+
+/* ── Phase 6A: the drawing on the keyboard ────────────────────────────────
+   One tab stop for the whole canvas, and a focus state that says so without
+   drawing a box around the engineer's work. */
+
+/* Text for screen readers only. Not display:none — that removes it from the
+   accessibility tree, which is the one place it needs to exist. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+/* The canvas is focused. An inset ring on the viewport edge, not a border
+   around the sheet: the sheet is the engineer's drawing and a 2px frame around
+   it would read as part of the document, and would sit over symbols, labels
+   and QA marks at the page edge. `inset` keeps it inside the scroll area at
+   every zoom. */
+.canvas-host:focus { outline: none; }
+.canvas-host:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: -2px;
+}
+/* A quiet strip along the top edge as well, because a 2px ring on a large
+   grey field is easy to miss at a glance — this is the "you are here" that
+   matters when the keyboard has just arrived from the palette. */
+.canvas-host:focus-visible::before {
+  content: '';
+  position: absolute; inset: 0 0 auto 0; height: 2px;
+  background: var(--c-accent);
+  pointer-events: none;
+}
+
+
+/* ── Phase 4: telling similar symbols apart ───────────────────────────────
+   "Control Valve (Globe)", "Control Valve (Butterfly)" and "Control Valve
+   (Ball)" all rendered as "Control Valv…" — three adjacent tiles, identical,
+   with the one distinguishing word clipped off the end. The label is the
+   differentiating information; it was the part being thrown away.
+
+   Two lines instead of one, wrapping rather than ellipsing, and no max-width
+   fighting the grid track. Two lines of 9.5px costs 11px of tile height and
+   nothing at all of canvas — the panel is a fixed width either way. */
+.palette-label {
+  max-width: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: unset;
+  font-size: 9.5px;
+  line-height: 1.15;
+  color: var(--c-ink-2);
+}
+.palette-entry { padding: 6px 3px 5px; gap: 3px; }
+
+/* The favourite star. Only on hover or focus until it is set — an unlit star
+   on all 194 tiles is 194 pieces of furniture; a lit one is information. */
+.palette-cell { position: relative; display: flex; }
+.palette-cell > .palette-entry { flex: 1; min-width: 0; }
+.palette-fav {
+  position: absolute; top: 1px; right: 1px;
+  width: 16px; height: 16px; padding: 0; line-height: 1;
+  border: 0; border-radius: 3px; background: none; cursor: pointer;
+  font-size: 10px; color: var(--c-ink-3); opacity: 0;
+}
+.palette-cell:hover .palette-fav,
+.palette-cell:focus-within .palette-fav,
+.palette-fav:focus-visible,
+.palette-fav.on { opacity: 1; }
+.palette-fav.on { color: var(--c-warn); }
+.palette-fav:hover { background: var(--c-accent-soft); color: var(--c-accent); }
+.palette-fav:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 0; }
+
+/* Favourites and Recent: two compact rows above the categories, present only
+   when they have something in them. Progressive disclosure rather than two
+   permanent headings taking the top of the panel on a first run. */
+.palette-quick { border-bottom: 1px solid var(--c-line-soft); padding-bottom: 4px; margin-bottom: 4px; }
+
+/* ── command palette results ──────────────────────────────────────────── */
+.search-box ul { padding: 0; margin: 0; }
+.cp-row { display: block; padding: 0; }
+.cp-section {
+  padding: 7px 14px 3px; font-size: 9.5px; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--c-ink-3);
+}
+.cp-item {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 6px 14px; border: 0; background: none; text-align: left;
+  font: inherit; font-size: 13px; color: var(--c-ink); cursor: pointer;
+}
+.cp-item > b { font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cp-item.active { background: var(--c-accent-soft); }
+.cp-item .search-sheet { flex: none; font-size: 11.5px; color: var(--c-ink-3); }
+.cp-item.active .search-sheet { color: var(--c-accent); }
+/* The symbol's own drawing, so "Globe" and "Ball" are told apart by the thing
+   that actually differs — the geometry — and not by two words of 11px text. */
+.cp-mark { width: 22px; height: 18px; flex: none; color: var(--c-ink); }
+.search-empty { line-height: 1.5; }
+.search-empty span { display: block; margin-top: 3px; color: var(--c-ink-3); font-size: 12px; }

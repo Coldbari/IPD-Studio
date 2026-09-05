@@ -17,6 +17,7 @@ import { expandLetters, formatTag, validateLetters } from '../isa/tag'
 import { isProcessClass } from '../canvas/lineStyle'
 import { SYMBOLS } from '../symbols/registry'
 import type { PortKind } from '../symbols/types'
+import { portLabel } from '../symbols/portLabels'
 
 /** A pointer to a real object. Every reference the assistant makes is one of
  *  these, so it can always be rendered as a chip and jumped to. */
@@ -28,6 +29,9 @@ export interface BriefRef {
 
 export interface FocusPort {
   id: string
+  /** What the catalogue calls this point, or where it sits on the symbol.
+   *  The assistant answers in the engineer's words, and "w2" is not one. */
+  label: string
   kind: PortKind
   connected: boolean
   edgeIds: string[]
@@ -203,7 +207,8 @@ function focusNode(ix: ProjectIndex, id: string): FocusNode | undefined {
     const edgeIds = touching
       .filter((e) => [e.source, e.target].some((end) => isPortEnd(end) && end.nodeId === id && end.portId === p.id))
       .map((e) => e.id)
-    return { id: p.id, kind: p.kind, connected: edgeIds.length > 0, edgeIds }
+    const label = portLabel(node.symbolId, p.id, node.rotation)
+    return { id: p.id, label: label?.text ?? p.id, kind: p.kind, connected: edgeIds.length > 0, edgeIds }
   })
 
   const processNeighbours: BriefRef[] = []

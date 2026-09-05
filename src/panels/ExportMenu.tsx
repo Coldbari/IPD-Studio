@@ -11,11 +11,12 @@ import { exportPng } from '../export/png'
 import { downloadDexpi } from '../export/dexpi'
 import { downloadDxf } from '../export/dxf'
 import { downloadDatasheetMatrix, downloadInstrumentIndex, downloadLineList } from '../export/csv'
+import { notify } from '../feedback/notices'
 
 interface Item {
   label: string
   hint?: string
-  run: () => void
+  run: () => void | Promise<void>
 }
 
 const SECTIONS: { title: string; items: Item[] }[] = [
@@ -45,6 +46,34 @@ const SECTIONS: { title: string; items: Item[] }[] = [
   },
 ]
 
+/**
+ * Run an export and say what happened if it does not finish.
+ *
+ * There was no error handling on any of the nine: a throw in the SVG
+ * serializer or the PDF print window left the menu closing and nothing
+ * happening, which is indistinguishable from a browser that silently blocked
+ * the download.
+ *
+ * The message leads with the fact that matters most and that a failing export
+ * makes people doubt — the drawing is fine. An export reads the document; it
+ * never writes to it. Retry is offered because the common causes (a blocked
+ * pop-up for the PDF, a transient out-of-memory on a huge PNG) genuinely do
+ * succeed on a second attempt.
+ */
+async function runExport(item: Item): Promise<void> {
+  try {
+    await item.run()
+  } catch (err) {
+    notify({
+      kind: 'error',
+      title: `${item.label} could not be exported`,
+      hint: 'Your drawing is open and unchanged — an export only ever reads it. Trying again often works, and the other formats are unaffected.',
+      details: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+      actions: [{ label: 'Try again', primary: true, run: () => item.run() }],
+    })
+  }
+}
+
 /** All exports and reports behind one toolbar button, so the bar stays tidy. */
 export default function ExportMenu() {
   const [open, setOpen] = useState(false)
@@ -52,8 +81,8 @@ export default function ExportMenu() {
 
 
   return (
-    <div className="export-menu">
-      <button ref={btnRef} className={open ? 'on' : ''} aria-haspopup="menu" aria-expanded={open}
+    <div className="tb-menu">
+      <button ref={btnRef} className={open ? 'on' : ''} data-testid="tb-export" aria-haspopup="menu" aria-expanded={open}
         onClick={() => setOpen((v) => !v)}>
         Export ▾
       </button>
@@ -68,8 +97,8 @@ export default function ExportMenu() {
                   role="menuitem"
                   className="export-item"
                   onClick={() => {
-                    item.run()
                     setOpen(false)
+                    void runExport(item)
                   }}
                 >
                   {item.label}

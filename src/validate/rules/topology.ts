@@ -7,6 +7,7 @@ import { finding } from '../rules'
 import { isPortEnd } from '../../model/types'
 import { portKindAt } from '../../model/projectIndex'
 import { canConnect } from '../../canvas/connectionRules'
+import { connectionRef } from '../../symbols/portLabels'
 
 export const danglingEnd: Rule = {
   id: 'dangling-end',
@@ -44,8 +45,18 @@ export const incompatibleConnection: Rule = {
       const a = portKindAt(ix, source)
       const b = portKindAt(ix, target)
       if (!a || !b || canConnect(a, b, e.edge.lineClass)) continue
+      // The rule is unchanged — same check, same severity. What changed is
+      // that it can now say WHICH two points, which is the difference between
+      // a finding you can act on and one you have to go and look for.
+      const from = ix.nodes.get(source.nodeId)
+      const to = ix.nodes.get(target.nodeId)
+      const aRef = from && connectionRef(from.node, source.portId)
+      const bRef = to && connectionRef(to.node, target.portId)
+      const message = aRef && bRef
+        ? `A ${e.edge.lineClass} line joins ${aRef} to ${bRef}, which cannot be connected`
+        : `A ${e.edge.lineClass} line connects incompatible ports`
       out.push(
-        finding(incompatibleConnection, e.key ?? e.edge.id, `A ${e.edge.lineClass} line connects incompatible ports`, {
+        finding(incompatibleConnection, e.key ?? e.edge.id, message, {
           targetId: e.edge.id,
           sheetId: e.sheet.id,
         }),

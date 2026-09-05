@@ -7,6 +7,7 @@ import { loadDoc } from '../model/migrate'
 import { createEmptyDoc } from '../model/doc'
 import { importDexpi } from '../import/dexpi'
 import { useStore } from '../store/store'
+import { showStatus } from '../feedback/notices'
 
 /**
  * `pretty` (the default) keeps the on-disk `.pnid` human-readable, which the
@@ -38,17 +39,37 @@ const PICKER_TYPES = [
   { description: 'DEXPI / Proteus XML', accept: { 'application/xml': ['.xml'] } },
 ]
 
+/** True when a DEXPI import would discard HMI work. Exported so the caller can
+ *  ask BEFORE the parse, rather than the parse asking mid-flight. */
+export function dexpiWouldDiscardHmi(text: string, name: string): boolean {
+  if (!isDexpiText(text, name)) return false
+  return useStore.getState().doc.hmiScreens.some((sc) => sc.widgets.length > 0 || sc.pipes.length > 0)
+}
+
+export function isDexpiText(text: string, name: string): boolean {
+  return name.endsWith('.xml') || text.trimStart().startsWith('<?xml') || text.includes('<PlantModel')
+}
+
+/**
+ * Load a drawing from text. Throws on failure — the CALLER decides how to say
+ * so, because a drop on the canvas, a File menu open and a PWA file handler
+ * all want to phrase it differently and only the caller knows which it is.
+ *
+ * The HMI-discard question moved out to the callers for the same reason: a
+ * confirm() buried in a parser cannot be awaited, styled, or tested.
+ */
 export function loadAnyText(name: string, text: string): void {
-  if (name.endsWith('.xml') || text.trimStart().startsWith('<?xml') || text.includes('<PlantModel')) {
-    // a DEXPI import starts a fresh doc — flag the silent HMI wipe the audit found
-    const cur = useStore.getState().doc
-    const hasHmi = cur.hmiScreens.some((sc) => sc.widgets.length > 0 || sc.pipes.length > 0)
-    if (hasHmi && !window.confirm('Importing this DEXPI file starts a NEW document — your current HMI screens are discarded. Continue?')) return
+  if (isDexpiText(text, name)) {
     const { sheet, warnings } = importDexpi(text)
     const doc = createEmptyDoc(sheet.name || name.replace(/\.[^.]+$/, ''))
     doc.sheets = [sheet]
     useStore.getState().loadIntoStore(doc)
-    if (warnings.length) window.alert(`DEXPI import finished with warnings:\n${warnings.join('\n')}`)
+    if (warnings.length) {
+      showStatus(
+        `Imported with ${warnings.length} note${warnings.length === 1 ? '' : 's'} — some content was approximated.`,
+        { kind: 'warning', details: warnings.join('\n') },
+      )
+    }
     return
   }
   useStore.getState().loadIntoStore(deserializeDoc(text))

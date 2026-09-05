@@ -3,6 +3,7 @@
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
 import type { CustomSymbolDef, ProjectDoc } from '../model/types'
+import { resetPortLabels } from './portLabels'
 import { SYMBOLS } from './registry'
 import type { SymbolDef } from './types'
 
@@ -28,4 +29,7 @@ export function registerCustomSymbols(doc: ProjectDoc): void {
   for (const def of doc.customSymbols ?? []) {
     SYMBOLS.set(def.id, toSymbolDef(def))
   }
+  // The catalogue just changed under the label cache; a custom symbol from
+  // the previous document must not describe this one's ports.
+  resetPortLabels()
 }

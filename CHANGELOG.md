@@ -8,6 +8,314 @@ All notable changes to IPD Studio. Format follows
 
 ### Added
 
+- **Connection points have names.** The drawing model addresses ports by short
+  stable ids — `n`, `n1`, `w2`, `sig` — and it still does: those strings are in
+  every saved document and every DEXPI export, and none of them changed. What
+  changed is that the software no longer has to *say* them. A port now resolves
+  to words from two sources: the catalogue's own name where the definition
+  establishes it (a centrifugal pump's Suction and Discharge, a PSV's Inlet and
+  Outlet, a control valve's Signal and its three positioner connections), and
+  otherwise where the point sits — "Top connection", "Left connection (upper)".
+  The second kind is deliberately mute about function: a nozzle at the top of a
+  vessel is not an inlet because it is at the top, and eight of the nine pumps
+  in the catalogue keep `w`/`e` because nothing in their definitions says which
+  side draws and which delivers. 34 of 491 ports are named; the rest are
+  described; six say only "Connection point", which is the honest answer for a
+  nozzle that sits inside the frame.
+- **A refused connection now names both points.** "One carries process material
+  and the other an instrument signal" became "IL-1 right connection carries an
+  instrument signal; TK-101 left connection carries process material." The
+  explanation was being computed and thrown away — the mark on the sheet showed
+  only the headline — so it now goes to the status line where the rest of the
+  app puts exactly this.
+- **The inspector lists a symbol's connections**, behind a closed disclosure,
+  with each one marked free or connected. Eleven rows in front of a vessel's
+  tag is not what an engineer opened the panel for, so it stays shut until
+  asked — and while it is shut it puts no subscription on the drawing.
+- **`C` says which two points it joined.** The green flash confirms a docking
+  to anyone who can see it; the status line now names the pair.
+- **A selected line is announced by where it runs** — "Process line, from P-101
+  discharge to TK-101 left connection". A line is its two ends, and "process
+  line" alone left a screen-reader user no way to tell it from the eleven
+  others. A selected *symbol* is still not made to recite its nozzles.
+- **Right-click a sheet tab to rename it.** Renaming was double-click and only
+  double-click, with nothing in the tab to suggest the name was editable.
+  Double-click still works, and "Rename this sheet" is in the command palette —
+  three ways in, one rename.
+
+### Changed
+
+- The QA report's incompatible-connection finding names the two points instead
+  of saying that a line "connects incompatible ports". Same rule, same
+  severity — it can just say which.
+- The toolbar's zoom readout no longer polls once a second for the life of the
+  session. The canvas publishes its paper on mount and withdraws it on
+  teardown, so the readout is told rather than looking.
+- Shift+arrow is documented as the *finer* nudge, which is the opposite of
+  Illustrator and Figma and stays that way on purpose: on a P&ID the 8 px grid
+  is what makes runs come out straight, so the unmodified key does the safe
+  thing and the modifier is what leaves the grid.
+
+### Added
+
+- **The command palette became a command layer.** It was nine fixed entries —
+  four workspace jumps, add a sheet, fit, two CSV exports and save — none of
+  which touched the drawing. It could not rotate, delete, duplicate, align or
+  add a symbol, which is most of what anyone does here. It now answers three
+  kinds of question in the order they are usually asked: a tag to jump to, a
+  command that applies to *what is selected right now*, and a symbol to place.
+  Commands that cannot run are absent rather than greyed — offering "Rotate"
+  with nothing selected is a menu item that does nothing.
+- **Symbols can be placed from the command palette.** ⌘K, type "centrifugal
+  pump", Enter — placed, selected, with the keyboard already on the drawing.
+  Results carry the symbol's own drawing, so "Globe" and "Ball" are told apart
+  by the geometry that actually differs rather than by two words of small text.
+- **`C` connects the selected symbol where its points meet.** The keyboard had
+  no way to draw a line at all. This is the same `findDock` the mouse uses,
+  with the same rule, the same undo grouping and the same green flash — nudge
+  a symbol into place with the arrow keys, then ask. When nothing is in reach
+  it says so instead of doing nothing.
+- **Favourites and Recent.** A star on each palette tile, and the eight symbols
+  you last *placed* — placed, not searched or hovered, or the list fills with
+  things you looked at and rejected. Both live in `localStorage` beside the
+  panel widths: which symbols someone reaches for is not part of an
+  engineering deliverable and must not change the bytes of a `.pnid`. They
+  appear above the categories only when they have something in them.
+- **`src/commands/registry.ts`** — one list of what the application can be
+  asked to do. Every entry delegates to the implementation that already
+  exists, so Delete has one set of edge-cascade rules and not four.
+
+### Changed
+
+- **Search reads the catalogue by word, not by phrase.** "heat exchanger"
+  found *nothing*: no symbol is named that and no keyword contains the space,
+  even though "heat" and "exchanger" are both in the metadata. Every word now
+  has to land somewhere, which fixes "centrifugal pump", "globe valve",
+  "control valve" and "flow transmitter" too — without inventing a single
+  synonym.
+- **Symbol labels wrap instead of truncating.** "Control Valve (Globe)",
+  "(Butterfly)" and "(Ball)" all rendered as "Control Valv…" — three adjacent
+  tiles, identical, with the one distinguishing word clipped off the end. Two
+  lines of 9.5px costs 11px of tile height and no canvas at all.
+- **Reverse and flow-arrow moved out of the context menu** into shared
+  functions, so the menu and the palette cannot drift on what "reverse" does
+  to a line's waypoints.
+
+
+### Added
+
+- **The drawing can be worked without a pointer.** The canvas was outside the
+  keyboard model entirely: `.canvas-host` was a plain `<div>` with `tabIndex
+  -1`, no role and no name, and the tab order ran rail → toolbar → palette and
+  stopped there. Every shortcut the app has — delete, nudge, rotate, duplicate
+  — needed a selection, and a selection needed a mouse. The shortcuts were
+  reachable; the objects they act on were not.
+
+  It is **one** tab stop, not one per symbol. A symbol renders 69 DOM nodes and
+  the paper virtualizes above 400 cells for exactly that reason; a thousand tab
+  stops would have been a keyboard trap with a progress bar. While the drawing
+  has focus it owns a small key model of its own:
+
+  | Key | |
+  |---|---|
+  | `Tab` / `Shift+Tab` | step through the symbols and lines, in reading order |
+  | `Enter` | open the selection's properties, with focus in them |
+  | `Shift+F10` | the same context menu the right mouse button opens |
+  | `Escape` | clear the selection — and then `Tab` leaves as usual |
+  | arrows | nudge, unchanged; with nothing selected they step in instead |
+
+  `Escape` then `Tab` is the documented way past a surface that captures Tab
+  (WCAG 2.1.2), and it is remembered until the drawing is entered again — the
+  first version looped, clearing and re-selecting forever.
+
+- **The drawing describes itself to a screen reader in two DOM nodes,** whatever
+  is on it. Not an accessible node per symbol: mirroring a virtualized canvas
+  into an accessibility tree would have undone the rendering work and handed
+  someone a thousand-item list to walk. Instead the selection is treated as the
+  cursor and announced as it moves — "FIC-101, Instrument Bubble, 4 of 17" —
+  leading with the tag, because that is what an engineer calls the thing, and
+  mentioning rotation, which is invisible to someone who cannot see it.
+
+### Changed
+
+- **Focus follows the work.** Placing a symbol from the palette moves the
+  keyboard onto the drawing, so the next `Delete` or `R` acts on the new symbol
+  instead of going to the search box. `Escape` in the palette search returns to
+  the drawing, closing the loop. The context menu takes focus when it opens and
+  gives it back when it closes, rather than dropping the keyboard on the
+  document body — which is where `Shift+F10` would otherwise have stranded it.
+- **The context menu answers the arrow keys,** as a `role="menu"` is expected
+  to, and no longer tries to focus itself while it is still measuring — a
+  `visibility: hidden` element cannot take focus, so the call succeeded and
+  nothing moved.
+
+### Fixed
+
+- **The reading order was quadratic.** `navOrder` resolved each object's
+  position inside the sort comparator, which is a linear scan per comparison —
+  O(n² log n), or millions of array walks for a single `Tab` press on a
+  thousand-object drawing. Positions are resolved once now, and the order is
+  cached on the node and edge array identities, the same way the drag loop's
+  dock and snap indexes are.
+- **The announcer subscribed to the whole document,** so it re-described the
+  drawing on every keystroke of a tag edit. It watches the selection only.
+
+
+### Added
+
+- **A refused connection now says so, on the drawing.** Dragging a signal line
+  onto a process nozzle did nothing visible — and worse than nothing to the
+  document: the drag ended as a free-ended line pointing *at* the point that
+  had just rejected it, which reads at a glance like a connection. The line is
+  no longer created, and a red mark appears at the point with the reason on it:
+  *"These two connection points cannot be joined."* The reason comes out of the
+  check itself (`explainConnection`), which used to return a bare `false` — a
+  bare `false` cannot be explained to anybody. A deliberate free end, out in
+  open paper, is untouched: the mark appears only where a connection point was
+  actually in reach.
+- **One error model, replacing nineteen browser dialogs.** Four surfaces,
+  chosen by how much they interrupt: a mark on the canvas, a line in the status
+  bar that fades, a dialog with a reason and an action, and a question for the
+  few things Undo cannot take back. All on the existing `Modal`, so the focus
+  trap, focus restore and Escape behaviour are the ones the app already had.
+- **Failures say what to do next, and admit what they do not know.** A message
+  states its cause only when the code actually produced one — an invented cause
+  reads exactly like a real one and sends an engineer looking for a problem
+  that is not there. A save that fails reports the server's refusal in plain
+  words and keeps the raw text behind *Details*; one that fails for an
+  unrecognised reason says the server did not say why.
+
+### Changed
+
+- **Accepting a QA finding is a form, not a `window.prompt`.** A browser prompt
+  was collecting a permanent engineering record: the finding was crammed into
+  the prompt's title, an empty string was indistinguishable from Cancel, and
+  nothing validated. The finding now stays on screen the whole time the reason
+  is being written, an empty reason cannot be submitted, and the dialog states
+  that the record travels with the drawing and does not hide the finding.
+- **File failures are four different messages, not one.** "Could not read X as
+  an IPD Studio drawing" covered a corrupt file, a valid file that is not a
+  drawing, an unsupported format and an unknown error — four situations with
+  four different fixes. Each is now distinguished from evidence the importers
+  already produce, and the raw parser complaint moved behind *Details*.
+- **A DXF that will not load does not guess why.** The parser knows whether it
+  could parse and which entity types it skipped; it does not know about paper
+  space, blocks or frozen layers, so the message does not claim to. A DXF that
+  parses with nothing drawable is its own case, and says which four entity
+  types an underlay reads.
+- **An export that fails leads with the fact that the drawing is fine.** There
+  was no error handling on any of the nine exports: a throw left the menu
+  closing and nothing happening, indistinguishable from a blocked download.
+- **A save that fails offers to retry, or to download a .pnid instead.** The
+  status bar was already honest — `markSaved()` is not called on failure, so
+  nothing ever claimed the drawing was stored when it was not — but an explicit
+  Ctrl+S that failed said so only in small grey text.
+- **Deleting a sheet no longer asks; it tells you how to undo it.** It is
+  undoable, and a test now guards that claim. Confirmation is reserved for the
+  handful of actions that genuinely replace the document — opening a file over
+  unsaved work, starting a new drawing, restoring a snapshot — where the
+  affirmative button says what it does rather than "OK".
+
+### Fixed
+
+- **A QA fix that no longer applies says so from the Issues drawer too.** The
+  drawer dropped the result entirely, so the Fix button appeared to do nothing;
+  the Checks workspace had reported it all along.
+- **A double-clicked `.pnid` that will not open explains itself.** The
+  installed-PWA file handler had no error path at all, so a bad file launched
+  the application to an empty canvas with no message.
+- **The notice model no longer depends on `window`,** so the persistence and
+  cloud layers that import it can still be unit-tested outside a browser.
+
+
+### Added
+
+- **Clicking a symbol in the palette places it.** It only ever responded to a
+  drag, and a click did nothing at all — no symbol, no message, no cursor
+  change — while the Typical Loops entries eight pixels above it *were*
+  click-to-place buttons. A click drops the symbol in the middle of the view,
+  selected, with the inspector already on it; a drag still places it where you
+  aim and still docks. One line under the search box now says so out loud.
+- **The symbol library can be reached from the keyboard.** The tiles were
+  `<div>`s with no tab stop, so the `.palette-entry:focus-visible` rule in the
+  stylesheet had never once matched. They are buttons now, kept out of the tab
+  order — fifty tiles between the search field and the canvas is a keyboard
+  trap, not keyboard access — and reached with ↓ from the search box, roved
+  with the arrow keys, placed with Enter, left with Escape.
+- **A shortcut sheet, on `?`.** Seven of the thirteen canvas bindings were
+  written down nowhere: `R` for rotate, `Shift+1` for 100%, Delete, Escape,
+  the arrow nudges, Space-drag to pan and Shift-click to extend a selection.
+  The sheet lists keys and pointer gestures in one table, because "how do I
+  pan?" and "what does ⌘D do?" are the same question.
+- **One authoritative shortcut registry** (`src/shortcuts/registry.ts`). Every
+  binding is declared once; the canvas matches against it, tooltips and the
+  context menu print it, and the sheet lists it. A test asserts no combination
+  is bound to two actions. `Shift+1` is matched by physical key rather than by
+  the `!` a US layout happens to produce, so it works on any keyboard.
+- **Right-click, everywhere on the drawing.** There was no context menu in the
+  application at all. It offers what suits blank paper, one symbol, several
+  symbols or a line, and every row prints the key that does the same thing —
+  which makes it the app's main shortcut-teaching surface as well as its fast
+  path. The rows call the same exported functions the keyboard calls.
+- **Select all** (`Ctrl/⌘+A`) — symbols and the lines between them. Selecting a
+  whole sheet previously meant a marquee drag across the full extent of the
+  drawing, at a zoom where the drawing fit.
+- **An empty sheet says how to begin.** It was a blank page with no guidance,
+  while the most valuable column on screen filled with project metadata —
+  name, author, tag numbering, drawing number, revision, sheet size — for a
+  person who had not yet drawn anything. Three ways in now lead, the project
+  fields follow, and the guidance is gone the moment the first symbol lands.
+- **`docs/UX-REGRESSION-CHECKLIST.md`** — the Draw workspace's journeys, each
+  row naming the spec that covers it.
+
+### Changed
+
+- **The toolbar keeps Export and the account control on screen.** Twenty
+  controls sat in one non-wrapping row that scrolled horizontally; at 1152px it
+  was 42px wider than its container, and macOS draws no scrollbar until you
+  scroll, so the row simply ended — taking Export, which is how a drawing
+  leaves the application, with it. New, Open, Download, version history,
+  templates and the DXF underlay are behind a **File** menu now (you start a
+  drawing once and save it constantly), and Export and the account control sit
+  outside the scrolling region entirely. Templates became real menu items
+  rather than a `<select>` you had to operate to find out what it offered.
+- **The drawing gets more of the window as the window gets smaller.** The
+  three side panels were fixed widths that never yielded, so the canvas took
+  54% of a 1280px laptop and 70% of a 1920px monitor — all the variance landed
+  on the drawing, in the wrong direction. Panels now pick their default from
+  the window at mount (a stored preference still wins), and the Issues drawer
+  floats over the canvas instead of taking a row of the column. Measured at
+  1152×720: the canvas went from 568×~595 to 826×626 and the default fit from
+  32% to 49%.
+- **Per-axis stretch moved behind a disclosure.** Size, Width and Height each
+  had a permanent row of −/value/+ — nine controls in front of every symbol's
+  real properties, for something that matters on a horizontal vessel and
+  almost nothing else. Size leads; the disclosure opens itself on a symbol
+  that is already stretched.
+- **Delete is in the inspector for one symbol, not only for many.** Whether an
+  object could be deleted from the panel depended on how many friends it had.
+- **The command palette stops listening while it is closed.** It is mounted for
+  the whole session and read the entire document unconditionally, so every
+  edit — including the writes a docking drag makes mid-gesture — re-rendered it
+  and rebuilt its item list. It also gained "Zoom to 100%" and "Keyboard
+  shortcuts", and takes its key hints from the registry rather than from the
+  string "Ctrl+1", which is what it told Mac users.
+
+### Fixed
+
+- **"Issues (5)" no longer opens onto one finding.** The drawer tab counted
+  every finding while the panel below it hid the informational ones, and the
+  line accounting for them only appeared when the visible list was *completely*
+  empty. The tab counts what the panel shows, and the observations get a line
+  of their own whenever there are any.
+- **Quiet text meets contrast.** `--c-ink-3` was 2.8:1 on the chrome it sits
+  on — below AA at every size it is used at, and it is used for panel headings,
+  status chips and every caption. It is 4.6:1 now, and the four hard-coded
+  greys doing the same job at 2.2–3.5:1 use the token.
+
+
+### Added
+
 - **The project assistant** — a panel beside the inspector that answers
   questions about *this* drawing. It is retrieval over the engineering model,
   not a chatbot: the common questions ("is this loop complete", "what controls

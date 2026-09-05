@@ -43,7 +43,15 @@ export default function QuickLineEditor() {
         return
       }
       const client = paper.localToClientPoint(mid)
-      setPos({ x: client.x, y: client.y })
+      // Same object back when the midpoint has not actually moved, so React
+      // bails out. This runs on `render:done translate scale`, and a fresh
+      // {x,y} never compares equal — so for as long as a line stayed
+      // selected, every pan, every zoom and every neighbouring drag cost a
+      // React commit per frame for a popover that had not moved.
+      setPos((prev) =>
+        prev && Math.abs(prev.x - client.x) < 0.5 && Math.abs(prev.y - client.y) < 0.5
+          ? prev
+          : { x: client.x, y: client.y })
     }
     update()
     paper.on('render:done translate scale', update)

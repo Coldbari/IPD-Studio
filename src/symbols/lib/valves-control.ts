@@ -111,14 +111,19 @@ export const controlValves: SymbolDef[] = Object.entries(CV_BODIES).map(([id, bo
   ports: [
     { id: 'w', x: 0, y: 36, kind: 'process' },
     { id: 'e', x: 64, y: 36, kind: 'process' },
-    { id: 'sig', x: 32, y: 0, kind: 'signal' },
+    { id: 'sig', x: 32, y: 0, kind: 'signal', name: 'Signal' },
     // Positioner bosses: one port per connection circle on the box's right
     // edge. Precision halos + an explicit direction: they sit too deep in the
     // frame for edge-distance direction detection, and their lines must
     // always leave rightward.
-    { id: 'sw', x: 48, y: 16, kind: 'signal', hit: 3, dir: 'right' },
-    { id: 'se', x: 48, y: 20, kind: 'signal', hit: 3, dir: 'right' },
-    { id: 'sb', x: 48, y: 24, kind: 'signal', hit: 3, dir: 'right' },
+    //
+    // They share one name on purpose. The drawing establishes that all three
+    // belong to the positioner and NOT what each carries — supply, output and
+    // feedback are a matter of the instrument, not the symbol — so they are
+    // told apart by where they sit on the box, which is a fact.
+    { id: 'sw', x: 48, y: 16, kind: 'signal', hit: 3, dir: 'right', name: 'Positioner connection' },
+    { id: 'se', x: 48, y: 20, kind: 'signal', hit: 3, dir: 'right', name: 'Positioner connection' },
+    { id: 'sb', x: 48, y: 24, kind: 'signal', hit: 3, dir: 'right', name: 'Positioner connection' },
   ],
   tagRule: 'valve',
   defaultConfig: { actuator: 'diaphragm', fail: 'none', positioner: 'none' },

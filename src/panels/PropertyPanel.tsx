@@ -2,12 +2,17 @@
 // Copyright © 2026 Praharsh Nagpure — IPD Studio. Noncommercial use only;
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { getSymbol } from '../symbols/registry'
+import { portLabels } from '../symbols/portLabels'
 import { activeSheet, pauseHistory, resumeHistory, useStore } from '../store/store'
 import type { LineClass, PlantEdge, PlantNode, SheetSize } from '../model/types'
+import { isPortEnd } from '../model/types'
 import { LINE_CLASS_LABELS } from '../canvas/lineStyle'
 import TagEditor from './TagEditor'
+import { placeTypicalAtCenter } from '../canvas/dropHandling'
+import { loadDoc } from '../model/migrate'
+import samplePlant from '../../examples/sample-plant.pnid.json'
 import { applyAlignment, duplicateSelection } from '../canvas/interactions'
 import { nextLineSeq } from '../isa/autonumber'
 import { DEFAULT_PRICES, priceKeyFor, unitCost } from '../model/costs'
@@ -17,6 +22,8 @@ import FluidsDialog from './FluidsDialog'
 import InspectorWhereUsed from './InspectorWhereUsed'
 import InspectorEngineering from './InspectorEngineering'
 import { locateCell } from '../canvas/locate'
+import { focusCanvas } from '../canvas/keyboardNav'
+import { hint } from '../shortcuts/registry'
 
 const SHEETS: SheetSize[] = ['A4', 'A3', 'A2', 'A1', 'ANSI_B', 'ANSI_D']
 
@@ -50,6 +57,52 @@ function SheetProps() {
         </select>
       </label>
     </>
+  )
+}
+
+/**
+ * What the inspector shows on a sheet with nothing on it yet.
+ *
+ * It used to show the project metadata form — name, author, tag numbering,
+ * drawing number, revision, sheet size — permanently, in the most valuable
+ * column on screen, to a person who has not yet drawn anything. That is
+ * document setup answering a question nobody asked, at the one moment the
+ * application has to say how to begin.
+ *
+ * Three ways in, and the two sentences the app never said out loud: how a
+ * symbol gets onto the sheet, and how two symbols get connected. It is not a
+ * tutorial — it is gone the instant the first symbol lands, and the project
+ * fields are still right underneath it.
+ */
+function StartHere() {
+  return (
+    <div className="prop-start">
+      <div className="prop-title">Start the drawing</div>
+      <button
+        className="start-act"
+        onClick={() => window.dispatchEvent(new Event('pid:focus-symbols'))}
+      >
+        <b>Find a symbol</b>
+        <span>Search the library — try “pump”, “gate valve”, “FIC”</span>
+      </button>
+      <button className="start-act" onClick={() => placeTypicalAtCenter('flow-control')}>
+        <b>Place a flow control loop</b>
+        <span>Five symbols, wired and tagged, as a starting point</span>
+      </button>
+      <button
+        className="start-act"
+        onClick={() => useStore.getState().loadIntoStore(loadDoc(samplePlant))}
+      >
+        <b>Open the sample plant</b>
+        <span>A finished drawing to take apart</span>
+      </button>
+      <p className="prop-note prop-how">
+        Symbols go on by <b>clicking</b> one in the palette, or <b>dragging</b> it where you
+        want it. To connect two, hover a symbol to see its connection points and drag from
+        one — or just drag a symbol until its point meets another, and the line is drawn
+        for you.
+      </p>
+    </div>
   )
 }
 
@@ -96,6 +149,61 @@ function OffPageLink({ node }: { node: PlantNode }) {
         </button>
       )}
     </div>
+  )
+}
+
+const KIND_WORD = { process: 'process', signal: 'signal', both: 'either' } as const
+
+/**
+ * The symbol's connection points, by name.
+ *
+ * Behind a closed disclosure, because this is reference rather than an edit:
+ * an engineer works on a symbol's tag and its config constantly and asks
+ * "which nozzle have I not used yet" occasionally. A permanent eleven-row
+ * table on a vertical vessel would push the tag off the top of the panel to
+ * answer a question nobody asked.
+ *
+ * Read-only on purpose. Nothing here changes the drawing — connections are
+ * made on the canvas, where you can see what you are joining.
+ */
+function ConnectionList({ node }: { node: PlantNode }) {
+  // Mounted only while the disclosure is open, so a closed one puts no edge
+  // subscription on the inspector — dragging a symbol must not re-render this.
+  const edges = useStore((s) => activeSheet(s).edges)
+  const def = getSymbol(node.symbolId)
+  const labels = portLabels(node.symbolId, node.rotation)
+  const used = new Set<string>()
+  for (const e of edges) {
+    for (const end of [e.source, e.target]) {
+      if (isPortEnd(end) && end.nodeId === node.id) used.add(end.portId)
+    }
+  }
+  return (
+    <ul className="prop-ports">
+      {def.ports.map((p) => (
+        <li key={p.id} className={used.has(p.id) ? 'port-used' : ''}>
+          <span className="port-name">{labels.get(p.id)?.text ?? p.id}</span>
+          <span className="port-kind">{KIND_WORD[p.kind]}</span>
+          <span className="port-state">{used.has(p.id) ? 'connected' : 'free'}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function Connections({ node }: { node: PlantNode }) {
+  const [open, setOpen] = useState(false)
+  const def = getSymbol(node.symbolId)
+  if (!def.ports.length) return null
+  return (
+    <details
+      className="prop-adv"
+      data-testid="prop-ports"
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary>Connections ({def.ports.length})</summary>
+      {open && <ConnectionList node={node} />}
+    </details>
   )
 }
 
@@ -148,8 +256,8 @@ function NodeProps({ node }: { node: PlantNode }) {
         </label>
       )}
       <div className="prop-row">
-        <button onClick={() => rotateNode(node.id)}>Rotate 90°</button>
-        <button onClick={duplicateSelection} title="Ctrl+D">Duplicate</button>
+        <button onClick={() => rotateNode(node.id)} title={hint('Rotate 90°', 'draw.rotate')}>Rotate 90°</button>
+        <button onClick={duplicateSelection} title={hint('Duplicate', 'edit.duplicate')}>Duplicate</button>
         <span className="prop-hint">{node.rotation}°</span>
       </div>
       <div className="prop-row">
@@ -159,18 +267,26 @@ function NodeProps({ node }: { node: PlantNode }) {
         <button title="Larger" disabled={sx >= 4 || sy >= 4} onClick={() => setNodeStretch(node.id, sx + 0.25, sy + 0.25)}>＋</button>
         {(sx !== 1 || sy !== 1) && <button title="Reset size" onClick={() => setNodeStretch(node.id, 1, 1)}>reset</button>}
       </div>
-      <div className="prop-row">
-        <span className="prop-hint">Width</span>
-        <button title="Narrower" disabled={sx <= 0.5} onClick={() => setNodeStretch(node.id, sx - 0.25, sy)}>−</button>
-        <span className="scale-value">{sx}×</span>
-        <button title="Wider" disabled={sx >= 4} onClick={() => setNodeStretch(node.id, sx + 0.25, sy)}>＋</button>
-      </div>
-      <div className="prop-row">
-        <span className="prop-hint">Height</span>
-        <button title="Shorter" disabled={sy <= 0.5} onClick={() => setNodeStretch(node.id, sx, sy - 0.25)}>−</button>
-        <span className="scale-value">{sy}×</span>
-        <button title="Taller" disabled={sy >= 4} onClick={() => setNodeStretch(node.id, sx, sy + 0.25)}>＋</button>
-      </div>
+      {/* Per-axis stretch matters for a horizontal vessel and almost nothing
+          else, but it cost two permanent rows and six buttons in front of
+          every symbol's essential properties. Open when the symbol is already
+          stretched, so nothing that has been used disappears. */}
+      <details className="prop-adv" data-testid="prop-stretch" open={sx !== sy}>
+        <summary>Stretch one axis</summary>
+        <div className="prop-row">
+          <span className="prop-hint">Width</span>
+          <button title="Narrower" disabled={sx <= 0.5} onClick={() => setNodeStretch(node.id, sx - 0.25, sy)}>−</button>
+          <span className="scale-value">{sx}×</span>
+          <button title="Wider" disabled={sx >= 4} onClick={() => setNodeStretch(node.id, sx + 0.25, sy)}>＋</button>
+        </div>
+        <div className="prop-row">
+          <span className="prop-hint">Height</span>
+          <button title="Shorter" disabled={sy <= 0.5} onClick={() => setNodeStretch(node.id, sx, sy - 0.25)}>−</button>
+          <span className="scale-value">{sy}×</span>
+          <button title="Taller" disabled={sy >= 4} onClick={() => setNodeStretch(node.id, sx, sy + 0.25)}>＋</button>
+        </div>
+      </details>
+      {node.kind !== 'annotation' && <Connections node={node} />}
       {node.kind !== 'annotation' && (
         <div className="prop-row">
           <span className="prop-hint">Pins</span>
@@ -201,6 +317,15 @@ function NodeProps({ node }: { node: PlantNode }) {
           <button onClick={() => setDatasheetOpen(true)}>Datasheet…</button>
         </div>
       )}
+      {/* Delete was offered for a multi-selection and not for a single one, so
+          whether an object could be deleted from the inspector depended on how
+          many friends it had. */}
+      <div className="prop-row prop-destroy">
+        <button className="prop-delete" title={hint('Delete this symbol and its lines', 'edit.delete')}
+          onClick={() => useStore.getState().deleteSelected()}>
+          Delete symbol
+        </button>
+      </div>
       {datasheetOpen && <DatasheetEditor node={node} onClose={() => setDatasheetOpen(false)} />}
     </>
   )
@@ -292,6 +417,23 @@ export default function PropertyPanel({ onCollapse }: { onCollapse?: () => void 
 
   const sheet = activeSheet({ doc, activeSheetId })
   const single = selection.length === 1 ? selection[0]! : null
+  const asideRef = useRef<HTMLElement>(null)
+
+  // Enter on the canvas asks for this panel and for the keyboard to arrive in
+  // it. Focusing the first field rather than the panel: someone who pressed
+  // Enter on a symbol wants to change something, and landing on the container
+  // would cost them another Tab to find out what.
+  useEffect(() => {
+    const focusFirst = () => {
+      const el = asideRef.current?.querySelector<HTMLElement>(
+        'input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])',
+      )
+      el?.focus()
+      if (el instanceof HTMLInputElement) el.select()
+    }
+    window.addEventListener('pid:focus-props', focusFirst)
+    return () => window.removeEventListener('pid:focus-props', focusFirst)
+  }, [])
   const node = single ? sheet.nodes.find((n) => n.id === single) : undefined
   const edge = single ? sheet.edges.find((e) => e.id === single) : undefined
 
@@ -308,7 +450,13 @@ export default function PropertyPanel({ onCollapse }: { onCollapse?: () => void 
 
   let body
   if (selection.length === 0) {
-    body = <SheetProps />
+    // "Nothing selected" and "nothing drawn" are different states and used to
+    // render the same panel. On an empty sheet the guidance leads and the
+    // document fields follow it; once there is anything to select, the fields
+    // are the whole panel again, exactly as before.
+    body = sheet.nodes.length === 0
+      ? <><StartHere /><SheetProps /></>
+      : <SheetProps />
   } else if (single) {
     body = node
       ? tab === 'used'
@@ -345,15 +493,26 @@ export default function PropertyPanel({ onCollapse }: { onCollapse?: () => void 
           <button onClick={() => applyAlignment('distribute-v')}>↕ Distribute</button>
         </div>
         <div className="prop-row">
-          <button onClick={duplicateSelection} title="Ctrl+D">Duplicate</button>
-          <button onClick={deleteSelected}>Delete selection</button>
+          <button onClick={duplicateSelection} title={hint('Duplicate', 'edit.duplicate')}>Duplicate</button>
+          <button className="prop-delete" onClick={deleteSelected} title={hint('Delete', 'edit.delete')}>Delete selection</button>
         </div>
       </>
     )
   }
 
   return (
-    <aside className="props">
+    <aside
+      className="props"
+      ref={asideRef}
+      // Escape anywhere in the inspector hands the keyboard back to the
+      // drawing, which completes the round trip Enter starts: canvas → Enter →
+      // edit a field → Escape → canvas, with the same object still selected.
+      onKeyDown={(e) => {
+        if (e.key !== 'Escape') return
+        e.stopPropagation()
+        focusCanvas()
+      }}
+    >
       <div className="panel-head">
         <h2>Properties</h2>
         <span className="sp" />

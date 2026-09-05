@@ -6,6 +6,8 @@ import { dia, shapes } from '@joint/core'
 import type { PlantEdge, PlantNode } from '../model/types'
 import { isPortEnd } from '../model/types'
 import { getSymbol } from '../symbols/registry'
+import type { PortSide } from '../symbols/types'
+import { portSide, rotateSide } from '../symbols/portLabels'
 import { portWorld, scalesOf } from './alignment'
 import { strokeFor } from './lineStyle'
 import { parseSvgToMarkup, type MarkupNode } from './markupParser'
@@ -223,40 +225,24 @@ function toEnd(end: PlantEdge['source']): dia.Link.EndJSON {
   return isPortEnd(end) ? { id: end.nodeId, port: end.portId } : { x: end.x, y: end.y }
 }
 
-export type Direction = 'left' | 'right' | 'top' | 'bottom'
+export type Direction = PortSide
 
-/** Which way a link should leave a port, from the port's place on its symbol. */
+/** Which way a link should leave a port, from the port's place on its symbol.
+ *  The side rule itself lives in symbols/portLabels.ts, so the geometry that
+ *  routes an elbow and the words that describe the same nozzle to a user can
+ *  never come apart. */
 export function portDirection(symbolId: string, portId: string): Direction | null {
   try {
     const def = getSymbol(symbolId)
     const port = def.ports.find((p) => p.id === portId)
     if (!port) return null
-    if (port.dir) return port.dir
-    const w = def.gridSize.w * 8
-    const h = def.gridSize.h * 8
-    const candidates: [Direction, number][] = [
-      ['left', port.x],
-      ['right', w - port.x],
-      ['top', port.y],
-      ['bottom', h - port.y],
-    ]
-    candidates.sort((a, b) => a[1] - b[1])
-    const [dir, distance] = candidates[0]!
-    // 10px slack covers nozzle ports that sit slightly inside a dished head.
-    return distance <= 10 ? dir : null
+    return portSide(port, def.gridSize.w * 8, def.gridSize.h * 8)
   } catch {
     return null
   }
 }
 
-const CLOCKWISE: Record<Direction, Direction> = { top: 'right', right: 'bottom', bottom: 'left', left: 'top' }
-
-export function rotateDir(dir: Direction, rotation: number): Direction {
-  let d = dir
-  const turns = (((rotation % 360) + 360) % 360) / 90
-  for (let i = 0; i < turns; i++) d = CLOCKWISE[d]
-  return d
-}
+export const rotateDir = rotateSide
 
 function routerFor(edge: PlantEdge, nodes?: Map<string, PlantNode>): Record<string, unknown> {
   const args: Record<string, unknown> = { step: 8, padding: 8 }

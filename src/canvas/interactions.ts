@@ -8,7 +8,8 @@ import { ulid } from 'ulid'
 import type { PlantEdge, PlantNode } from '../model/types'
 import { isPortEnd } from '../model/types'
 import type { PortKind } from '../symbols/types'
-import { compatibleKinds, pickLineClass } from './connectionRules'
+import { explainConnection, pickLineClass } from './connectionRules'
+import { refusalAt, showRefusal } from './refusal'
 import { alignNodes, buildSnapIndex, distributeNodes, localPortPoint, portWorld, snapGuides, type SnapIndex } from './alignment'
 import { type Dock, type DockIndex, buildDockIndex, dockEdge, dockKey, dockRadius, findDock, flashDockCut, flashDockMade, showDockHint } from './autoConnect'
 import { createShakeDetector } from './shake'
@@ -16,6 +17,9 @@ import { attachCiteHighlight } from './cite'
 import { cleanVertices } from './vertexClean'
 import { makeLink } from './shapes'
 import { getSymbol } from '../symbols/registry'
+import { connectionRef } from '../symbols/portLabels'
+import { matches } from '../shortcuts/registry'
+import { showStatus } from '../feedback/notices'
 import { activeSheet, pauseHistory, resumeHistory, useStore } from '../store/store'
 
 const snap8 = (v: number) => Math.round(v / 8) * 8
@@ -37,9 +41,124 @@ function portKindOf(cellView: dia.CellView, magnet: SVGElement | undefined): Por
   return kindFromCell(cellView.model, portId)
 }
 
+/** The in-app clipboard. Module scope, not per-attach, so every surface that
+ *  offers Paste — the keyboard, the context menu — is offering the same one. */
+let clipboard: { nodes: PlantNode[]; edges: PlantEdge[] } | null = null
+
+export function hasClipboard(): boolean {
+  return Boolean(clipboard && clipboard.nodes.length)
+}
+
+/** Copy the current selection. Exported so the context menu runs exactly what
+ *  Ctrl+C runs; two implementations of "copy" is two behaviours eventually. */
+export function copySelection(): void {
+  const s = useStore.getState()
+  const selSet = new Set(s.selection)
+  const sheet = activeSheet(s)
+  clipboard = {
+    nodes: sheet.nodes.filter((n) => selSet.has(n.id)),
+    edges: sheet.edges.filter((ed) => selSet.has(ed.id)),
+  }
+}
+
+export function pasteClipboard(): void {
+  if (clipboard && clipboard.nodes.length) useStore.getState().pasteNodes(clipboard.nodes, clipboard.edges)
+}
+
+/** Rotate every selected symbol a quarter turn. */
+export function rotateSelection(): void {
+  const s = useStore.getState()
+  const sheet = activeSheet(s)
+  for (const id of s.selection) if (sheet.nodes.some((n) => n.id === id)) s.rotateNode(id)
+}
+
+/**
+ * Turn a line round. The context menu and the command palette both offer it,
+ * and both call this — two implementations of "reverse" would eventually
+ * disagree about the waypoints, which is the half everyone forgets.
+ */
+export function reverseEdge(id: string): void {
+  const s = useStore.getState()
+  const edge = activeSheet(s).edges.find((e) => e.id === id)
+  if (!edge) return
+  s.setEdge(id, {
+    source: edge.target,
+    target: edge.source,
+    vertices: edge.vertices ? [...edge.vertices].reverse() : undefined,
+  })
+}
+
+/** Add or remove a line's flow arrow. */
+export function toggleFlowArrow(id: string): void {
+  const s = useStore.getState()
+  const edge = activeSheet(s).edges.find((e) => e.id === id)
+  if (!edge) return
+  s.setEdge(id, { arrow: edge.arrow === 'flow' ? 'none' : 'flow' })
+}
+
+/**
+ * Connect the selected symbol to whatever its connection points are touching.
+ *
+ * The keyboard's answer to "how do I draw a line?", and deliberately NOT a
+ * "connect to PV-101" command that searches by tag.
+ *
+ * The difference matters. Magnetic docking picks its port pair by proximity —
+ * nearest compatible points that face each other — and that rule is only
+ * meaningful because the USER put the symbol there. Asked to join two symbols
+ * anywhere on the sheet, the same rule would be the application choosing a
+ * nozzle on the engineer's behalf, and on a real vessel the top nozzle and the
+ * bottom nozzle are not interchangeable. The catalogue has no names for ports
+ * either — `n1`, `w2`, `e` — so there is nothing to offer the user to choose
+ * between. See docs/UX-REGRESSION-CHECKLIST.md.
+ *
+ * So the geometry stays the engineer's: nudge the symbol until its point meets
+ * another, then ask. Same `findDock`, same `dockEdge`, same `dockNode`, same
+ * undo grouping and the same green flash the mouse gets — one rule, reached by
+ * a different input.
+ *
+ * Returns what happened, so the caller can say so.
+ */
+export function dockSelected(): { ok: boolean; reason?: string; made?: string } {
+  const paper = canvasRef.paper
+  const s = useStore.getState()
+  if (!paper) return { ok: false, reason: 'The drawing is not ready yet.' }
+  if (s.selection.length !== 1) {
+    return { ok: false, reason: 'Select one symbol first — this connects the symbol you have, not a group.' }
+  }
+  const sheet = activeSheet(s)
+  const node = sheet.nodes.find((n) => n.id === s.selection[0])
+  if (!node) return { ok: false, reason: 'Lines are connected by their ends — select a symbol instead.' }
+
+  const dock = findDock(
+    node, sheet.nodes, sheet.edges, s.activeLineClass,
+    dockRadius(paper.scale().sx), undefined,
+  )
+  if (!dock) {
+    return {
+      ok: false,
+      reason: 'No connection point is in reach. Nudge the symbol with the arrow keys until its point meets another, then try again.',
+    }
+  }
+  s.dockNode(node.id, dock.x, dock.y, dockEdge(node.id, dock))
+  flashDockMade(paper, dock.at)
+  // The flash says "there" to someone watching. This says WHICH two points
+  // were joined — the one thing a keyboard user cannot check by looking, and
+  // the whole reason the ports have words now.
+  const other = sheet.nodes.find((n) => n.id === dock.targetNodeId)
+  const from = connectionRef(node, dock.movingPortId)
+  const to = other ? connectionRef(other, dock.targetPortId) : null
+  return { ok: true, made: from && to ? `Connected ${from} to ${to}.` : undefined }
+}
+
+/** Select everything on the active sheet — symbols and the lines between them. */
+export function selectAll(): void {
+  const s = useStore.getState()
+  const sheet = activeSheet(s)
+  s.setSelection([...sheet.nodes.map((n) => n.id), ...sheet.edges.map((e) => e.id)])
+}
+
 export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => void {
   const store = () => useStore.getState()
-  let clipboard: { nodes: PlantNode[]; edges: PlantEdge[] } | null = null
 
   // --- link drawing -------------------------------------------------------
   paper.options.defaultLink = () =>
@@ -60,8 +179,9 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
     const src = portKindOf(srcView as dia.CellView, srcMagnet as SVGElement)
     const tgt = portKindOf(tgtView as dia.CellView, tgtMagnet as SVGElement)
     if (!src || !tgt) return false
-    if (srcView === tgtView) return false
-    return compatibleKinds(src, tgt)
+    // One implementation of the rule, in connectionRules, so what the paper
+    // enforces and what the refusal message says can never disagree.
+    return explainConnection(src, tgt, srcView === tgtView) === null
   }
 
   /** Sheet-local position of an edge end, for the accidental-stub check. */
@@ -182,6 +302,35 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
     // A free-ended stub shorter than ~3 grid squares is a failed drag near a
     // port, not a drawing intention — dropping it prevents ghost lines.
     if ((!isPortEnd(source) || !isPortEnd(target)) && a && b && Math.hypot(a.x - b.x, a.y - b.y) < 24) return
+
+    // A free end that came to rest ON a connection point did not become free
+    // by choice: the paper refused to snap it there. Before this, the drag
+    // simply ended and left a line pointing AT the nozzle that rejected it —
+    // silent, and indistinguishable at a glance from a real connection.
+    //
+    // Only when a point is actually in reach. A vent or an off-page run ends
+    // in open paper and must stay as ordinary as it has always been.
+    if (isPortEnd(source) !== isPortEnd(target)) {
+      const freeEnd = isPortEnd(source) ? target : source
+      const portEnd = isPortEnd(source) ? source : target
+      const kind = isPortEnd(source) ? srcKind : tgtKind
+      if (!isPortEnd(freeEnd)) {
+        const sheet = activeSheet(store())
+        const hit = refusalAt(freeEnd, sheet.nodes, kind, isPortEnd(portEnd) ? portEnd : undefined)
+        if (hit) {
+          showRefusal(paper, hit.at, hit.refusal)
+          // The mark on the sheet says WHAT happened, in the one line that
+          // fits beside a nozzle. The why and the way out are a sentence
+          // longer than that, and they were being computed and thrown away —
+          // the status line is where the rest of the app puts exactly this.
+          showStatus(
+            [hit.refusal.body, hit.refusal.hint].filter(Boolean).join(' '),
+            { kind: 'warning' },
+          )
+          return
+        }
+      }
+    }
     // A free end dropped onto an existing line becomes a branch tap.
     if (isPortEnd(source) && !isPortEnd(target)) {
       const tap = pipeAt(target)
@@ -796,64 +945,104 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
   syncSelection()
 
   // --- keyboard -----------------------------------------------------------
+  // Which keys these are is declared in shortcuts/registry.ts, not here: the
+  // shortcut sheet, the tooltips and this handler have to agree, and three
+  // hand-written copies of "is this Ctrl+D" agree only by luck. Behaviour
+  // stays here, where the canvas state is.
   const onKeyDown = (e: KeyboardEvent) => {
     const target = e.target as HTMLElement
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable) return
     const s = store()
-    const mod = e.metaKey || e.ctrlKey
 
-    if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); s.undo(); return }
-    if ((mod && e.key.toLowerCase() === 'y') || (mod && e.shiftKey && e.key.toLowerCase() === 'z')) { e.preventDefault(); s.redo(); return }
-    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); window.dispatchEvent(new CustomEvent('pid:save')); return }
-    if (mod && e.key.toLowerCase() === 'c') {
-      const selSet = new Set(s.selection)
-      const sheet = activeSheet(s)
-      clipboard = {
-        nodes: sheet.nodes.filter((n) => selSet.has(n.id)),
-        edges: sheet.edges.filter((ed) => selSet.has(ed.id)),
-      }
-      return
-    }
-    if (mod && e.key.toLowerCase() === 'v') {
-      if (clipboard && clipboard.nodes.length) s.pasteNodes(clipboard.nodes, clipboard.edges)
-      return
-    }
-    if (mod && e.key.toLowerCase() === 'd') {
+    if (matches(e, 'edit.undo')) { e.preventDefault(); s.undo(); return }
+    if (matches(e, 'edit.redo')) { e.preventDefault(); s.redo(); return }
+    if (matches(e, 'app.save')) { e.preventDefault(); window.dispatchEvent(new CustomEvent('pid:save')); return }
+    if (matches(e, 'edit.copy')) { copySelection(); return }
+    if (matches(e, 'edit.paste')) { pasteClipboard(); return }
+    if (matches(e, 'edit.duplicate')) {
       e.preventDefault()
       duplicateSelection()
       return
     }
-    // Shift+F fits the sheet to the visible canvas; Shift+1 goes back to 1:1.
-    if (e.shiftKey && e.key.toLowerCase() === 'f' && canvasRef.paper && canvasRef.graph) {
+    // Everything on the sheet, symbols AND the lines between them: selecting
+    // only symbols would make the very next Delete look as though it had left
+    // the pipework behind (deleteIds cascades, so it wouldn't have — but the
+    // selection ring is what the user is reading).
+    if (matches(e, 'select.all')) { e.preventDefault(); selectAll(); return }
+    if (matches(e, 'view.fit') && canvasRef.paper && canvasRef.graph) {
       e.preventDefault()
       fitView(canvasRef.paper, canvasRef.graph, activeSheet(s).sheetSize)
       return
     }
-    if (e.shiftKey && e.key === '!' && canvasRef.paper) {
+    if (matches(e, 'view.actual') && canvasRef.paper) {
       e.preventDefault()
       zoomActual(canvasRef.paper)
       return
     }
-    if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); s.deleteSelected(); return }
-    if (e.key === 'Escape') {
+    if (matches(e, 'edit.delete')) { e.preventDefault(); s.deleteSelected(); return }
+    if (matches(e, 'select.clear')) {
       if (s.armPin) { s.setArmPin(null); return }
       s.setSelection([])
       return
     }
-    if (e.key.toLowerCase() === 'r' && s.selection.length) {
-      for (const id of s.selection) if (activeSheet(s).nodes.some((n) => n.id === id)) s.rotateNode(id)
+    if (matches(e, 'draw.rotate') && s.selection.length) { rotateSelection(); return }
+    if (matches(e, 'draw.dockKey') && s.selection.length) {
+      e.preventDefault()
+      const r = dockSelected()
+      // A refusal is a status line, not a dialog: nothing is broken and the
+      // recovery is one arrow key away. A success is one too, naming the two
+      // points, because the flash that confirms it is not visible to everyone.
+      if (!r.ok && r.reason) showStatus(r.reason, { kind: 'warning' })
+      else if (r.made) showStatus(r.made)
       return
     }
-    const nudge = e.shiftKey ? 1 : 8
-    const moves: Record<string, [number, number]> = {
-      ArrowLeft: [-nudge, 0], ArrowRight: [nudge, 0], ArrowUp: [0, -nudge], ArrowDown: [0, nudge],
+    const fine = matches(e, 'draw.nudgeFine')
+    if (fine || matches(e, 'draw.nudge')) {
+      const nudge = fine ? 1 : 8
+      const moves: Record<string, [number, number]> = {
+        ArrowLeft: [-nudge, 0], ArrowRight: [nudge, 0], ArrowUp: [0, -nudge], ArrowDown: [0, nudge],
+      }
+      const mv = moves[e.key]
+      if (mv && s.selection.length) {
+        e.preventDefault()
+        const nodeIds = s.selection.filter((id) => activeSheet(s).nodes.some((n) => n.id === id))
+        if (nodeIds.length) s.moveNodes(nodeIds, mv[0], mv[1])
+      }
     }
-    const mv = moves[e.key]
-    if (mv && s.selection.length) {
-      e.preventDefault()
-      const nodeIds = s.selection.filter((id) => activeSheet(s).nodes.some((n) => n.id === id))
-      if (nodeIds.length) s.moveNodes(nodeIds, mv[0], mv[1])
-    }
+  }
+
+  // --- context menu -------------------------------------------------------
+  // Bound to the PAPER's own contextmenu events rather than a DOM listener on
+  // the host: a host listener would sit in front of the label-drag hit test in
+  // Canvas.tsx and JointJS's own link tools, and would have to re-derive which
+  // cell was hit. These arrive already resolved.
+  const askForMenu = (evt: dia.Event) => {
+    const native = (evt.originalEvent ?? evt) as MouseEvent
+    native.preventDefault?.()
+    window.dispatchEvent(
+      new CustomEvent('pid:contextmenu', { detail: { x: native.clientX, y: native.clientY } }),
+    )
+  }
+  /** Right-clicking something not in the selection selects it first — asking
+   *  about one object while acting on another is how people delete the wrong
+   *  thing. An object already in a multi-selection keeps the whole selection. */
+  const selectForMenu = (id: string) => {
+    const sel = store().selection
+    if (!sel.includes(id)) store().setSelection([id])
+  }
+  const onElementContext = (view: dia.ElementView, evt: dia.Event) => {
+    selectForMenu(String(view.model.id))
+    askForMenu(evt)
+  }
+  const onLinkContext = (view: dia.LinkView, evt: dia.Event) => {
+    const id = String(view.model.id)
+    if (id.startsWith('draft-')) return
+    selectForMenu(id)
+    askForMenu(evt)
+  }
+  const onBlankContext = (evt: dia.Event) => {
+    store().setSelection([])
+    askForMenu(evt)
   }
 
   const onPointerDownAny = (v: dia.ElementView, e: dia.Event, x: number, y: number) => {
@@ -868,6 +1057,9 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
   paper.on('link:pointerdown', onLinkPointerDown)
   paper.on('link:pointerup', onLinkPointerUp)
   paper.on('blank:pointerdown', onBlankPointerDown)
+  paper.on('element:contextmenu', onElementContext)
+  paper.on('link:contextmenu', onLinkContext)
+  paper.on('blank:contextmenu', onBlankContext)
   graph.on('change:vertices', onLinkChangeVertices)
   graph.on('batch:stop', onBatchStop)
   window.addEventListener('keydown', onKeyDown)
@@ -893,6 +1085,9 @@ export function attachInteractions(paper: dia.Paper, graph: dia.Graph): () => vo
     paper.off('link:pointerdown', onLinkPointerDown)
     paper.off('link:pointerup', onLinkPointerUp)
     paper.off('blank:pointerdown', onBlankPointerDown)
+    paper.off('element:contextmenu', onElementContext)
+    paper.off('link:contextmenu', onLinkContext)
+    paper.off('blank:contextmenu', onBlankContext)
     graph.off('add', onCellAdded)
     graph.off('change:vertices', onLinkChangeVertices)
     graph.off('batch:stop', onBatchStop)

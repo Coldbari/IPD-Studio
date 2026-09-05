@@ -13,8 +13,11 @@ import { startAutosave, restoreAutosave } from './persist/autosave'
 import { startCloudAutosave } from './cloud/autosave'
 import WorkspaceRail from './WorkspaceRail'
 import CommandPalette from './panels/CommandPalette'
+import ShortcutSheet from './panels/ShortcutSheet'
+import NoticeHost from './panels/NoticeHost'
 import UpdateToast from './panels/UpdateToast'
 import { navigateWorkspace, useWorkspace } from './routes'
+import { confirmAction } from './feedback/notices'
 
 // Split at the workspace boundary, the way the homepage is already split from
 // the editor: Draw must not pay for the HMI simulator or the report tables.
@@ -43,6 +46,12 @@ function Workspaces() {
         )}
       </div>
       <CommandPalette />
+      {/* Out here with the palette, and for the same reason: the answer to
+          "what does this key do" must not depend on which workspace is open. */}
+      <ShortcutSheet />
+      {/* Failures are raised from importers, exporters and the canvas alike,
+          so the one place that shows them has to outlive the workspace. */}
+      <NoticeHost />
       <UpdateToast />
     </div>
   )
@@ -60,10 +69,20 @@ function bootEditor(): void {
 
   startAutosave()
   startCloudAutosave()
-  void restoreAutosave().then((saved) => {
-    if (saved && window.confirm(`Restore autosaved drawing “${saved.meta.name}”?`)) {
-      useStore.getState().loadIntoStore(saved)
-    }
+  // The first thing the editor ever said was a browser confirm, before the
+  // page had finished painting, with a document name and no idea what was in
+  // it. It says when the work is from and how big it is now, and it is the
+  // app's own dialog, so it cannot be the OS's grey box over a blank canvas.
+  void restoreAutosave().then(async (saved) => {
+    if (!saved) return
+    const symbols = saved.sheets.reduce((n, sh) => n + sh.nodes.length, 0)
+    const ok = await confirmAction({
+      title: 'Pick up where you left off?',
+      body: `“${saved.meta.name}” was autosaved on this machine — ${saved.sheets.length} sheet${
+        saved.sheets.length === 1 ? '' : 's'}, ${symbols} symbol${symbols === 1 ? '' : 's'}. Opening it replaces the blank drawing on screen.`,
+      confirmLabel: 'Open it',
+    })
+    if (ok) useStore.getState().loadIntoStore(saved)
   })
 
   // Installed-PWA file handling: double-clicked .pnid files arrive here.
@@ -76,7 +95,15 @@ function bootEditor(): void {
       if (!handle) return
       const file = await handle.getFile()
       const { loadAnyText } = await import('./persist/file')
-      loadAnyText(file.name, await file.text())
+      const { notify } = await import('./feedback/notices')
+      const { openFailureNotice } = await import('./persist/openErrors')
+      try {
+        loadAnyText(file.name, await file.text())
+      } catch (err) {
+        // A double-clicked .pnid that will not open used to launch the app to
+        // an empty canvas with no explanation at all.
+        notify(openFailureNotice(file.name, err))
+      }
     })()
   })
 }

@@ -39,9 +39,12 @@ function gate(id: string, name: string, label: string, extra = ''): SymbolDef {
     gridSize: { w: 4, h: 3 },
     render: () => path5('M0 0 h32 v24 h-32 Z') + text5(16, 15, label) + extra,
     ports: [
-      { id: 'w1', x: 0, y: 8, kind: 'signal' },
-      { id: 'w2', x: 0, y: 16, kind: 'signal' },
-      { id: 'e', x: 32, y: 12, kind: 'signal' },
+      // A gate's left side is its inputs and its right side is its result:
+      // that is what the symbol is, not where the ports happen to be. The two
+      // inputs share a name and are told apart by position.
+      { id: 'w1', x: 0, y: 8, kind: 'signal', name: 'Input' },
+      { id: 'w2', x: 0, y: 16, kind: 'signal', name: 'Input' },
+      { id: 'e', x: 32, y: 12, kind: 'signal', name: 'Output' },
     ],
     tagRule: 'none',
     keywords: ['logic', 'isa-5.2', label.toLowerCase(), 'interlock'],

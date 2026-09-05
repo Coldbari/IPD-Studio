@@ -243,6 +243,9 @@ test('stretch, duplicate, live group drag, branch tap into a pipe', async ({ pag
 
   // --- stretch: widen tank A from the panel ------------------------------
   await page.mouse.click(...Object.values(await cp(128, 124)) as [number, number])
+  // per-axis stretch moved behind an "advanced" disclosure: it cost two
+  // permanent rows and six buttons in front of every symbol's real properties
+  await page.getByTestId('prop-stretch').locator('summary').click()
   await page.locator('.props button[title="Wider"]').click()
   const sxA = await page.evaluate((id) =>
     window.__pid.useStore.getState().doc.sheets[0].nodes.find((n: any) => n.id === id).scaleX, ids.a)

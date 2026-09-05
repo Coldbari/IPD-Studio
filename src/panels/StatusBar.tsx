@@ -7,6 +7,7 @@ import { useQa } from '../validate/live'
 import { useCloudStatus } from '../cloud/autosave'
 import { VersionChip } from './VersionNote'
 import { FeedbackChip } from './FeedbackDialog'
+import { notify, useStatusMessage } from '../feedback/notices'
 
 // PWA update prompting lives in panels/UpdateToast.tsx (both workspaces).
 // The budget chip moved to the toolbar (panels/BudgetDialog.tsx) — the running
@@ -18,6 +19,7 @@ export default function StatusBar() {
   const nodes = useStore((s) => activeSheet(s).nodes.length)
   const qa = useQa()
   const cloud = useCloudStatus()
+  const message = useStatusMessage()
 
   // One line about where the work stands. Two indicators ("Saved" next to
   // "Saved to your account") read as two different facts and made people look
@@ -36,6 +38,32 @@ export default function StatusBar() {
       </span>
       <span>{nodes} symbol{nodes === 1 ? '' : 's'}</span>
       {selection.length > 0 && <span>{selection.length} selected</span>}
+      {/* Level 3 of the feedback ladder: something worth saying that carries no
+          decision. It never takes focus and it fades on its own — the whole
+          point of it not being a dialog. `aria-live` so it is not silent to a
+          screen reader just because it is quiet on screen. */}
+      {message && (
+        <span
+          className={`status-msg${message.kind === 'warning' ? ' status-warn' : ''}`}
+          data-testid="status-message"
+          role="status"
+          aria-live="polite"
+        >
+          {message.text}
+          {message.details && (
+            <button
+              className="status-more"
+              onClick={() => notify({
+                kind: 'warning',
+                title: message.text,
+                details: message.details,
+              })}
+            >
+              details
+            </button>
+          )}
+        </span>
+      )}
       <span className="sp" />
       {/* The two app-level chips travel together, left of the QA readout —
           which stays pinned right, where people already track it. */}

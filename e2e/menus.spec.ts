@@ -39,14 +39,14 @@ test('the Export menu survives the toolbar being scrolled', async ({ page }) => 
   await page.waitForFunction(() => '__pid' in window)
 
   await page.waitForSelector('.toolbar')
-  await page.evaluate(() => { document.querySelector('.toolbar')!.scrollLeft = 200 })
+  await page.evaluate(() => { document.querySelector('.tb-scroll')!.scrollLeft = 200 })
   await page.getByRole('button', { name: /Export/ }).click()
   const pop = page.getByTestId('export-pop')
   await expect(pop).toBeVisible()
 
   // stays pinned to its trigger rather than drifting off with the scroll
   const aligned = await page.evaluate(() => {
-    const btn = [...document.querySelectorAll('.export-menu > button')][0] as HTMLElement
+    const btn = document.querySelector('[data-testid="tb-export"]') as HTMLElement
     const el = document.querySelector('[data-testid="export-pop"]') as HTMLElement
     return Math.abs(btn.getBoundingClientRect().right - el.getBoundingClientRect().right) < 2
   })

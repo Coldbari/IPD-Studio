@@ -272,6 +272,35 @@ export function fitView(paper: dia.Paper, graph: dia.Graph, sheetSize: SheetSize
   paper.translate((vw - tw * scale) / 2 - x0 * scale, (vh - th * scale) / 2 - y0 * scale)
 }
 
+/**
+ * Fit one box in the viewport — the selection, rather than the whole sheet.
+ *
+ * Shares fitView's padding and clamp so the two feel like the same gesture at
+ * different scopes. Zooms OUT as readily as in: "zoom to selection" on one
+ * valve at 400% should frame the valve, not magnify it to fill the window,
+ * so the scale is capped at 200% where a single small symbol would otherwise
+ * blow up past anything useful.
+ */
+export function zoomToBox(
+  paper: dia.Paper,
+  box: { x: number; y: number; width: number; height: number },
+): void {
+  const el = paper.el as HTMLElement
+  const vw = el.clientWidth
+  const vh = el.clientHeight
+  if (!vw || !vh || box.width < 0 || box.height < 0) return
+  // A zero-size box (a single point) still deserves a sensible frame.
+  const w = Math.max(box.width, 64)
+  const h = Math.max(box.height, 64)
+  const scale = Math.min(2, clampZoom(Math.min((vw - FIT_PADDING * 2) / w, (vh - FIT_PADDING * 2) / h)))
+  viewState.userMoved = true
+  paper.scale(scale, scale)
+  paper.translate(
+    vw / 2 - (box.x + box.width / 2) * scale,
+    vh / 2 - (box.y + box.height / 2) * scale,
+  )
+}
+
 /** Reset to 1:1 with the sheet's top-left corner just inside the viewport. */
 export function zoomActual(paper: dia.Paper): void {
   viewState.userMoved = true
@@ -281,3 +310,26 @@ export function zoomActual(paper: dia.Paper): void {
 
 /** Module-scope handle so panels/exports can reach the live paper. */
 export const canvasRef: { paper?: dia.Paper; graph?: dia.Graph } = {}
+
+const canvasListeners = new Set<() => void>()
+
+/**
+ * Publish the live paper, or withdraw it.
+ *
+ * Called by Canvas.tsx at exactly the two moments the reference changes —
+ * mount and teardown — so a panel that needs the paper can be told instead of
+ * looking for it. The toolbar's zoom readout used to poll once a second for
+ * the life of the session for want of this, which is a timer that runs
+ * forever to notice something that happens twice.
+ */
+export function setCanvas(paper?: dia.Paper, graph?: dia.Graph): void {
+  canvasRef.paper = paper
+  canvasRef.graph = graph
+  for (const fn of [...canvasListeners]) fn()
+}
+
+/** Told when the paper appears or goes away. Returns the unsubscribe. */
+export function onCanvasChange(fn: () => void): () => void {
+  canvasListeners.add(fn)
+  return () => { canvasListeners.delete(fn) }
+}

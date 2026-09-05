@@ -116,8 +116,11 @@ export const vessels: SymbolDef[] = [
       { id: 's', x: 24, y: 76, kind: 'process' },
       { id: 'n1', x: 12, y: 8, kind: 'process' },
       { id: 'n2', x: 36, y: 8, kind: 'process' },
-      { id: 'jn', x: 44, y: 32, kind: 'process' },
-      { id: 'js', x: 4, y: 52, kind: 'process' },
+      // On the jacket walls the render draws at x=4 and x=44 — which is what
+      // makes these jacket connections rather than vessel nozzles. Which one
+      // is the service supply and which the return is the drawing's to say.
+      { id: 'jn', x: 44, y: 32, kind: 'process', name: 'Jacket connection' },
+      { id: 'js', x: 4, y: 52, kind: 'process', name: 'Jacket connection' },
     ],
     tagRule: 'equipment',
     keywords: ['reactor', 'cstr', 'jacketed', 'stirred'],

@@ -19,6 +19,7 @@ import {
 } from '../assist/transport'
 import { clearHighlight, setHighlight } from '../store/highlight'
 import { locateCell } from '../canvas/locate'
+import { showStatus } from '../feedback/notices'
 
 /** One entry in the conversation. A query answer and a model turn are both
  *  just assistant messages, so the transcript reads as one thread rather than
@@ -213,7 +214,12 @@ function TurnBubble({ turn }: { turn: TurnUpdate }) {
           <div className="prop-row">
             <button data-testid="assist-approve" onClick={() => {
               const r = applyFix(spec)
-              if (!r.ok) window.alert(r.message ?? 'That could not be applied.')
+              if (!r.ok) {
+                showStatus(
+                  r.message ?? 'That suggestion no longer applies — the drawing has changed since it was made.',
+                  { kind: 'warning' },
+                )
+              }
               if (r.ok && r.changedIds.length > 0) setHighlight(r.changedIds)
               setResolved('allowed')
             }}>Allow</button>

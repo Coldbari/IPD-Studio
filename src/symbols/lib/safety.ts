@@ -20,8 +20,8 @@ export const safetyDevices: SymbolDef[] = [
       path('M24 8 L24 24 L12 24 Z') +
       path('M12 22 l5 -3 l-10 -3 l10 -3 l-10 -3 l5 -3'),
     ports: [
-      { id: 'in', x: 12, y: 40, kind: 'process' },
-      { id: 'out', x: 24, y: 16, kind: 'process' },
+      { id: 'in', x: 12, y: 40, kind: 'process', name: 'Inlet' },
+      { id: 'out', x: 24, y: 16, kind: 'process', name: 'Outlet' },
     ],
     tagRule: 'valve',
     keywords: ['psv', 'relief', 'safety', 'prv', 'pressure'],
@@ -80,8 +80,8 @@ export const safetyDevices2: SymbolDef[] = [
       path2('M0 4 h8 v8 h-8 Z') +
       path2('M8 8 H12'),
     ports: [
-      { id: 'in', x: 12, y: 40, kind: 'process' },
-      { id: 'out', x: 24, y: 16, kind: 'process' },
+      { id: 'in', x: 12, y: 40, kind: 'process', name: 'Inlet' },
+      { id: 'out', x: 24, y: 16, kind: 'process', name: 'Outlet' },
     ],
     tagRule: 'valve',
     keywords: ['psv', 'pilot', 'relief'],
@@ -97,8 +97,8 @@ export const safetyDevices2: SymbolDef[] = [
       path2('M6 20 Q12 12 18 20') +
       text2(12, 10, 'PV'),
     ports: [
-      { id: 'in', x: 12, y: 40, kind: 'process' },
-      { id: 'out', x: 24, y: 16, kind: 'process' },
+      { id: 'in', x: 12, y: 40, kind: 'process', name: 'Inlet' },
+      { id: 'out', x: 24, y: 16, kind: 'process', name: 'Outlet' },
     ],
     tagRule: 'valve',
     keywords: ['pvsv', 'vacuum', 'conservation', 'breather valve'],

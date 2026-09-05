@@ -42,7 +42,9 @@ export const flowElements: SymbolDef[] = [
   inline('fe.orifice', 'Orifice Plate', 32, 16, 8,
     () => path('M0 8 H32') + path('M14 0 V16') + path('M18 0 V16'),
     ['orifice', 'dp', 'fe', 'plate'],
-    [{ id: 'tap', x: 16, y: 0, kind: 'both' }]),
+    // "Tap" is what the catalogue calls it and all it establishes: a real
+    // plate is tapped upstream AND downstream, and this symbol has one port.
+    [{ id: 'tap', x: 16, y: 0, kind: 'both', name: 'Tap' }]),
 
   inline('fe.venturi', 'Venturi Tube', 48, 16, 8,
     () => path('M0 0 L20 5 L48 0 M0 16 L20 11 L48 16'),

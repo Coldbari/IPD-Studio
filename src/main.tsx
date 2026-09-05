@@ -43,13 +43,16 @@ function Root() {
 // substituted at build time, so this whole branch is dropped from production
 // and neither the store nor JointJS reaches the entry chunk.
 if (import.meta.env.DEV) {
-  const [{ useStore }, { canvasRef }, { firebaseReady }] = await Promise.all([
+  const [{ useStore }, { canvasRef }, { firebaseReady }, notices] = await Promise.all([
     import('./store/store'),
     import('./canvas/paperSetup'),
     // env-only, no firebase/* imports — costs the dev entry chunk nothing
     import('./auth/config'),
+    // so a spec can raise a failure directly, rather than having to arrange
+    // a real one for every message it wants to check
+    import('./feedback/notices'),
   ])
-  ;(window as unknown as Record<string, unknown>).__pid = { useStore, canvasRef, firebaseReady }
+  ;(window as unknown as Record<string, unknown>).__pid = { useStore, canvasRef, firebaseReady, notices }
 }
 
 createRoot(document.getElementById('root')!).render(

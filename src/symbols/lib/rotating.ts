@@ -23,8 +23,11 @@ export const rotating: SymbolDef[] = [
       path('M28 16 H44 M28 24 H44 M44 16 V24') +
       path('M0 28 H6'),
     ports: [
-      { id: 'suction', x: 0, y: 28, kind: 'process' },
-      { id: 'discharge', x: 44, y: 20, kind: 'process' },
+      // Named because this definition says so — the id is the word. The other
+      // eight pumps in this file use w/e and are left unnamed: nothing in
+      // their definitions decides which side draws and which delivers.
+      { id: 'suction', x: 0, y: 28, kind: 'process', name: 'Suction' },
+      { id: 'discharge', x: 44, y: 20, kind: 'process', name: 'Discharge' },
     ],
     tagRule: 'equipment',
     keywords: ['pump', 'centrifugal'],
