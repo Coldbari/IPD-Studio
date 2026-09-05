@@ -107,6 +107,62 @@ const ALIGNMENTS: [Parameters<typeof applyAlignment>[0], string][] = [
  * "Rotate" with nothing selected is a menu item that does nothing, which is
  * the dead end this whole programme of work has been removing.
  */
+export interface BlockedCommand {
+  cmd: AppCommand
+  /** What has to be true before it can run, in the app's own words. */
+  needs: string
+}
+
+/**
+ * The commands this context is HIDING, and why.
+ *
+ * `commandsFor` leaves out what cannot run, which is right — offering
+ * "Rotate" with nothing selected is a menu item that does nothing. But the
+ * palette then told an engineer who typed "rotate" that *no command matches*,
+ * which is a different claim and a false one: the command is right there,
+ * waiting for a selection.
+ *
+ * So this asks the same registry the same question with a different context,
+ * and reports what turns up. There is no second list of commands and no
+ * duplicated label: a command added tomorrow is explained tomorrow, for free,
+ * because the explanation is derived from the definition rather than written
+ * beside it.
+ */
+export function blockedFor(ctx: CommandContext): BlockedCommand[] {
+  const have = new Set(commandsFor(ctx).map((c) => c.id))
+  const sheet = ctx.sheet
+  // The ids are stand-ins: nothing here runs, and the only gate that looks a
+  // selection up is the line one, which gets a real edge or is skipped.
+  const probes: { needs: string; ctx: CommandContext }[] = [
+    {
+      needs: 'Select a symbol first.',
+      ctx: { selection: ['probe'], nodeIds: ['probe'], edgeIds: [], sheet },
+    },
+    {
+      needs: 'Select two or more symbols first.',
+      ctx: { selection: ['probe', 'probe2'], nodeIds: ['probe', 'probe2'], edgeIds: [], sheet },
+    },
+  ]
+  const edge = sheet.edges[0]
+  if (edge) {
+    probes.push({
+      needs: 'Select a line first.',
+      ctx: { selection: [edge.id], nodeIds: [], edgeIds: [edge.id], sheet },
+    })
+  }
+
+  const out: BlockedCommand[] = []
+  const seen = new Set<string>()
+  for (const probe of probes) {
+    for (const cmd of commandsFor(probe.ctx)) {
+      if (have.has(cmd.id) || seen.has(cmd.id)) continue
+      seen.add(cmd.id)
+      out.push({ cmd, needs: probe.needs })
+    }
+  }
+  return out
+}
+
 export function commandsFor(ctx: CommandContext): AppCommand[] {
   const s = useStore.getState()
   const out: AppCommand[] = []

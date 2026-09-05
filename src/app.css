@@ -1142,6 +1142,16 @@ button.used-row:hover { background: var(--c-accent-soft); color: var(--c-accent)
 .prop-adv > summary:hover { color: var(--c-accent); }
 .prop-adv > summary:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; border-radius: 3px; }
 
+/* Commands that exist but cannot run yet. Quieter than a result row and
+   plainly not clickable — the cursor never reaches them. */
+.cp-blocked { list-style: none; margin: 4px 0 0; padding: 0; }
+.cp-unavailable {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 5px 10px; font-size: 12px; color: var(--c-ink-3); cursor: default;
+}
+.cp-unavailable b { font-weight: 500; opacity: 0.85; }
+.cp-needs { flex: 1 1 auto; text-align: right; font-size: 11px; opacity: 0.85; }
+
 /* The symbol's connection points. A reference table, so it reads quietly:
    the name carries the weight and the kind and state sit back. */
 .prop-ports { list-style: none; margin: 4px 0 0; padding: 0; }

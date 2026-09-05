@@ -374,3 +374,88 @@ test('toolbar, context menu and palette placement are all unaffected', async ({ 
   await page.getByTestId('tb-fit').click()
   await expect(page.getByTestId('tb-zoom-pct')).toBeVisible()
 })
+
+/* ── audit follow-up: the palette tells the truth about what it has ─────── */
+
+test('a command that exists but cannot run says so, instead of denying it', async ({ page }) => {
+  await ready(page)
+  // Nothing selected.
+  for (const [query, label, needs] of [
+    ['rotate', 'Rotate 90°', 'Select a symbol first.'],
+    ['delete', 'Delete', 'Select a symbol first.'],
+    ['duplicate', 'Duplicate', 'Select a symbol first.'],
+    ['align', 'Align left edges', 'Select two or more symbols first.'],
+  ] as const) {
+    await page.keyboard.press('Meta+k')
+    await page.getByTestId('command-input').fill(query)
+    await page.waitForTimeout(200)
+
+    // It used to say "No command or symbol matches 'rotate'", which is a
+    // claim about the application and it was false.
+    await expect(page.locator('.search-empty')).toHaveCount(0)
+    const blocked = page.getByTestId('command-blocked')
+    await expect(blocked).toBeVisible()
+    await expect(blocked).toContainText(label)
+    await expect(blocked).toContainText(needs)
+
+    // Not runnable: no button, nothing focusable, and Enter changes nothing.
+    expect(await blocked.locator('button').count()).toBe(0)
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(200)
+    expect(await page.evaluate(() =>
+      window.__pid.useStore.getState().doc.sheets[0].nodes.length)).toBe(0)
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(150)
+  }
+})
+
+test('with a selection the same query is runnable, and runs', async ({ page }) => {
+  await ready(page)
+  const id = await page.evaluate(() => {
+    const s = window.__pid.useStore.getState()
+    const id = s.addNode({ symbolId: 'pump.centrifugal', kind: 'equipment', x: 300, y: 300, rotation: 0 })
+    window.__pid.useStore.getState().setSelection([id])
+    return id as string
+  })
+  await page.waitForTimeout(300)
+
+  await page.keyboard.press('Meta+k')
+  await page.getByTestId('command-input').fill('rotate')
+  await page.waitForTimeout(200)
+  // Now it is a real row, and nothing is explaining a precondition.
+  await expect(page.locator('.cp-item').first()).toContainText('Rotate 90°')
+  await expect(page.getByTestId('command-blocked')).toHaveCount(0)
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(250)
+
+  const rot = await page.evaluate((n) => window.__pid.useStore.getState()
+    .doc.sheets[0].nodes.find((x: { id: string }) => x.id === n).rotation, id)
+  expect(rot).toBe(90)
+})
+
+test('a query that really matches nothing still says so', async ({ page }) => {
+  await ready(page)
+  await page.keyboard.press('Meta+k')
+  await page.getByTestId('command-input').fill('xyzzy')
+  await page.waitForTimeout(250)
+  await expect(page.getByTestId('command-blocked')).toHaveCount(0)
+  await expect(page.locator('.search-empty')).toContainText('No command or symbol matches')
+})
+
+test('short ISA codes reach the instrument, not the coincidence', async ({ page }) => {
+  await ready(page)
+  for (const [code, want] of [['FT', 'Flow Transmitter'], ['PT', 'Pressure Transmitter'], ['LT', 'Level Transmitter']] as const) {
+    await page.getByTestId('palette-search').fill(code)
+    await page.waitForTimeout(250)
+    const labels = await page.locator('.palette-label').evaluateAll((els) => els.map((e) => e.textContent?.trim()))
+    expect(labels[0], code).toBe(code)
+    expect(labels, code).not.toContain('Crystallizer')
+    expect(labels, code).not.toContain('Belt Conveyor')
+    await expect(page.locator('.palette-entry').first()).toHaveAttribute('title', new RegExp(want))
+  }
+  // and the control valves own "CV"
+  await page.getByTestId('palette-search').fill('CV')
+  await page.waitForTimeout(250)
+  const cv = await page.locator('.palette-label').evaluateAll((els) => els.map((e) => e.textContent?.trim()))
+  expect(cv).toEqual(['Control Valve (Ball)', 'Control Valve (Butterfly)', 'Control Valve (Globe)'])
+})

@@ -10,7 +10,7 @@ import { navigateWorkspace } from '../routes'
 import { placeAtCenter } from '../canvas/dropHandling'
 import { getSymbol } from '../symbols/registry'
 import { display, matches } from '../shortcuts/registry'
-import { commandsFor, contextNow, type AppCommand } from '../commands/registry'
+import { blockedFor, commandsFor, contextNow, type AppCommand, type BlockedCommand } from '../commands/registry'
 import { searchPalette, type PaletteHit } from './instrumentPresets'
 import { splitKey, useFavouriteComponents, useRecentComponents } from './componentPrefs'
 
@@ -53,6 +53,24 @@ const CAP = { tag: 5, command: 7, symbol: 8 }
  * see commands/registry.ts. This file decides what to OFFER; it never decides
  * what anything means.
  */
+/**
+ * How well a command answers what was typed. Shared by the runnable list and
+ * by the "exists, but not yet" rows, so the two can never disagree about
+ * whether a query matched a command.
+ *
+ * Shortcut text is searchable too, so someone who half-remembers ⌘D can type
+ * it and be reminded what it does.
+ */
+function rankCommand(c: AppCommand, lower: string): number {
+  const label = c.label.toLowerCase()
+  const keys = c.shortcut ? display(c.shortcut).toLowerCase() : ''
+  return label.startsWith(lower) ? 0
+    : label.includes(lower) ? 1
+    : c.keywords?.some((k) => k.startsWith(lower)) ? 2
+    : keys && keys.replace(/\s/g, '').includes(lower.replace(/\s/g, '')) ? 3
+    : -1
+}
+
 export default function CommandPalette() {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -97,16 +115,7 @@ export default function CommandPalette() {
     const scored: { rank: number; cmd: AppCommand }[] = []
     for (const c of commandsFor(ctx)) {
       if (!lower) { scored.push({ rank: 0, cmd: c }); continue }
-      const label = c.label.toLowerCase()
-      // Shortcut text is searchable too, so someone who half-remembers ⌘D can
-      // type it and be reminded what it does (§17).
-      const keys = c.shortcut ? display(c.shortcut).toLowerCase() : ''
-      const rank =
-        label.startsWith(lower) ? 0
-        : label.includes(lower) ? 1
-        : c.keywords?.some((k) => k.startsWith(lower)) ? 2
-        : keys && keys.replace(/\s/g, '').includes(lower.replace(/\s/g, '')) ? 3
-        : -1
+      const rank = rankCommand(c, lower)
       if (rank >= 0) scored.push({ rank, cmd: c })
     }
     // A stable sort keeps the contextual order within a rank — so with a pump
@@ -186,6 +195,27 @@ export default function CommandPalette() {
     // list would go stale the moment the user selected something else.
   }, [query, doc, selection, recent, favourites])
 
+  /**
+   * Commands that exist but cannot run yet.
+   *
+   * Deliberately NOT part of `items`: the cursor never lands on one, Enter
+   * can never reach one, and they carry no `run`. They are an answer to
+   * "does this application have a rotate command", which is the question the
+   * old empty state got wrong.
+   */
+  const blocked = useMemo<BlockedCommand[]>(() => {
+    if (!doc) return []
+    const raw = query.trim()
+    const needle = (raw.startsWith('>') ? raw.slice(1) : raw).trim().toLowerCase()
+    if (!needle) return []
+    return blockedFor(contextNow())
+      .map((b) => ({ b, rank: rankCommand(b.cmd, needle) }))
+      .filter(({ rank }) => rank >= 0)
+      .sort((a, z) => a.rank - z.rank)
+      .slice(0, 4)
+      .map(({ b }) => b)
+  }, [query, doc, selection])
+
   if (!open) return null
 
   const close = () => {
@@ -249,7 +279,22 @@ export default function CommandPalette() {
             })}
           </ul>
         )}
-        {query.trim() && items.length === 0 && (
+        {/* Exists, but not yet. Rendered as plain rows rather than buttons:
+            nothing here is focusable, the cursor cannot reach it and Enter
+            cannot run it — the point is to answer "does this app have a
+            rotate command", not to offer one that would do nothing. */}
+        {blocked.length > 0 && (
+          <ul className="cp-blocked" data-testid="command-blocked">
+            <li className="cp-section">Needs a selection</li>
+            {blocked.map(({ cmd, needs }) => (
+              <li key={cmd.id} className="cp-unavailable" aria-disabled="true">
+                <b>{cmd.label}</b>
+                <span className="cp-needs">{needs}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {query.trim() && items.length === 0 && blocked.length === 0 && (
           <div className="search-empty">
             No command or symbol matches “{query.trim()}”.
             <span> Try a shorter word — “valve”, “pump”, “transmitter” — or a tag like PV-101.</span>

@@ -4,7 +4,7 @@
 
 import type { CustomSymbolDef, ProjectDoc } from '../model/types'
 import { resetPortLabels } from './portLabels'
-import { SYMBOLS } from './registry'
+import { resetSymbolIndex, SYMBOLS } from './registry'
 import type { SymbolDef } from './types'
 
 function toSymbolDef(def: CustomSymbolDef): SymbolDef {
@@ -29,7 +29,9 @@ export function registerCustomSymbols(doc: ProjectDoc): void {
   for (const def of doc.customSymbols ?? []) {
     SYMBOLS.set(def.id, toSymbolDef(def))
   }
-  // The catalogue just changed under the label cache; a custom symbol from
-  // the previous document must not describe this one's ports.
+  // The catalogue just changed under the label cache and the search index; a
+  // custom symbol from the previous document must not describe this one's
+  // ports, nor turn up in this one's search results.
   resetPortLabels()
+  resetSymbolIndex()
 }

@@ -2,7 +2,8 @@
 // Copyright © 2026 Praharsh Nagpure — IPD Studio. Noncommercial use only;
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
-import { searchSymbols } from '../symbols/registry'
+import { rankSymbols } from '../symbols/registry'
+import { indexRecord, NO_MATCH, prepareQuery, scoreIndexed } from '../symbols/search'
 
 /** A ready-to-place ISA instrument: the bubble pre-tagged with these letters
  *  (loop number auto-assigned per TYPE on placement). `name` is the full
@@ -100,27 +101,39 @@ export interface PaletteHit {
   presetLetters?: string
 }
 
-/** Unified palette search: instrument shortcuts (FT) and full names
- *  ('flow transmitter') rank ahead of symbol name/keyword/id matches. */
+/** The presets with their words split, built once — the list is static. */
+const PRESET_INDEX = INSTRUMENT_PRESETS.map((p) => ({
+  ix: indexRecord({ name: p.name, letters: p.letters }),
+  item: p,
+}))
+
+/**
+ * Everything the palette can offer for a query, best first.
+ *
+ * Presets and symbols are scored by the SAME function and merged on one
+ * scale, rather than the old arrangement where every preset outranked every
+ * symbol and every symbol arrived alphabetically. That is what lets "cv"
+ * return the three control valves — no preset matches it at all — while "ft"
+ * still leads with the ISA shortcut, and it is why a symbol whose id is
+ * exactly what you typed ("psv") comes before one that merely contains it.
+ */
 export function searchPalette(query: string): PaletteHit[] {
-  const q = query.trim().toLowerCase()
+  const q = prepareQuery(query)
   if (!q) return []
-  const ranked: { rank: number; hit: PaletteHit }[] = []
-  for (const p of INSTRUMENT_PRESETS) {
-    const letters = p.letters.toLowerCase()
-    const name = p.name.toLowerCase()
-    const rank = letters === q ? 0 : letters.startsWith(q) ? 1 : name === q ? 2 : name.includes(q) ? 3 : -1
-    if (rank < 0) continue
-    ranked.push({ rank, hit: { symbolId: 'instr.bubble', label: p.letters, name: p.name, presetLetters: p.letters } })
+  const hits: { score: number; label: string; hit: PaletteHit }[] = []
+  for (const { ix, item } of PRESET_INDEX) {
+    const score = scoreIndexed(ix, q)
+    if (score === NO_MATCH) continue
+    hits.push({
+      score,
+      label: item.name,
+      hit: { symbolId: 'instr.bubble', label: item.letters, name: item.name, presetLetters: item.letters },
+    })
   }
-  for (const d of searchSymbols(q)) {
-    ranked.push({ rank: 4, hit: { symbolId: d.id, label: d.name, name: d.name } })
+  for (const { def, score } of rankSymbols(query)) {
+    hits.push({ score, label: def.name, hit: { symbolId: def.id, label: def.name, name: def.name } })
   }
-  // id matches ('hx.plate') aren't covered by searchSymbols — add them last
-  const seen = new Set(ranked.map((r) => r.hit.symbolId + (r.hit.presetLetters ?? '')))
-  for (const d of searchSymbols('')) {
-    if (!d.id.toLowerCase().includes(q) || seen.has(d.id)) continue
-    ranked.push({ rank: 5, hit: { symbolId: d.id, label: d.name, name: d.name } })
-  }
-  return ranked.sort((a, b) => a.rank - b.rank || a.hit.label.localeCompare(b.hit.label)).map((r) => r.hit)
+  return hits
+    .sort((a, b) => a.score - b.score || a.label.localeCompare(b.label))
+    .map((h) => h.hit)
 }
