@@ -2,7 +2,7 @@
 // Copyright © 2026 Praharsh Nagpure — IPD Studio. Noncommercial use only;
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { activeSheet, useStore } from '../store/store'
 import {
@@ -99,10 +99,34 @@ export default function CanvasContextMenu() {
     })
   }, [at, selection])
 
+  /**
+   * Escape, and choosing an item, both put the keyboard back on the drawing.
+   *
+   * A dismissal that leaves focus on the document body is a dead end: the
+   * menu was opened from the canvas with Shift+F10, and every shortcut the
+   * user reaches for next — R, Delete — acts on a selection they can no
+   * longer address. Dismissing by clicking somewhere else deliberately does
+   * NOT come through here: that click has its own destination, and taking
+   * focus back would steal it.
+   */
+  const dismiss = useCallback(() => {
+    setAt(null)
+    focusCanvas()
+  }, [])
+
   useEffect(() => {
     if (!at) return
     const close = () => setAt(null)
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      // CAPTURE, and the event stops here. The canvas registered its own
+      // Escape on window when the paper mounted, so it runs before any
+      // listener added later and clears the selection — and closing a menu
+      // is not a request to drop what you had hold of.
+      e.stopPropagation()
+      e.preventDefault()
+      dismiss()
+    }
     // pointerdown anywhere outside closes; the canvas fires its own
     // contextmenu again for a second right-click, which re-opens it
     const onDown = (e: PointerEvent) => {
@@ -110,25 +134,18 @@ export default function CanvasContextMenu() {
       close()
     }
     window.addEventListener('pointerdown', onDown)
-    window.addEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
     window.addEventListener('blur', close)
     return () => {
       window.removeEventListener('pointerdown', onDown)
-      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keydown', onKey, true)
       window.removeEventListener('blur', close)
     }
-  }, [at])
+  }, [at, dismiss])
 
   if (!at || !sheet) return null
 
-  // Closing returns the keyboard to the drawing rather than dropping it on the
-  // document body — which is where a keyboard user who opened this with
-  // Shift+F10 would otherwise land, with no way back except Tab from the top.
-  const close = () => {
-    setAt(null)
-    focusCanvas()
-  }
-  const go = (fn: () => void) => () => { close(); fn() }
+  const go = (fn: () => void) => () => { dismiss(); fn() }
   const s = useStore.getState()
 
   const nodeIds = selection.filter((id) => sheet.nodes.some((n) => n.id === id))

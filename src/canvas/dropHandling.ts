@@ -31,6 +31,39 @@ export function kindForSymbol(def: Pick<SymbolDef, 'tagRule' | 'category'>): Nod
 
 const snap8 = (v: number) => Math.round(v / 8) * 8
 
+/**
+ * Where the next CENTRE placement goes.
+ *
+ * Placing twice without moving the view used to put both symbols on the same
+ * pixel — five clicks on the Gate Valve tile produced five valves at
+ * 776,552 and a drawing that showed one. That is a wrong instrument index,
+ * a wrong count and a duplicate-tag finding the engineer cannot find by
+ * looking, produced with no signal at all. Successive placements now step
+ * down and to the right, the way a window manager cascades new windows.
+ *
+ * This is CENTRE placement only. A drop knows where the pointer was and has
+ * never needed it: `placedNode` is a separate path and is untouched.
+ *
+ * Keyed on the viewport itself rather than on a subscription to the paper:
+ * the sheet point under the centre, plus the scale, IS the view. Pan and the
+ * point moves; zoom, fit, actual or zoom-to-selection and the scale moves.
+ * Either way the key changes and the next placement starts from the centre
+ * again — no listener, no timer, no state machine, and O(1).
+ */
+let cascade: { view: string; step: number } | null = null
+
+/** One step of the cascade. Three grid squares, not one: an A3 fits at about
+ *  50%, where a single 8px square is four screen pixels and no offset a
+ *  person can see. A multiple of 8 keeps every placement on the grid. */
+const CASCADE_STEP = 24
+
+function nextCascadeOffset(paper: dia.Paper, local: { x: number; y: number }): number {
+  const view = `${Math.round(local.x)},${Math.round(local.y)}@${paper.scale().sx.toFixed(4)}`
+  const step = cascade && cascade.view === view ? cascade.step + 1 : 0
+  cascade = { view, step }
+  return step * CASCADE_STEP
+}
+
 /** Place a symbol snapped at the visible canvas center (palette Enter quick-add). */
 export function placeAtCenter(symbolId: string, presetLetters?: string): void {
   const paper = canvasRef.paper
@@ -42,11 +75,12 @@ export function placeAtCenter(symbolId: string, presetLetters?: string): void {
   const store = useStore.getState()
   const w = def.gridSize.w * 8
   const h = def.gridSize.h * 8
+  const off = nextCascadeOffset(paper, local)
   const node: Parameters<typeof store.addNode>[0] = {
     symbolId: def.id,
     kind: kindForSymbol(def),
-    x: snap8(local.x - w / 2),
-    y: snap8(local.y - h / 2),
+    x: snap8(local.x - w / 2) + off,
+    y: snap8(local.y - h / 2) + off,
     rotation: 0,
   }
   if (def.defaultConfig) node.config = { ...def.defaultConfig }
@@ -71,7 +105,10 @@ export function placeTypicalAtCenter(typicalId: string): void {
   const rect = el.getBoundingClientRect()
   const local = paper.clientToLocalPoint({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
   const store = useStore.getState()
-  const { nodes, edges } = buildTypical(typicalId, store.doc, { x: local.x - 96, y: local.y - 96 })
+  // Same cascade: two typicals dropped on one view would stack a whole loop
+  // on a whole loop, which is the same hazard with more objects in it.
+  const off = nextCascadeOffset(paper, local)
+  const { nodes, edges } = buildTypical(typicalId, store.doc, { x: local.x - 96 + off, y: local.y - 96 + off })
   store.addBatch(nodes, edges)
   focusCanvas()
 }

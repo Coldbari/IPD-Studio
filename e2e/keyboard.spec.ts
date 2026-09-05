@@ -240,3 +240,99 @@ test('pointer selection and keyboard selection are the same selection', async ({
   await page.keyboard.press('Shift+Tab')
   expect(await sel(page)).toEqual([ids.pump])
 })
+
+/* ── audit follow-up: the two ways out that were dead ends ──────────────── */
+
+test('Escape from a keyboard-opened context menu keeps the selection and the keyboard', async ({ page }) => {
+  await ready(page)
+  const ids = await seed(page)
+  await page.evaluate((id) => window.__pid.useStore.getState().setSelection([id]), ids.pump)
+  await page.locator('.canvas-host').focus()
+
+  await page.keyboard.press('Shift+F10')
+  await expect(page.getByTestId('canvas-context-menu')).toBeVisible()
+
+  await page.keyboard.press('Escape')
+  await expect(page.getByTestId('canvas-context-menu')).toHaveCount(0)
+
+  // It used to land on document.body with the selection cleared, so every
+  // shortcut the user reached for next went nowhere.
+  await expect(page.locator('.canvas-host')).toBeFocused()
+  expect(await sel(page)).toEqual([ids.pump])
+
+  await page.keyboard.press('r')
+  await page.waitForTimeout(150)
+  const rotated = (await nodes(page)).find((n: { id: string }) => n.id === ids.pump)
+  expect(rotated.rotation).toBe(90)
+
+  await page.keyboard.press('Delete')
+  await page.waitForTimeout(150)
+  expect((await nodes(page)).some((n: { id: string }) => n.id === ids.pump)).toBe(false)
+})
+
+test('Escape after choosing a menu item still behaves, and a click elsewhere is not stolen', async ({ page }) => {
+  await ready(page)
+  const ids = await seed(page)
+  await page.evaluate((id) => window.__pid.useStore.getState().setSelection([id]), ids.pump)
+  await page.locator('.canvas-host').focus()
+  await page.keyboard.press('Shift+F10')
+  await expect(page.getByTestId('canvas-context-menu')).toBeVisible()
+  await page.keyboard.press('Enter')          // choose the focused item (Rotate)
+  await page.waitForTimeout(200)
+  await expect(page.locator('.canvas-host')).toBeFocused()
+  expect(await sel(page)).toEqual([ids.pump])
+
+  // Dismissing by clicking somewhere else must NOT drag focus back to the
+  // canvas — that click had its own destination.
+  await page.locator('.canvas-host').focus()
+  await page.keyboard.press('Shift+F10')
+  await expect(page.getByTestId('canvas-context-menu')).toBeVisible()
+  await page.getByTestId('palette-search').click()
+  await expect(page.getByTestId('canvas-context-menu')).toHaveCount(0)
+  await expect(page.getByTestId('palette-search')).toBeFocused()
+})
+
+test('Enter opens the inspector on the tag, not on the button that hides it', async ({ page }) => {
+  await ready(page)
+  const made = await page.evaluate(() => {
+    const s = window.__pid.useStore.getState()
+    return {
+      instrument: s.addNode({ symbolId: 'instr.bubble', kind: 'instrument', x: 120, y: 120, rotation: 0 }),
+      valve: window.__pid.useStore.getState().addNode({ symbolId: 'valve.gate', kind: 'valve', x: 320, y: 120, rotation: 0 }),
+      vessel: window.__pid.useStore.getState().addNode({ symbolId: 'vessel.vertical', kind: 'equipment', x: 520, y: 120, rotation: 0 }),
+      note: window.__pid.useStore.getState().addNode({ symbolId: 'ann.text', kind: 'annotation', x: 720, y: 120, rotation: 0 }),
+    }
+  })
+  await page.waitForTimeout(400)
+
+  for (const key of ['instrument', 'valve', 'vessel'] as const) {
+    await page.evaluate((id) => window.__pid.useStore.getState().setSelection([id]), made[key])
+    await page.locator('.canvas-host').focus()
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(250)
+    const focused = await page.evaluate(() => {
+      const a = document.activeElement as HTMLElement | null
+      return { cls: a?.className ?? '', tag: a?.tagName ?? '' }
+    })
+    expect(focused.cls, key).toContain('tag-letters')
+    expect(focused.cls, key).not.toContain('panel-collapse')
+    // and the button that hides the panel is exactly one Shift+Tab away
+    await page.keyboard.press('Shift+Tab')
+    await page.waitForTimeout(120)
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(150)
+  }
+
+  // A symbol with no tag falls back deterministically to a real field, never
+  // to the collapse button.
+  await page.evaluate((id) => window.__pid.useStore.getState().setSelection([id]), made.note)
+  await page.locator('.canvas-host').focus()
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(250)
+  const fallback = await page.evaluate(() => {
+    const a = document.activeElement as HTMLElement | null
+    return { cls: a?.className ?? '', tag: a?.tagName ?? '' }
+  })
+  expect(fallback.cls).not.toContain('panel-collapse')
+  expect(['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON']).toContain(fallback.tag)
+})

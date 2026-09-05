@@ -419,15 +419,32 @@ export default function PropertyPanel({ onCollapse }: { onCollapse?: () => void 
   const single = selection.length === 1 ? selection[0]! : null
   const asideRef = useRef<HTMLElement>(null)
 
-  // Enter on the canvas asks for this panel and for the keyboard to arrive in
-  // it. Focusing the first field rather than the panel: someone who pressed
-  // Enter on a symbol wants to change something, and landing on the container
-  // would cost them another Tab to find out what.
+  /**
+   * Enter on the canvas asks for this panel AND for the keyboard to arrive
+   * somewhere useful in it.
+   *
+   * It used to arrive on "Hide the properties panel" — first in DOM order,
+   * so first out of a query that accepted any button. Enter opened the panel
+   * and put the keyboard on the control that closes it again, with the field
+   * the user actually came for four Tab presses away.
+   *
+   * The order below is what an engineer reaches for: the tag, because that is
+   * what identifies the object and what most edits change; then the first
+   * real field for the symbols that carry no tag (annotation, fittings, and
+   * a selected line, which lands on its class); then, only if there is
+   * nothing to edit at all, a button that is not the collapse. The collapse
+   * stays one Shift+Tab away.
+   */
   useEffect(() => {
     const focusFirst = () => {
-      const el = asideRef.current?.querySelector<HTMLElement>(
-        'input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])',
-      )
+      const panel = asideRef.current
+      if (!panel) return
+      const el =
+        panel.querySelector<HTMLElement>('.tag-letters:not([disabled])')
+        ?? panel.querySelector<HTMLElement>(
+          'input:not([disabled]), select:not([disabled]), textarea:not([disabled])',
+        )
+        ?? panel.querySelector<HTMLElement>('button:not([disabled]):not(.panel-collapse)')
       el?.focus()
       if (el instanceof HTMLInputElement) el.select()
     }
