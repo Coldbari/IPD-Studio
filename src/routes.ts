@@ -14,9 +14,9 @@ export type Route = 'home' | 'app'
  * linkable, survives the back button, and can be a lazy chunk of its own —
  * `draw` must not pay for the tables or the HMI simulator.
  */
-export type Workspace = 'draw' | 'data' | 'checks' | 'hmi'
+export type Workspace = 'draw' | 'data' | 'checks' | 'standards' | 'hmi'
 
-export const WORKSPACES: readonly Workspace[] = ['draw', 'data', 'checks', 'hmi']
+export const WORKSPACES: readonly Workspace[] = ['draw', 'data', 'checks', 'standards', 'hmi']
 
 export function routeFor(pathname: string): Route {
   return /^\/app(\/|$)/.test(pathname) ? 'app' : 'home'

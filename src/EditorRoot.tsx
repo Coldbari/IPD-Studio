@@ -23,6 +23,7 @@ import { confirmAction } from './feedback/notices'
 // the editor: Draw must not pay for the HMI simulator or the report tables.
 const DataWorkspace = lazy(() => import('./workspaces/DataWorkspace'))
 const ChecksWorkspace = lazy(() => import('./workspaces/ChecksWorkspace'))
+const StandardsPage = lazy(() => import('./workspaces/StandardsPage'))
 const HmiWorkspace = lazy(() => import('./hmi/HmiWorkspace'))
 
 /**
@@ -41,6 +42,7 @@ function Workspaces() {
           <Suspense fallback={<div className="route-loading">Loading {workspace}…</div>}>
             {workspace === 'data' && <DataWorkspace />}
             {workspace === 'checks' && <ChecksWorkspace />}
+            {workspace === 'standards' && <StandardsPage />}
             {workspace === 'hmi' && <HmiWorkspace onExit={() => navigateWorkspace('draw')} />}
           </Suspense>
         )}

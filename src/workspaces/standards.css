@@ -1,0 +1,248 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+   Copyright © 2026 Praharsh Nagpure — IPD Studio. Noncommercial use only;
+   commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
+
+   Scoped to the Standards page, in its own file the way home/auth/hmi already
+   are — the shared app.css carries the shell, not one screen's settings form. */
+
+.std-body {
+  overflow: auto;
+  padding: 12px 14px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 880px;
+}
+
+.std-sub {
+  font-size: 12px;
+  color: var(--c-ink-2);
+  margin-left: 10px;
+}
+
+/* ---- the impact panel: the reason this screen is trustworthy ---------- */
+
+.std-impact {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--c-accent-soft);
+  border: 1px solid #bcc6cd;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.std-impact.quiet {
+  background: var(--c-chrome);
+  border-color: var(--c-line-soft);
+  color: var(--c-ink-2);
+  font-size: 12px;
+}
+
+.std-impact-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.std-impact-head strong { font-size: 13px; }
+
+.std-impact button {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid var(--c-line);
+  border-radius: 4px;
+  background: var(--c-surface);
+  cursor: pointer;
+}
+
+.std-impact button.primary {
+  background: var(--c-accent);
+  border-color: var(--c-accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.std-impact-line {
+  margin: 0 0 6px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.std-delta {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.std-delta.up { color: var(--c-bad); }
+.std-delta.down { color: var(--c-accent); }
+.std-total { color: var(--c-ink-2); }
+
+.std-impact-rules {
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.std-impact-rules li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.std-impact-rule { flex: 1; color: var(--c-ink); }
+
+/* ---- cards ------------------------------------------------------------ */
+
+.std-card {
+  background: var(--c-surface);
+  border: 1px solid var(--c-line-soft);
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+
+.std-card h2 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.std-card h3 {
+  margin: 12px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-ink-2);
+  text-transform: capitalize;
+}
+
+.std-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--c-ink-2);
+  line-height: 1.5;
+}
+
+.std-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.std-row > span:first-child {
+  flex: 0 0 190px;
+  color: var(--c-ink-2);
+}
+
+.std-row input,
+.std-row select {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid var(--c-line);
+  border-radius: 4px;
+  background: var(--c-surface);
+  min-width: 0;
+  flex: 1;
+  max-width: 340px;
+}
+
+.std-rule > span:first-child { flex: 1; color: var(--c-ink); }
+.std-rule select { flex: 0 0 170px; }
+
+/* ---- line-number order ------------------------------------------------ */
+
+.std-order {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.std-order li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  background: var(--c-chrome);
+  border: 1px solid var(--c-line-soft);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+.std-order-name { flex: 1; font-weight: 600; }
+
+.std-order button,
+.std-chip {
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--c-line);
+  border-radius: 4px;
+  background: var(--c-surface);
+  cursor: pointer;
+}
+
+.std-order button:disabled { opacity: 0.4; cursor: default; }
+
+.std-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.std-chip.add { color: var(--c-accent); }
+
+/* ---- required fields -------------------------------------------------- */
+
+.std-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 2px 10px;
+}
+
+.std-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--c-ink-2);
+  padding: 2px 0;
+}
+
+.std-field.on { color: var(--c-ink); font-weight: 600; }
+
+/* ---- import problems -------------------------------------------------- */
+
+.std-problems {
+  background: #fdf3f3;
+  border: 1px solid #e6b8b8;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--c-bad);
+}
+
+.std-problems ul { margin: 6px 0 0; padding-left: 18px; }
+.std-problems code { font-size: 11px; }
+
+.std-link {
+  font: inherit;
+  font-size: 12px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--c-accent);
+  text-decoration: underline;
+  cursor: pointer;
+}

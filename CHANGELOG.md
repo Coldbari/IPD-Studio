@@ -6,6 +6,46 @@ All notable changes to IPD Studio. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Company standards — the validator checks *your* rules, not generic ones.**
+  A generic checker tells you a tag is malformed by ISA. This one tells you it
+  is malformed by your own numbering convention, which is what actually gets a
+  drawing rejected at check stage. Loop-number width, whether a suffix is
+  allowed, which components a line number carries and in what order, the fields
+  an object must hold before its record is usable, whether fail position
+  belongs on the P&ID or only the datasheet — and, for a house that genuinely
+  does not apply a check the engine ships, the severity of any rule, including
+  off. The same drawing under two profiles gives two reports, which is the
+  whole point.
+- **A live impact preview, before anything is applied.** Every edit on the
+  Standards screen recomputes the real QA report against the draft and says
+  what would appear and what would go quiet — "+37 new findings, −4 silenced",
+  broken down per check. Nobody switches a new convention on over a live
+  project on faith; a checker that cannot answer "how much does this light up?"
+  gets turned on once, floods the report, and is turned off for good. The
+  number is produced by running the actual engine twice over one document, not
+  by reasoning separately about what the rules would say — a preview derived
+  independently from the checker is a second implementation that will
+  eventually disagree with it, and a test pins previewed count to post-apply
+  count so it cannot.
+- **The standard lives in the document**, so a `.pnid` is self-describing: a
+  reviewer opening someone else's file checks it against the same rules its
+  author did, and a drawing that passed on one machine cannot quietly fail on
+  another. It also exports on its own as `.ipdstd.json`, so one company file
+  seeds every project and travels by email like any other engineering document.
+
+### Changed
+
+- Adopting a standard changes what is **reported**, never the drawing. It will
+  not rename a tag: a rename changes an engineering identity that records,
+  datasheets, loops and the HMI all hang off, so it stays a decision an
+  engineer makes one object at a time. Existing projects are unaffected until
+  they choose a standard — the built-in default reproduces the previous
+  behaviour exactly, and a pre-v0.19 project only gains a profile of its own if
+  it had actually chosen non-default tag settings.
+
+
 ## [0.19.0] — 2026-09-05 — the design page learns to talk
 
 A UX cycle on the P&ID design page: dead ends closed, one authoritative

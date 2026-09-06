@@ -6,6 +6,7 @@ import { create } from 'zustand'
 import { temporal } from 'zundo'
 import { ulid } from 'ulid'
 import type { BudgetSettings, CustomSymbolDef, Fluid, PlantEdge, PlantNode, ProjectDoc, Sheet, Tag } from '../model/types'
+import type { StandardProfile } from '../model/standard'
 import { propagateFluid } from '../model/fluidFlow'
 import type { EngineeringRecord, EntityKind, RecordStatus } from '../model/registry'
 import { keyOfEdge, keyOfNode, liveKeys, retagRegistry } from '../model/registry'
@@ -96,6 +97,9 @@ export interface StoreState {
   /** Assign a service to a line; auto-spreads along the connected run
    *  (through valves/pumps/fittings, stopping at vessels). One undo step. */
   setEdgeFluid(id: string, fluidId: string | undefined): void
+  /** Adopt a company standard, or drop back to the built-in default. Goes
+   *  through the same set() as every other edit, so it is undoable. */
+  setStandard(standard: StandardProfile | undefined): void
   /** Budget & pricing (doc.budget) — all undoable. */
   setBudget(patch: Partial<BudgetSettings>): void
   setPriceOverride(key: string, price: number | undefined): void
@@ -550,6 +554,15 @@ export const useStore = create<StoreState>()(
 
         setEdgeVertices(id, vertices) {
           get().setEdge(id, { vertices })
+        },
+
+        setStandard(standard) {
+          set((s) => {
+            const doc = { ...s.doc }
+            if (standard) doc.standard = standard
+            else delete doc.standard
+            return { doc: touched(doc), dirty: true }
+          })
         },
 
         setBudget(patch) {
