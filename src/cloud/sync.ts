@@ -19,6 +19,7 @@ import {
 import type { ProjectDoc } from '../model/types'
 import { db } from './firestore'
 import { deserializeDoc, serializeDoc } from '../persist/file'
+import { tr } from '../i18n'
 
 /** Firestore caps a whole document near 1 MiB; the deployed rules cap the
  *  drawing string below that so the rest of the record always fits. */
@@ -42,7 +43,7 @@ function drawings(uid: string) {
 }
 
 function cleanName(name: string): string {
-  return (name.trim() || 'Untitled').slice(0, NAME_MAX)
+  return (name.trim() || tr('Untitled')).slice(0, NAME_MAX)
 }
 
 export function formatBytes(bytes: number): string {
@@ -72,9 +73,9 @@ export function buildPayload(doc: ProjectDoc, name: string): { name: string; doc
 
 export function tooLargeMessage(sizeBytes: number): string {
   return (
-    `This drawing is ${formatBytes(sizeBytes)}, over the ${formatBytes(MAX_DOC_BYTES)} limit for a cloud drawing. ` +
-    'A DXF underlay is almost always the reason — it carries every traced polyline of the original CAD file. ' +
-    'Remove the underlay from its sheet and save again, or keep this one as a .pnid file on your computer.'
+    tr('This drawing is') + ' ' + formatBytes(sizeBytes) + tr('over the') + ' ' + formatBytes(MAX_DOC_BYTES) + tr('limit for a cloud drawing.') + ' ' +
+    tr('A DXF underlay is almost always the reason — it carries every traced polyline of the original CAD file.') + ' ' +
+    tr('Remove the underlay from its sheet and save again, or keep this one as a .pnid file on your computer.')
   )
 }
 
@@ -89,7 +90,7 @@ function metaFrom(id: string, data: Record<string, unknown>): CloudDrawingMeta {
   const updatedAt = millis(data.updatedAt, Date.now())
   return {
     id,
-    name: typeof data.name === 'string' ? data.name : 'Untitled',
+    name: typeof data.name === 'string' ? data.name : tr('Untitled'),
     sheetCount: typeof data.sheetCount === 'number' ? data.sheetCount : 0,
     sizeBytes: typeof data.sizeBytes === 'number' ? data.sizeBytes : 0,
     updatedAt,
@@ -101,14 +102,15 @@ function metaFrom(id: string, data: Record<string, unknown>): CloudDrawingMeta {
  *  with anything a user can read — translate the few they can act on. */
 function friendly(err: unknown, what: string): Error {
   const code = String((err as { code?: unknown } | null | undefined)?.code ?? '')
-  if (code.includes('unauthenticated')) return new Error(`${what} needs you to be signed in.`)
+  const w = tr(what)
+  if (code.includes('unauthenticated')) return new Error(w + ' ' + tr('needs you to be signed in.'))
   if (code.includes('permission-denied')) {
-    return new Error(`${what} was refused. Cloud drawings only open for the account that saved them — sign in again, then retry.`)
+    return new Error(w + ' ' + tr('was refused. Cloud drawings only open for the account that saved them — sign in again, then retry.'))
   }
   if (code.includes('unavailable') || code.includes('deadline-exceeded')) {
-    return new Error(`${what} could not reach the network. Check your connection and try again.`)
+    return new Error(w + ' ' + tr('could not reach the network. Check your connection and try again.'))
   }
-  return err instanceof Error ? err : new Error(`${what} failed.`)
+  return err instanceof Error ? err : new Error(w + ' ' + tr('failed.'))
 }
 
 export async function listDrawings(uid: string): Promise<CloudDrawingMeta[]> {
@@ -147,17 +149,17 @@ export async function loadFromCloud(uid: string, id: string): Promise<{ doc: Pro
   let data: Record<string, unknown>
   try {
     const snap = await getDoc(fsDoc(drawings(uid), id))
-    if (!snap.exists()) throw new Error('That drawing is no longer in your account — it may have been deleted from another device.')
+    if (!snap.exists()) throw new Error(tr('That drawing is no longer in your account — it may have been deleted from another device.'))
     data = snap.data()
   } catch (err) {
     throw friendly(err, 'Opening this drawing')
   }
   const json = data.doc
-  if (typeof json !== 'string' || !json) throw new Error('That cloud record holds no drawing data.')
+  if (typeof json !== 'string' || !json) throw new Error(tr('That cloud record holds no drawing data.'))
   try {
     return { doc: deserializeDoc(json), meta: metaFrom(id, data) }
   } catch {
-    throw new Error('That drawing could not be read — it may have been saved by a newer version of IPD Studio.')
+    throw new Error(tr('That drawing could not be read — it may have been saved by a newer version of IPD Studio.'))
   }
 }
 

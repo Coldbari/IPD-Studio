@@ -61,4 +61,17 @@ describe('propagateFluid', () => {
     )
     expect(propagateFluid(sc, 'e1')).toEqual(['e1'])
   })
+
+  it('flows through a shared line junction without a component node', () => {
+    const junction = { x: 100, y: 100, junctionId: 'j1' }
+    const sc = content(
+      [node('a', 'valve', 'valve.gate'), node('b', 'valve', 'valve.gate'), node('c', 'valve', 'valve.gate')],
+      [
+        { id: 'left', lineClass: 'process.major', source: { nodeId: 'a', portId: 'e' }, target: junction },
+        { id: 'right', lineClass: 'process.major', source: junction, target: { nodeId: 'b', portId: 'w' } },
+        { id: 'branch', lineClass: 'process.major', source: junction, target: { nodeId: 'c', portId: 'w' } },
+      ],
+    )
+    expect(propagateFluid(sc, 'branch').sort()).toEqual(['branch', 'left', 'right'])
+  })
 })

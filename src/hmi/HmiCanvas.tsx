@@ -18,6 +18,7 @@ import { useStore } from '../store/store'
 import { useSimStore } from './simStore'
 import { HMI_DRAG_MIME } from './HmiPalette'
 import { parseSignalRef } from './tagIndex'
+import { tr } from '../i18n'
 
 /** Structural subset of sim/alarms' AlarmRecord that the canvas needs. */
 export interface AlarmView { tag: string; phase: 'pending' | 'active' | 'acked' | 'cleared'; sup?: string }
@@ -112,7 +113,7 @@ const WidgetG = memo(
         )}
         {suppressed && (
           <text x={widget.w - 2} y={-4} textAnchor="end" fontSize={11} fill={theme.textDim}
-            data-suppressed aria-label="alarms suppressed">⊘</text>
+            data-suppressed aria-label={tr('alarms suppressed')}>⊘</text>
         )}
         {flash && (
           <rect x={-8} y={-8} width={widget.w + 16} height={widget.h + 16} fill="none"

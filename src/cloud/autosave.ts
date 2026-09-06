@@ -6,6 +6,7 @@ import { create } from 'zustand'
 import { useStore } from '../store/store'
 import { useAuthStore } from '../auth/authStore'
 import { saveToCloud } from './sync'
+import { tr } from '../i18n'
 
 export type CloudState = 'off' | 'saving' | 'saved' | 'error'
 
@@ -45,7 +46,7 @@ async function write(): Promise<void> {
   } catch (err) {
     useCloudStatus.setState({
       state: 'error',
-      message: err instanceof Error ? err.message : 'Could not save to your account.',
+      message: err instanceof Error ? err.message : tr('Could not save to your account.'),
     })
   } finally {
     inflight = false

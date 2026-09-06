@@ -8,10 +8,12 @@ import { sanitizeSvg, SvgImportError } from '../import/svgSymbol'
 import type { CustomSymbolDef } from '../model/types'
 import type { PortKind } from '../symbols/types'
 import { useStore } from '../store/store'
+import { useT } from '../i18n'
 
 const snap4 = (v: number) => Math.round(v / 4) * 4
 
 export default function SymbolImportDialog({ onClose }: { onClose: () => void }) {
+  const t = useT()
   const addCustomSymbol = useStore((s) => s.addCustomSymbol)
   const [svg, setSvg] = useState<string | null>(null)
   const [gridSize, setGridSize] = useState({ w: 4, h: 4 })
@@ -32,7 +34,7 @@ export default function SymbolImportDialog({ onClose }: { onClose: () => void })
       setPorts([])
       setError('')
     } catch (err) {
-      setError(err instanceof SvgImportError ? err.message : 'Could not read that SVG')
+      setError(err instanceof SvgImportError ? err.message : t('Could not read that SVG'))
     }
   }
 
@@ -67,20 +69,19 @@ export default function SymbolImportDialog({ onClose }: { onClose: () => void })
     <div className="search-overlay" onClick={onClose}>
       <div className="datasheet-box" onClick={(e) => e.stopPropagation()}>
         <div className="datasheet-head">
-          <b>Import custom symbol</b>
-          <button onClick={onClose}>Close</button>
+          <b>{t('Import custom symbol')}</b>
+          <button onClick={onClose}>{t('Close')}</button>
         </div>
         <div className="datasheet-body">
           <p className="import-note">
-            Import only artwork you created or may redistribute. Do not trace standards documents
-            or vendor symbol libraries.
+            {t('Import only artwork you created or may redistribute. Do not trace standards documents or vendor symbol libraries.')}
           </p>
           {!svg && (
             <>
               <input type="file" accept=".svg,image/svg+xml" onChange={(e) => void onFile(e.target.files?.[0])} />
               <textarea
                 className="import-paste"
-                placeholder="…or paste SVG markup here"
+                placeholder={t('…or paste SVG markup here')}
                 onBlur={(e) => e.target.value.trim() && ingest(e.target.value)}
               />
             </>
@@ -89,16 +90,16 @@ export default function SymbolImportDialog({ onClose }: { onClose: () => void })
           {svg && (
             <>
               {warnings.map((w) => <div key={w} className="import-warn">⚠ {w}</div>)}
-              <div className="prop-title">Click the preview to place ports</div>
+              <div className="prop-title">{t('Click the preview to place ports')}</div>
               <div className="prop-row">
-                <label className="tb-line">Port type:
+                <label className="tb-line">{t('Port type')}:
                   <select value={portKind} onChange={(e) => setPortKind(e.target.value as PortKind)}>
-                    <option value="process">process</option>
-                    <option value="signal">signal</option>
-                    <option value="both">both</option>
+                    <option value="process">{t('process')}</option>
+                    <option value="signal">{t('signal')}</option>
+                    <option value="both">{t('both')}</option>
                   </select>
                 </label>
-                <button onClick={() => setPorts([])}>Clear ports ({ports.length})</button>
+                <button onClick={() => setPorts([])}>{t('Clear ports')} ({ports.length})</button>
               </div>
               <svg
                 ref={svgHostRef}
@@ -111,19 +112,19 @@ export default function SymbolImportDialog({ onClose }: { onClose: () => void })
                   <circle key={p.id} cx={p.x} cy={p.y} r="3.5" fill={p.kind === 'process' ? '#2b6cb0' : '#b7791f'} />
                 ))}
               </svg>
-              <label className="prop-field">Name
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="My Special Filter" />
+              <label className="prop-field">{t('Name')}
+                <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('My Special Filter')} />
               </label>
-              <label className="prop-field">Tag rule
+              <label className="prop-field">{t('Tag rule')}
                 <select value={tagRule} onChange={(e) => setTagRule(e.target.value as CustomSymbolDef['tagRule'])}>
-                  <option value="equipment">equipment</option>
-                  <option value="isa-instrument">isa-instrument</option>
-                  <option value="valve">valve</option>
-                  <option value="none">none</option>
+                  <option value="equipment">{t('equipment')}</option>
+                  <option value="isa-instrument">{t('isa-instrument')}</option>
+                  <option value="valve">{t('valve')}</option>
+                  <option value="none">{t('none')}</option>
                 </select>
               </label>
               <button className="import-save" disabled={!name.trim()} onClick={save}>
-                Add to palette
+                {t('Add to palette')}
               </button>
             </>
           )}

@@ -4,8 +4,10 @@
 
 import { useState } from 'react'
 import { useStore } from '../store/store'
+import { useT } from '../i18n'
 
 export default function SheetTabs() {
+  const t = useT()
   const sheets = useStore((s) => s.doc.sheets)
   const activeSheetId = useStore((s) => s.activeSheetId)
   const setActiveSheet = useStore((s) => s.setActiveSheet)
@@ -38,10 +40,10 @@ export default function SheetTabs() {
               {sheets.length > 1 && (
                 <button
                   className="sheet-close"
-                  title="Delete sheet"
+                  title={t('Delete sheet')}
                   onClick={(e) => {
                     e.stopPropagation()
-                    if (window.confirm(`Delete ${sh.name} and everything on it?`)) deleteSheet(sh.id)
+                    if (window.confirm(`${t('Delete this sheet and everything on it?')} (${sh.name})`)) deleteSheet(sh.id)
                   }}
                 >
                   ×
@@ -51,7 +53,7 @@ export default function SheetTabs() {
           )}
         </div>
       ))}
-      <button className="sheet-add" title="Add sheet" onClick={() => addSheet()}>＋</button>
+      <button className="sheet-add" title={t('Add sheet')} onClick={() => addSheet()}>＋</button>
     </div>
   )
 }

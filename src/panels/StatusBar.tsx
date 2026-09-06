@@ -6,12 +6,14 @@ import { activeSheet, useStore } from '../store/store'
 import { qaFor } from '../validate/engine'
 import { useCloudStatus } from '../cloud/autosave'
 import { VersionChip } from './VersionNote'
+import { useT } from '../i18n'
 
 // PWA update prompting lives in panels/UpdateToast.tsx (both workspaces).
 // The budget chip moved to the toolbar (panels/BudgetDialog.tsx) — the running
 // cost is something you steer by while drawing, not a status readout.
 
 export default function StatusBar() {
+  const t = useT()
   const dirty = useStore((s) => s.dirty)
   const selection = useStore((s) => s.selection)
   const nodes = useStore((s) => activeSheet(s).nodes.length)
@@ -31,18 +33,18 @@ export default function StatusBar() {
   return (
     <footer className="status">
       <span data-testid="save-state" className={cloud.state === 'error' ? 'status-warn' : undefined} title={cloud.message ?? undefined}>
-        <span className={`status-dot${dirty || cloud.state === 'saving' ? ' on' : ''}`}>●</span> {saveLabel}
+        <span className={`status-dot${dirty || cloud.state === 'saving' ? ' on' : ''}`}>●</span> {t(saveLabel)}
       </span>
-      <span>{nodes} symbol{nodes === 1 ? '' : 's'}</span>
-      {selection.length > 0 && <span>{selection.length} selected</span>}
+      <span>{nodes} {t(nodes === 1 ? 'symbol' : 'symbols')}</span>
+      {selection.length > 0 && <span>{selection.length} {t('selected')}</span>}
       <span className="sp" />
       <VersionChip />
       <span className={qa.counts.critical ? 'status-warn' : ''}>
         {qa.counts.critical
-          ? `⚠ ${qa.counts.critical} critical`
+          ? `⚠ ${qa.counts.critical} ${t('critical')}`
           : qa.total
-            ? `${qa.total} finding${qa.total > 1 ? 's' : ''}`
-            : '✓ No findings'}
+            ? `${qa.total} ${t(qa.total > 1 ? 'findings' : 'finding')}`
+            : `✓ ${t('No findings')}`}
       </span>
     </footer>
   )

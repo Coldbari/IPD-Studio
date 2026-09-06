@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { useStore, activeHmiScreen } from '../store/store'
 import { useSimStore } from './simStore'
 import Modal from '../panels/Modal'
+import { useT } from '../i18n'
 
 const mmss = (t: number) => `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(Math.floor(t % 60)).padStart(2, '0')}`
 
@@ -13,6 +14,7 @@ const mmss = (t: number) => `${String(Math.floor(t / 60)).padStart(2, '0')}:${St
  *  transmitters, choke the busiest line. Everything is journaled and Reset
  *  restores the plant. */
 function EventsModal({ onClose }: { onClose(): void }) {
+  const tr = useT()
   const doc = useStore((s) => s.doc)
   const tags = useSimStore((s) => s.tags)
   const plugged = useSimStore((s) => s.plugged)
@@ -40,21 +42,21 @@ function EventsModal({ onClose }: { onClose(): void }) {
     </button>
   )
   return (
-    <Modal title="Process events (training)" onClose={onClose}>
+    <Modal title={tr('Process events (training)')} onClose={onClose}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         {pumps.slice(0, 6).map((t) => row(
-          (tags[t]?.FAULT ?? 0) >= 0.5 ? `Clear ${t} trip` : `Trip ${t}`,
+          (tags[t]?.FAULT ?? 0) >= 0.5 ? tr('Clear') + ' ' + t + ' ' + tr('trip') : tr('Trip') + ' ' + t,
           (tags[t]?.FAULT ?? 0) >= 0.5, () => toggle(t, 'FAULT'), `f-${t}`))}
         {valves.slice(0, 6).map((t) => row(
-          (tags[t]?.STUCK ?? 0) >= 0.5 ? `Free valve ${t}` : `Stick valve ${t}`,
+          (tags[t]?.STUCK ?? 0) >= 0.5 ? tr('Free valve') + ' ' + t : tr('Stick valve') + ' ' + t,
           (tags[t]?.STUCK ?? 0) >= 0.5, () => toggle(t, 'STUCK'), `s-${t}`))}
         {bound.slice(0, 6).map((t) => row(
-          (tags[t]?.FROZEN ?? 0) >= 0.5 ? `Unfreeze ${t}` : `Freeze transmitter ${t}`,
+          (tags[t]?.FROZEN ?? 0) >= 0.5 ? tr('Unfreeze') + ' ' + t : tr('Freeze transmitter') + ' ' + t,
           (tags[t]?.FROZEN ?? 0) >= 0.5, () => toggle(t, 'FROZEN'), `z-${t}`))}
-        {row(plugged.length > 0 ? `Clear plugged lines (${plugged.length})` : 'Plug the busiest line',
+        {row(plugged.length > 0 ? tr('Clear plugged lines') + ' (' + plugged.length + ')' : tr('Plug the busiest line'),
           plugged.length > 0, () => (plugged.length > 0 ? clearPlugs() : plugArtery()), 'plug')}
         <p style={{ fontSize: 11, color: '#889', margin: '6px 0 0' }}>
-          Injected upsets land in the journal; Reset restores the plant.
+          {tr('Injected upsets land in the journal; Reset restores the plant.')}
         </p>
       </div>
     </Modal>
@@ -72,6 +74,7 @@ export default function HmiToolbar({ onExit, tool, setTool, onImport, onUndo, on
   zoomed?: boolean
   onFit?(): void
 }) {
+  const tr = useT()
   const storeUndo = useStore((s) => s.undo)
   const storeRedo = useStore((s) => s.redo)
   const undo = onUndo ?? storeUndo
@@ -113,10 +116,10 @@ export default function HmiToolbar({ onExit, tool, setTool, onImport, onUndo, on
     <header className="hmi-toolbar">
       <strong>HMI Studio</strong>
       <span style={{ opacity: 0.7 }}>{name}</span>
-      <button onClick={onExit} title="Back to the P&ID editor">⇄ P&ID</button>
+      <button onClick={onExit} title={tr('Back to the P&ID editor')}>⇄ P&ID</button>
       {screen && (
         <button data-testid="hmi-run-toggle" className={mode === 'run' ? 'active' : ''} onClick={toggleRun}>
-          {mode === 'run' ? '■ Stop (edit)' : '▶ RUN'}
+          {mode === 'run' ? '■ ' + tr('Stop (edit)') : '▶ ' + tr('RUN')}
         </button>
       )}
       {mode === 'run' ? (
@@ -127,14 +130,14 @@ export default function HmiToolbar({ onExit, tool, setTool, onImport, onUndo, on
           {nBy('medium') > 0 && <span className="al-prio al-prio-medium">▲ {nBy('medium')}</span>}
           {nBy('low') > 0 && <span className="al-prio al-prio-low">● {nBy('low')}</span>}
           {home && (
-            <button data-testid="run-home" title="Home screen" disabled={home.id === screen?.id}
+            <button data-testid="run-home" title={tr('Home screen')} disabled={home.id === screen?.id}
               onClick={() => useStore.getState().setActiveScreen(home.id)}>⌂ {home.name}</button>
           )}
-          <button data-testid="hmi-play" onClick={() => sim().playPause()}>{playing ? 'Pause' : 'Play'}</button>
+          <button data-testid="hmi-play" onClick={() => sim().playPause()}>{playing ? tr('Pause') : tr('Play')}</button>
           <button data-testid="hmi-speed" onClick={() => sim().setSpeed(speed === 1 ? 5 : 1)}>{speed}×</button>
-          <button data-testid="hmi-reset" onClick={() => sim().reset()}>Reset</button>
+          <button data-testid="hmi-reset" onClick={() => sim().reset()}>{tr('Reset')}</button>
           <button data-testid="hmi-events" onClick={() => setEventsOpen(true)}
-            title="Inject a process upset (training scenarios)">⚡ Events</button>
+            title={tr('Inject a process upset (training scenarios)')}>⚡ {tr('Events')}</button>
         </>
       ) : (
         <>
@@ -142,38 +145,38 @@ export default function HmiToolbar({ onExit, tool, setTool, onImport, onUndo, on
             className={tool === 'pipe' ? 'active' : ''}
             data-testid="hmi-pipe-tool"
             onClick={() => setTool(tool === 'pipe' ? 'select' : 'pipe')}
-            title="Draw a pipe: click points, double-click or Enter to finish, Esc to cancel"
+            title={tr('Draw a pipe: click points, double-click or Enter to finish, Esc to cancel')}
           >
-            Pipe
+            {tr('Pipe')}
           </button>
-          <button onClick={undo} title="Ctrl+Z">↩</button>
-          <button onClick={redo} title="Ctrl+Y">↪</button>
+          <button onClick={undo} title={tr('Undo (Ctrl+Z)')}>↩</button>
+          <button onClick={redo} title={tr('Redo (Ctrl+Y)')}>↪</button>
           <button data-testid="hmi-fit" className={zoomed ? 'active' : ''} onClick={onFit}
-            title="Fit view (Ctrl+0) — wheel zooms, Space/middle-drag pans">⛶</button>
-          <button data-testid="hmi-import" onClick={onImport} title="Build an HMI screen from a P&ID sheet">From P&ID…</button>
+            title={tr('Fit view (Ctrl+0) — wheel zooms, Space/middle-drag pans')}>⛶</button>
+          <button data-testid="hmi-import" onClick={onImport} title={tr('Build an HMI screen from a P&ID sheet')}>{tr('From P&ID…')}</button>
           {screen?.fromSheetId && doc.sheets.some((sh) => sh.id === screen.fromSheetId) && (
-            <button data-testid="hmi-reimport" onClick={() => setConfirmReimport(true)} title="Rebuild this screen from its source sheet">Re-import</button>
+            <button data-testid="hmi-reimport" onClick={() => setConfirmReimport(true)} title={tr('Rebuild this screen from its source sheet')}>{tr('Re-import')}</button>
           )}
         </>
       )}
       {screen && (
         <button data-testid="hmi-theme" onClick={() => setScreenTheme(screen.id, screen.theme === 'classic' ? 'hp' : 'classic')}
-          title="Toggle classic / ISA-101 high-performance theme">{screen.theme === 'classic' ? 'Classic' : 'ISA-101'}</button>
+          title={tr('Toggle classic / ISA-101 high-performance theme')}>{screen.theme === 'classic' ? tr('Classic') : 'ISA-101'}</button>
       )}
       <span className="grow" />
-      <span className="demo-note">Training / demo simulation — not for operations</span>
+      <span className="demo-note">{tr('Training / demo simulation — not for operations')}</span>
       {eventsOpen && mode === 'run' && (
         <EventsModal onClose={() => setEventsOpen(false)} />
       )}
       {confirmReimport && screen && (
-        <Modal title="Re-import screen" onClose={() => setConfirmReimport(false)}>
+        <Modal title={tr('Re-import screen')} onClose={() => setConfirmReimport(false)}>
           <p style={{ margin: '4px 0 12px' }}>
-            Rebuild <strong>{screen.name}</strong> from its P&ID sheet? Your HMI edits to this screen are replaced (Ctrl+Z undoes).
+            {tr('Rebuild')} <strong>{screen.name}</strong> {tr('from its P&ID sheet? Your HMI edits to this screen are replaced (Ctrl+Z undoes).')}
           </p>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button onClick={() => setConfirmReimport(false)}>Cancel</button>
+            <button onClick={() => setConfirmReimport(false)}>{tr('Cancel')}</button>
             <button data-testid="reimport-confirm" style={{ background: '#2b6cb0', color: '#fff', border: 'none', borderRadius: 4, padding: '4px 14px' }}
-              onClick={() => void reimport()}>Re-import</button>
+              onClick={() => void reimport()}>{tr('Re-import')}</button>
           </div>
         </Modal>
       )}

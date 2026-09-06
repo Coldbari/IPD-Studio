@@ -8,6 +8,8 @@ import { expandLetters, formatTag } from '../isa/tag'
 import { getSymbol } from '../symbols/registry'
 import { fieldValue, keyOfNode } from '../model/registry'
 import { useStore } from '../store/store'
+import { LINE_CLASS_LABELS } from '../canvas/lineStyle'
+import { tr } from '../i18n'
 
 function csvField(v: string): string {
   return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
@@ -19,11 +21,13 @@ function nodeName(doc: ProjectDoc, nodeId: string): string {
   if (!node) return '?'
   if (node.tag) return formatTag(node.tag, '-')
   if (node.label) return node.label
-  return getSymbol(node.symbolId).name
+  return tr(getSymbol(node.symbolId).name)
 }
 
 function endName(doc: ProjectDoc, end: PlantEdge['source']): string {
-  return isPortEnd(end) ? nodeName(doc, end.nodeId) : 'free end'
+  if (isPortEnd(end)) return nodeName(doc, end.nodeId)
+  // A free end waiting for a not-yet-drawn device shows its reservation.
+  return end.pendingTag ? tr('pending') + ' ' + end.pendingTag : tr('free end')
 }
 
 /** One row of a generated report, carrying the id of the object it came from
@@ -87,7 +91,7 @@ export function lineListRows(doc: ProjectDoc): ReportRow[] {
         sheetId: sheet.id,
         cells: [
           [ln.size, ln.spec, ln.service, ln.seq].filter(Boolean).join('-'),
-          edge.lineClass,
+          tr(LINE_CLASS_LABELS[edge.lineClass] ?? edge.lineClass),
           ln.size,
           ln.spec,
           ln.service,

@@ -13,6 +13,7 @@ import { buildTypical } from '../assist/typicals'
 import { activeSheet, useStore } from '../store/store'
 import { canvasRef } from './paperSetup'
 import { type Dock, dockEdge, dockRadius, findDock, showDockHint } from './autoConnect'
+import { tr } from '../i18n'
 
 export function kindForSymbol(def: Pick<SymbolDef, 'tagRule' | 'category'>): NodeKind {
   switch (def.tagRule) {
@@ -75,18 +76,17 @@ async function openDroppedFile(file: File): Promise<void> {
   if (name.endsWith('.dxf')) {
     const { parseDxfUnderlay } = await import('../import/dxfUnderlay')
     const { sheetPx } = await import('../model/doc')
-    const { activeSheet } = await import('../store/store')
     const { polylines, warnings } = parseDxfUnderlay(text, sheetPx(activeSheet(store).sheetSize))
     store.setUnderlay({ name: file.name, polylines })
-    if (warnings.length) window.alert(warnings.join('\n'))
+    if (warnings.length) window.alert(`${tr('Underlay loaded with notes:')}\n${warnings.join('\n')}`)
     return
   }
-  if (store.dirty && !window.confirm(`Open “${file.name}”? Unsaved changes will be lost.`)) return
+  if (store.dirty && !window.confirm(`${tr('Open')} “${file.name}”? ${tr('Unsaved changes will be lost.')}`)) return
   const { loadAnyText } = await import('../persist/file')
   try {
     loadAnyText(file.name, text)
   } catch {
-    window.alert(`Could not read ${file.name} as an IPD Studio drawing`)
+    window.alert(`${tr('Could not read this drawing file.')} (${file.name})`)
   }
 }
 
@@ -158,11 +158,13 @@ export function attachDropHandling(host: HTMLElement, paper: dia.Paper): () => v
     paper.el.classList.add('pid-docking')
     showDockHint(paper, previewDrop(payload, paper, e.clientX, e.clientY)?.dock?.at ?? null)
   }
+
   const onDragLeave = (e: DragEvent) => {
     const to = e.relatedTarget
     if (to instanceof Node && host.contains(to)) return
     clearPreview()
   }
+
   const onDragEnd = () => clearPreview()
 
   const onDrop = (e: DragEvent) => {
@@ -182,7 +184,11 @@ export function attachDropHandling(host: HTMLElement, paper: dia.Paper): () => v
     const { dock } = preview
     const store = useStore.getState()
     const id = ulid()
-    const node: PlantNode = { ...preview.node, id, ...(dock ? { x: dock.x, y: dock.y } : {}) }
+    const node: PlantNode = {
+      ...preview.node,
+      id,
+      ...(dock ? { x: dock.x, y: dock.y } : {}),
+    }
     if (payload.presetLetters) {
       node.tag = { letters: payload.presetLetters, loop: nextLoopNumber(store.doc, payload.presetLetters) }
     }

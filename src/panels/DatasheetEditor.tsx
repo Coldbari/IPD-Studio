@@ -9,6 +9,7 @@ import { formatTag } from '../isa/tag'
 import { expandLetters } from '../isa/tag'
 import { pauseHistory, resumeHistory, useStore } from '../store/store'
 import { printDatasheet } from '../export/datasheetPdf'
+import { useT } from '../i18n'
 
 const SECTION_TITLES: Record<string, string> = {
   general: 'General',
@@ -22,6 +23,7 @@ const SECTION_TITLES: Record<string, string> = {
  *  untagged instrument has no record to write to, so it still writes the legacy
  *  per-node datasheet and the migration picks it up once a tag is given. */
 export default function DatasheetEditor({ node, onClose }: { node: PlantNode; onClose: () => void }) {
+  const t = useT()
   const setDatasheet = useStore((s) => s.setDatasheet)
   const setRecordField = useStore((s) => s.setRecordField)
   const doc = useStore((s) => s.doc)
@@ -33,7 +35,7 @@ export default function DatasheetEditor({ node, onClose }: { node: PlantNode; on
   }
   const letters = node.tag?.letters ?? 'XX'
   const sections = fieldsFor(letters)
-  const title = node.tag ? formatTag(node.tag, '-') : 'Untagged instrument'
+  const title = node.tag ? formatTag(node.tag, '-') : t('Untagged instrument')
 
   return (
     <div className="search-overlay" onClick={onClose}>
@@ -44,18 +46,18 @@ export default function DatasheetEditor({ node, onClose }: { node: PlantNode; on
             <span className="datasheet-sub"> {expandLetters(letters)}</span>
           </div>
           <div className="prop-row">
-            <button onClick={() => printDatasheet(doc, node)}>Print PDF</button>
-            <button onClick={onClose}>Close</button>
+            <button onClick={() => printDatasheet(doc, node)}>{t('Print PDF')}</button>
+            <button onClick={onClose}>{t('Close')}</button>
           </div>
         </div>
         <div className="datasheet-body">
           {Object.entries(sections).map(([section, fields]) =>
             fields.length === 0 ? null : (
               <section key={section}>
-                <div className="prop-title">{SECTION_TITLES[section]}</div>
+                <div className="prop-title">{t(SECTION_TITLES[section] ?? section)}</div>
                 {fields.map((f) => (
                   <label className="datasheet-field" key={f.key}>
-                    <span>{f.label}</span>
+                    <span>{t(f.label)}</span>
                     <input
                       value={fieldValue(doc.registry, node, f.key)}
                       onChange={(e) => { write(f.key, e.target.value); pauseHistory() }}

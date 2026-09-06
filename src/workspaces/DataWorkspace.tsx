@@ -15,6 +15,7 @@ import {
   lineListRows,
   type ReportRow,
 } from '../export/csv'
+import { useT } from '../i18n'
 
 type Tab = 'instruments' | 'lines'
 
@@ -26,11 +27,12 @@ type Tab = 'instruments' | 'lines'
  * which does not exist yet (that is the registry, v0.15).
  */
 export default function DataWorkspace() {
+  const t = useT()
   const doc = useStore((s) => s.doc)
   const [tab, setTab] = useState<Tab>('instruments')
 
   const rows = tab === 'instruments' ? instrumentIndexRows(doc) : lineListRows(doc)
-  const columns = tab === 'instruments' ? INSTRUMENT_INDEX_COLUMNS : LINE_LIST_COLUMNS
+  const columns = (tab === 'instruments' ? INSTRUMENT_INDEX_COLUMNS : LINE_LIST_COLUMNS).map((c) => t(c))
 
   // Invariant: every row in every report is a jump, never just text.
   const jump = (r: ReportRow) => {
@@ -41,20 +43,20 @@ export default function DataWorkspace() {
   return (
     <div className="ws">
       <header className="ws-head">
-        <h1>Data</h1>
+        <h1>{t('Data')}</h1>
         <div className="ws-tabs" role="tablist">
           <button role="tab" aria-selected={tab === 'instruments'} data-testid="data-tab-instruments"
             className={tab === 'instruments' ? 'on' : ''} onClick={() => setTab('instruments')}>
-            Instrument index <span className="ws-count">{instrumentIndexRows(doc).length}</span>
+            {t('Instrument index')} <span className="ws-count">{instrumentIndexRows(doc).length}</span>
           </button>
           <button role="tab" aria-selected={tab === 'lines'} data-testid="data-tab-lines"
             className={tab === 'lines' ? 'on' : ''} onClick={() => setTab('lines')}>
-            Line list <span className="ws-count">{lineListRows(doc).length}</span>
+            {t('Line list')} <span className="ws-count">{lineListRows(doc).length}</span>
           </button>
         </div>
         <span className="ws-sp" />
         <button onClick={() => (tab === 'instruments' ? downloadInstrumentIndex() : downloadLineList())}>
-          Export CSV
+          {t('Export CSV')}
         </button>
       </header>
 
@@ -62,8 +64,8 @@ export default function DataWorkspace() {
         {rows.length === 0 ? (
           <p className="ws-empty">
             {tab === 'instruments'
-              ? 'No tagged instruments yet. Tag a symbol on the drawing and it appears here.'
-              : 'No numbered lines yet. Give a process line a line number and it appears here.'}
+              ? t('No tagged instruments yet. Tag a symbol on the drawing and it appears here.')
+              : t('No numbered lines yet. Give a process line a line number and it appears here.')}
           </p>
         ) : (
           <div className="ws-table-wrap">
@@ -71,7 +73,7 @@ export default function DataWorkspace() {
               <thead>
                 <tr>
                   {columns.map((c) => <th key={c}>{c}</th>)}
-                  <th aria-label="Go to the drawing" />
+                  <th aria-label={t('Go to the drawing')} />
                 </tr>
               </thead>
               <tbody>
@@ -81,7 +83,7 @@ export default function DataWorkspace() {
                       <td key={i} className={i === 0 ? 'ws-key' : undefined}>{cell || '—'}</td>
                     ))}
                     <td className="ws-jump">
-                      <button title="Show this on the drawing" onClick={() => jump(r)}>Locate</button>
+                      <button title={t('Show this on the drawing')} onClick={() => jump(r)}>{t('Locate')}</button>
                     </td>
                   </tr>
                 ))}

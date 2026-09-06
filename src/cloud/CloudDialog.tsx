@@ -16,6 +16,7 @@ import {
   saveToCloud,
   type CloudDrawingMeta,
 } from './sync'
+import { tr, useT } from '../i18n'
 
 const btn: CSSProperties = { padding: '3px 9px', border: '1px solid #ccc', borderRadius: 4, background: '#fff', fontSize: 12, cursor: 'pointer' }
 const btnPrimary: CSSProperties = { ...btn, borderColor: '#2b6cb0', color: '#2b6cb0' }
@@ -23,20 +24,21 @@ const btnDanger: CSSProperties = { ...btn, borderColor: '#c53030', color: '#9b1c
 
 function relTime(ms: number): string {
   const secs = Math.max(0, Date.now() - ms) / 1000
-  if (secs < 90) return 'just now'
-  if (secs < 3600) return `${Math.round(secs / 60)} min ago`
-  if (secs < 86_400) return `${Math.round(secs / 3600)} h ago`
-  if (secs < 7 * 86_400) return `${Math.round(secs / 86_400)} d ago`
+  if (secs < 90) return tr('just now')
+  if (secs < 3600) return Math.round(secs / 60) + ' ' + tr('min ago')
+  if (secs < 86_400) return Math.round(secs / 3600) + ' ' + tr('h ago')
+  if (secs < 7 * 86_400) return Math.round(secs / 86_400) + ' ' + tr('d ago')
   return new Date(ms).toLocaleDateString()
 }
 
 function message(err: unknown): string {
-  return err instanceof Error ? err.message : 'Something went wrong. Try again.'
+  return err instanceof Error ? err.message : tr('Something went wrong. Try again.')
 }
 
 /** The signed-in user's drawings in Firestore: open, rename, delete, and save
  *  the drawing on screen — either over the one it came from or as a new one. */
 export default function CloudDialog({ open, onClose }: { open: boolean; onClose(): void }) {
+  const t = useT()
   const dirty = useStore((s) => s.dirty)
   const cloudId = useStore((s) => s.cloudId)
   const setCloudId = useStore((s) => s.setCloudId)
@@ -86,7 +88,7 @@ export default function CloudDialog({ open, onClose }: { open: boolean; onClose(
     if (!uid || busy) return
     const doc = useStore.getState().doc
     const target = asNew ? undefined : current
-    setBusy(asNew ? 'Saving a copy…' : 'Saving…')
+    setBusy(asNew ? t('Saving a copy…') : t('Saving…'))
     setError(null)
     try {
       const { id } = await saveToCloud(uid, doc, target ? { id: target.id, name: target.name } : { name: doc.meta.name })
@@ -103,7 +105,7 @@ export default function CloudDialog({ open, onClose }: { open: boolean; onClose(
   const openDrawing = async (row: CloudDrawingMeta) => {
     if (!uid) return
     setConfirming(null)
-    setBusy('Opening…')
+    setBusy(t('Opening…'))
     setError(null)
     try {
       const { doc } = await loadFromCloud(uid, row.id)
@@ -120,7 +122,7 @@ export default function CloudDialog({ open, onClose }: { open: boolean; onClose(
   const remove = async (row: CloudDrawingMeta) => {
     if (!uid) return
     setConfirming(null)
-    setBusy('Deleting…')
+    setBusy(t('Deleting…'))
     setError(null)
     try {
       await deleteDrawing(uid, row.id)
@@ -137,14 +139,14 @@ export default function CloudDialog({ open, onClose }: { open: boolean; onClose(
     if (!uid || !renaming) return
     const { id, value } = renaming
     setRenaming(null)
-    setBusy('Renaming…')
+    setBusy(t('Renaming…'))
     setError(null)
     try {
       await renameDrawing(uid, id, value)
       // A drawing has one name. If this is the document currently open, carry
       // the rename into it too — otherwise the next "Save to cloud" from the
       // toolbar writes doc.meta.name straight back over the rename.
-      if (cloudId === id) useStore.getState().setMeta({ name: value.trim() || 'Untitled' })
+      if (cloudId === id) useStore.getState().setMeta({ name: value.trim() || tr('Untitled') })
       setReload((n) => n + 1)
     } catch (err) {
       setError(message(err))
@@ -156,13 +158,12 @@ export default function CloudDialog({ open, onClose }: { open: boolean; onClose(
   const idle = (style: CSSProperties): CSSProperties => (busy ? { ...style, opacity: 0.5, cursor: 'default' } : style)
 
   return (
-    <Modal title="Cloud drawings" onClose={onClose} width={520}>
-      {uid === undefined && <div className="drawer-empty">Checking your account…</div>}
+    <Modal title={t('Cloud drawings')} onClose={onClose} width={520}>
+      {uid === undefined && <div className="drawer-empty">{t('Checking your account…')}</div>}
 
       {uid === null && (
         <p className="prop-hint">
-          Sign in to keep drawings in your IPD Studio account. They stay private to that account — nobody else can list
-          or open them.
+          {t('Sign in to keep drawings in your IPD Studio account. They stay private to that account — nobody else can list or open them.')}
         </p>
       )}
 
@@ -170,11 +171,11 @@ export default function CloudDialog({ open, onClose }: { open: boolean; onClose(
         <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 0 10px' }}>
             <button style={idle(btnPrimary)} disabled={!!busy} onClick={() => void save(false)}>
-              {current ? `Save over “${current.name}”` : 'Save current drawing'}
+              {current ? `${t('Save over')} “${current.name}”` : t('Save current drawing')}
             </button>
-            <button style={idle(btn)} disabled={!!busy} onClick={() => void save(true)}>Save as new</button>
+            <button style={idle(btn)} disabled={!!busy} onClick={() => void save(true)}>{t('Save as new')}</button>
             <span className="prop-hint" style={{ marginLeft: 'auto' }}>
-              {busy ?? (dirty ? 'Unsaved changes' : '')}
+              {busy ?? (dirty ? t('Unsaved changes') : '')}
             </span>
           </div>
 
@@ -182,18 +183,17 @@ export default function CloudDialog({ open, onClose }: { open: boolean; onClose(
             <div className="import-note" style={{ color: '#9b1c1c', background: '#fde8e8', borderColor: '#f0bcbc' }}>
               {error}
               <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                <button style={btn} onClick={() => { setError(null); setReload((n) => n + 1) }}>Reload list</button>
-                <button style={btn} onClick={() => setError(null)}>Dismiss</button>
+                <button style={btn} onClick={() => { setError(null); setReload((n) => n + 1) }}>{t('Reload list')}</button>
+                <button style={btn} onClick={() => setError(null)}>{t('Dismiss')}</button>
               </div>
             </div>
           )}
 
-          {rows === null && !error && <div className="drawer-empty">Loading your drawings…</div>}
+          {rows === null && !error && <div className="drawer-empty">{t('Loading your drawings…')}</div>}
 
           {rows !== null && rows.length === 0 && (
             <div className="drawer-empty">
-              Nothing saved here yet. “Save current drawing” puts this drawing in your account, where it stays private
-              to your sign-in and opens on any device you use it from.
+              {t('Nothing saved here yet. Save current drawing puts this drawing in your account, where it stays private to your sign-in and opens on any device you use it from.')}
             </div>
           )}
 
@@ -224,16 +224,15 @@ export default function CloudDialog({ open, onClose }: { open: boolean; onClose(
                       <b style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.name}</b>
                     )}
                     <span>
-                      {relTime(row.updatedAt)} · {formatBytes(row.sizeBytes)} · {row.sheetCount} sheet
-                      {row.sheetCount === 1 ? '' : 's'}
-                      {row.id === cloudId ? ' · open here' : ''}
+                      {relTime(row.updatedAt)} · {formatBytes(row.sizeBytes)} · {row.sheetCount} {t(row.sheetCount === 1 ? 'sheet' : 'sheets')}
+                      {row.id === cloudId ? ' · ' + t('open here') : ''}
                     </span>
                   </div>
                   <div style={{ display: 'flex', gap: 6, flex: 'none' }}>
                     {ren ? (
                       <>
-                        <button style={idle(btnPrimary)} disabled={!!busy} onClick={() => void commitRename()}>Save name</button>
-                        <button style={btn} onClick={() => setRenaming(null)}>Cancel</button>
+                        <button style={idle(btnPrimary)} disabled={!!busy} onClick={() => void commitRename()}>{t('Save name')}</button>
+                        <button style={btn} onClick={() => setRenaming(null)}>{t('Cancel')}</button>
                       </>
                     ) : (
                       <>
@@ -242,10 +241,10 @@ export default function CloudDialog({ open, onClose }: { open: boolean; onClose(
                           disabled={!!busy}
                           onClick={() => (dirty ? setConfirming({ kind: 'open', id: row.id }) : void openDrawing(row))}
                         >
-                          Open
+                          {t('Open')}
                         </button>
-                        <button style={idle(btn)} disabled={!!busy} onClick={() => setRenaming({ id: row.id, value: row.name })}>Rename</button>
-                        <button style={idle(btn)} disabled={!!busy} onClick={() => setConfirming({ kind: 'delete', id: row.id })}>Delete</button>
+                        <button style={idle(btn)} disabled={!!busy} onClick={() => setRenaming({ id: row.id, value: row.name })}>{t('Rename')}</button>
+                        <button style={idle(btn)} disabled={!!busy} onClick={() => setConfirming({ kind: 'delete', id: row.id })}>{t('Delete')}</button>
                       </>
                     )}
                   </div>
@@ -255,17 +254,17 @@ export default function CloudDialog({ open, onClose }: { open: boolean; onClose(
                   <div className="import-note" style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
                     <span style={{ flex: 1 }}>
                       {conf.kind === 'open'
-                        ? 'Opening this replaces the drawing on screen — your unsaved changes are lost.'
-                        : `Delete “${row.name}” from your account? This cannot be undone.`}
+                        ? t('Opening this replaces the drawing on screen — your unsaved changes are lost.')
+                        : `${t('Delete drawing from your account? This cannot be undone.')} “${row.name}”`}
                     </span>
                     <button
                       style={idle(btnDanger)}
                       disabled={!!busy}
                       onClick={() => void (conf.kind === 'open' ? openDrawing(row) : remove(row))}
                     >
-                      {conf.kind === 'open' ? 'Discard & open' : 'Delete'}
+                      {conf.kind === 'open' ? t('Discard & open') : t('Delete')}
                     </button>
-                    <button style={btn} onClick={() => setConfirming(null)}>Cancel</button>
+                    <button style={btn} onClick={() => setConfirming(null)}>{t('Cancel')}</button>
                   </div>
                 )}
               </div>

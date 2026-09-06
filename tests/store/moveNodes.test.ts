@@ -49,6 +49,20 @@ describe('moveNodes carries the lines with the symbols', () => {
     expect(sheet().edges[0]!.vertices).toEqual([{ x: 410, y: 230 }])
   })
 
+  it('moves every limb of a shared line junction as one rigid group', () => {
+    const junction = { x: 260, y: 140, junctionId: 'j1' }
+    seed([
+      edge('left', { source: { nodeId: 'a', portId: 'e' }, target: junction }),
+      edge('right', { source: junction, target: { nodeId: 'b', portId: 'w' } }),
+      edge('branch', { source: junction, target: { nodeId: 'c', portId: 'w' } }),
+    ])
+    st().moveNodes(['a', 'b', 'c'], 32, 24)
+    const ends = sheet().edges.flatMap((e) => [e.source, e.target])
+      .filter((end): end is { x: number; y: number; junctionId: string } => 'junctionId' in end)
+    expect(ends).toHaveLength(3)
+    expect(ends.every((end) => end.x === 292 && end.y === 164)).toBe(true)
+  })
+
   it('a fully free-floating line is left alone', () => {
     seed([edge('e1', { source: { x: 10, y: 10 }, target: { x: 20, y: 20 } })])
     st().moveNodes(['a', 'b'], 50, 50)

@@ -5,9 +5,11 @@
 import { useEffect, useState } from 'react'
 import { listHistory, restoreSnapshot, type Snapshot } from '../persist/autosave'
 import { useStore } from '../store/store'
+import { useT } from '../i18n'
 
 /** Automatic snapshots (one per ~2 min of editing, last 10 kept) to go back to. */
 export default function HistoryDialog({ onClose }: { onClose: () => void }) {
+  const t = useT()
   const [snaps, setSnaps] = useState<Snapshot[] | null>(null)
   const dirty = useStore((s) => s.dirty)
 
@@ -16,12 +18,12 @@ export default function HistoryDialog({ onClose }: { onClose: () => void }) {
   }, [])
 
   const restore = (snap: Snapshot) => {
-    if (dirty && !window.confirm('Restore this snapshot? Current unsaved changes will be lost.')) return
+    if (dirty && !window.confirm(t('Restore this snapshot? Current unsaved changes will be lost.'))) return
     try {
       restoreSnapshot(snap)
       onClose()
     } catch {
-      window.alert('This snapshot could not be read.')
+      window.alert(t('This snapshot could not be read.'))
     }
   }
 
@@ -29,13 +31,13 @@ export default function HistoryDialog({ onClose }: { onClose: () => void }) {
     <div className="search-overlay" onClick={onClose}>
       <div className="datasheet-box" onClick={(e) => e.stopPropagation()}>
         <div className="datasheet-head">
-          <b>File history</b>
-          <button onClick={onClose}>Close</button>
+          <b>{t('File history')}</b>
+          <button onClick={onClose}>{t('Close')}</button>
         </div>
         <div className="datasheet-body">
-          <p className="prop-hint">Automatic snapshots of your work, newest first.</p>
-          {snaps === null && <div className="drawer-empty">Loading…</div>}
-          {snaps?.length === 0 && <div className="drawer-empty">No snapshots yet — they appear as you draw.</div>}
+          <p className="prop-hint">{t('Automatic snapshots of your work, newest first.')}</p>
+          {snaps === null && <div className="drawer-empty">{t('Loading…')}</div>}
+          {snaps?.length === 0 && <div className="drawer-empty">{t('No snapshots yet — they appear as you draw.')}</div>}
           {snaps?.map((s) => (
             <button key={s.ts} className="history-row" onClick={() => restore(s)}>
               <b>{s.name}</b>

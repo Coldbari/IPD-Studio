@@ -3,14 +3,15 @@
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
 import type { WidgetView } from './shared'
+import { tr } from '../../i18n'
 
 export default function ToggleSwitch({ widget, theme, sim }: WidgetView) {
   const { w, h } = widget
   const key = typeof widget.props?.signal === 'string' ? widget.props.signal : ''
   const on = (sim[key] ?? Object.values(sim)[0] ?? 0) >= 0.5
   const text = on
-    ? String(widget.props?.onLabel ?? 'ON')
-    : String(widget.props?.offLabel ?? 'OFF')
+    ? String(widget.props?.onLabel ?? tr('ON'))
+    : String(widget.props?.offLabel ?? tr('OFF'))
   const knobX = on ? w - h / 2 - 3 : h / 2 + 3
   return (
     <g>

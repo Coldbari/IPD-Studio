@@ -46,24 +46,32 @@ export function reconcile(
   for (const edge of doc.edges) {
     keep.add(edge.id)
     const color = colorOf?.(edge)
+    const displayEdge: PlantEdge = edge
     const cell = graph.getCell(edge.id) as dia.Link | undefined
     if (!cell) {
-      graph.addCell(makeLink(edge, nodeMap, color))
+      graph.addCell(makeLink(displayEdge, nodeMap, color))
     } else {
       const before = prevEdges.get(edge.id)
-      if (before && before !== edge) updateLink(cell, edge, before, nodeMap, color)
+      if (before && before !== edge) updateLink(cell, displayEdge, before, nodeMap, color)
       // A fluids-palette edit restyles lines whose edge objects didn't change.
       else if (color !== (cell.get('data') as { fluidColor?: string } | undefined)?.fluidColor) {
-        updateLink(cell, edge, edge, nodeMap, color)
+        updateLink(cell, displayEdge, displayEdge, nodeMap, color)
       }
       // Straight-vs-manhattan depends on node geometry, so a moved or
       // rescaled endpoint re-decides the route even when the edge is same.
-      else if (touchesMoved(edge)) refreshLinkRouter(cell, edge, nodeMap)
+      else if (touchesMoved(edge)) refreshLinkRouter(cell, displayEdge, nodeMap)
     }
   }
 
   for (const cell of graph.getCells()) {
     const id = String(cell.id)
-    if (!keep.has(id)) cell.remove()
+    if (!keep.has(id)) {
+      // Decorations are stored as link labels and JointJS can leave their
+      // SVG nodes behind when a link is removed during a reconciliation
+      // pass. Clear them explicitly so a deleted pending-device annotation
+      // cannot remain visible on the canvas.
+      if (cell.isLink()) cell.labels([])
+      cell.remove()
+    }
   }
 }

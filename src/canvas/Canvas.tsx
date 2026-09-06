@@ -55,6 +55,7 @@ export default function Canvas() {
     const detachMarquee = attachMarquee(host, paper, graph)
 
     let prevSheetId = useStore.getState().activeSheetId
+    let prevDocumentEpoch = useStore.getState().documentEpoch
     let prevSheet = activeSheet(useStore.getState())
     let prevFluids = useStore.getState().doc.fluids
     // fluid color resolver, rebuilt per pass so palette edits show live
@@ -62,16 +63,25 @@ export default function Canvas() {
       const m = new Map((useStore.getState().doc.fluids ?? []).map((f) => [f.id, f.color]))
       return (e: { fluidId?: string }) => (e.fluidId !== undefined ? m.get(e.fluidId) : undefined)
     }
+    // Reconcile mutates the graph synchronously, while a link view may only
+    // have its final route on the next frame. Refresh both now and after that
+    // layout pass so edited pending tags never wait for another click.
+    const refreshDecorations = () => {
+      decorateLinks(paper)
+      window.requestAnimationFrame(() => decorateLinks(paper))
+    }
     reconcile(graph, prevSheet, undefined, colorOf())
     renderUnderlay(paper, prevSheet)
     const unsubscribe = useStore.subscribe((s) => {
       const sheet = activeSheet(s)
-      if (s.activeSheetId !== prevSheetId) {
+      if (s.documentEpoch !== prevDocumentEpoch || s.activeSheetId !== prevSheetId) {
+        prevDocumentEpoch = s.documentEpoch
         prevSheetId = s.activeSheetId
         prevSheet = sheet
         prevFluids = s.doc.fluids
         graph.clear()
         reconcile(graph, sheet, undefined, colorOf())
+        refreshDecorations()
         renderSheet(paper, sheet.sheetSize)
         renderUnderlay(paper, sheet)
         fitView(paper, graph, sheet.sheetSize)
@@ -80,6 +90,8 @@ export default function Canvas() {
         prevSheet = sheet
         prevFluids = s.doc.fluids
         reconcile(graph, sheet, before, colorOf())
+        refreshDecorations()
+        if (sheet.sheetSize !== before.sheetSize) renderSheet(paper, sheet.sheetSize)
         if (sheet.underlay !== before.underlay) renderUnderlay(paper, sheet)
       }
     })

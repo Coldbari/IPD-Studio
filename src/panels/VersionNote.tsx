@@ -4,6 +4,7 @@
 
 import { useState } from 'react'
 import { useStore } from '../store/store'
+import { useT } from '../i18n'
 
 /**
  * Says out loud that IPD Studio ships often, and gives people the one action
@@ -37,34 +38,36 @@ const BLURB =
   'You are prompted when one is ready; use this to check right now and reload.'
 
 export function VersionChip() {
+  const t = useT()
   const dirty = useStore((s) => s.dirty)
   const [busy, setBusy] = useState(false)
 
   const refresh = () => {
-    if (dirty && !window.confirm('Reload to get the latest version? Your unsaved changes are autosaved, but any edit from the last moment may be lost.')) return
+    if (dirty && !window.confirm(t('Reload to get the latest version? Your unsaved changes are autosaved, but any edit from the last moment may be lost.'))) return
     setBusy(true)
     void forceRefresh()
   }
 
   return (
     <button type="button" className="version-chip" data-testid="version-chip"
-      onClick={refresh} disabled={busy} title={BLURB}>
-      v{__APP_VERSION__} · {busy ? 'refreshing…' : 'updates often'}
+      onClick={refresh} disabled={busy} title={t(BLURB)}>
+      v{__APP_VERSION__} · {busy ? t('refreshing…') : t('updates often')}
     </button>
   )
 }
 
 /** Homepage strip. Same message, room to say it in full. */
 export function VersionBanner() {
+  const t = useT()
   return (
     <div className="version-banner" role="status">
-      <strong>In active development</strong>
+      <strong>{t('In active development')}</strong>
       <span>
-        v{__APP_VERSION__} — new versions ship often. If something looks out of date, reload the page
-        (or press {navigator.platform.toLowerCase().includes('mac') ? '⌘⇧R' : 'Ctrl+Shift+R'}).
+        v{__APP_VERSION__} — {t('New versions ship often. If something looks out of date, reload the page')}
+        ({t('or press')} {navigator.platform.toLowerCase().includes('mac') ? '⌘⇧R' : 'Ctrl+Shift+R'}).
       </span>
       <button type="button" onClick={() => void forceRefresh()} data-testid="version-refresh">
-        Get the latest
+        {t('Get the latest')}
       </button>
     </div>
   )

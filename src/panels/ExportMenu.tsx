@@ -11,6 +11,7 @@ import { exportPng } from '../export/png'
 import { downloadDexpi } from '../export/dexpi'
 import { downloadDxf } from '../export/dxf'
 import { downloadDatasheetMatrix, downloadInstrumentIndex, downloadLineList } from '../export/csv'
+import { useT } from '../i18n'
 
 interface Item {
   label: string
@@ -47,6 +48,7 @@ const SECTIONS: { title: string; items: Item[] }[] = [
 
 /** All exports and reports behind one toolbar button, so the bar stays tidy. */
 export default function ExportMenu() {
+  const t = useT()
   const [open, setOpen] = useState(false)
   const btnRef = useRef<HTMLButtonElement>(null)
 
@@ -55,13 +57,13 @@ export default function ExportMenu() {
     <div className="export-menu">
       <button ref={btnRef} className={open ? 'on' : ''} aria-haspopup="menu" aria-expanded={open}
         onClick={() => setOpen((v) => !v)}>
-        Export ▾
+        {t('Export ▾')}
       </button>
       {open && (
         <Popover anchor={btnRef} onClose={() => setOpen(false)} className="export-pop" testId="export-pop">
           {SECTIONS.map((sec) => (
             <section key={sec.title}>
-              <div className="export-title">{sec.title}</div>
+              <div className="export-title">{t(sec.title)}</div>
               {sec.items.map((item) => (
                 <button
                   key={item.label}
@@ -72,7 +74,7 @@ export default function ExportMenu() {
                     setOpen(false)
                   }}
                 >
-                  {item.label}
+                  {t(item.label)}
                 </button>
               ))}
             </section>

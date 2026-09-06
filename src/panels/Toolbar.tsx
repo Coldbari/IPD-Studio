@@ -24,9 +24,11 @@ import { activeSheet } from '../store/store'
 import samplePlant from '../../examples/sample-plant.pnid.json'
 import sampleRefinery from '../../examples/sample-refinery-unit.pnid.json'
 import templateHmiDemo from '../../examples/template-hmi-demo.pnid.json'
+import { setLanguage, useLanguage, useT } from '../i18n'
 
 /** Live zoom readout, so the scale is never a mystery. */
 function ZoomCluster() {
+  const t = useT()
   const sheetSize = useStore((s) => activeSheet(s).sheetSize)
   const [pct, setPct] = useState(100)
   useEffect(() => {
@@ -43,20 +45,22 @@ function ZoomCluster() {
     if (paper && graph) fitView(paper, graph, sheetSize)
   }
   return (
-    <span className="tb-zoom" role="group" aria-label="Zoom">
-      <button data-testid="tb-zoom-out" title="Zoom out"
+    <span className="tb-zoom" role="group" aria-label={t('Zoom')}>
+      <button data-testid="tb-zoom-out" title={t('Zoom out')}
         onClick={() => canvasRef.paper && zoomCenter(canvasRef.paper, 1 / 1.2)}>−</button>
-      <button className="tb-zoom-pct" data-testid="tb-zoom-pct" title="Reset to 100%"
+      <button className="tb-zoom-pct" data-testid="tb-zoom-pct" title={t('Reset to 100%')}
         onClick={() => canvasRef.paper && zoomActual(canvasRef.paper)}>{pct}%</button>
-      <button data-testid="tb-zoom-in" title="Zoom in"
+      <button data-testid="tb-zoom-in" title={t('Zoom in')}
         onClick={() => canvasRef.paper && zoomCenter(canvasRef.paper, 1.2)}>+</button>
-      <button data-testid="tb-fit" title="Fit the whole sheet in the visible canvas (Shift+F)"
-        onClick={fit}>Fit</button>
+      <button data-testid="tb-fit" title={t('Fit the whole sheet in the visible canvas (Shift+F)')}
+        onClick={fit}>{t('Fit')}</button>
     </span>
   )
 }
 
 export default function Toolbar() {
+  const t = useT()
+  const lang = useLanguage()
   const dirty = useStore((s) => s.dirty)
   const undo = useStore((s) => s.undo)
   const redo = useStore((s) => s.redo)
@@ -73,7 +77,7 @@ export default function Toolbar() {
   }, [])
 
   const newDoc = () => {
-    if (dirty && !window.confirm('Discard unsaved changes?')) return
+    if (dirty && !window.confirm(t('Discard unsaved changes?'))) return
     useStore.getState().loadIntoStore(createEmptyDoc())
   }
 
@@ -82,17 +86,17 @@ export default function Toolbar() {
       <strong className="app-name">IPD Studio</strong>
       <span className="doc-name">{name}{dirty ? ' •' : ''}</span>
       <span className="tb-sep" />
-      <button onClick={newDoc}>New</button>
-      <button onClick={() => void openFile()}>Open</button>
+      <button onClick={newDoc}>{t('New')}</button>
+      <button onClick={() => void openFile()}>{t('Open')}</button>
       <button data-testid="tb-save" onClick={() => void saveNow()}
-        title="Save (Ctrl+S) — stores this drawing in your account when you are signed in">
-        Save
+        title={t('Save (Ctrl+S) — stores this drawing in your account when you are signed in')}>
+        {t('Save')}
       </button>
-      <button data-testid="tb-download" onClick={() => void saveFile()}
-        title="Download a .pnid file to this computer">
-        Download
+      <button data-testid="tb-download" onClick={() => void saveFile({ saveAs: true, rememberHandle: false })}
+        title={t('Download a .pnid file to this computer')}>
+        {t('Download')}
       </button>
-      <button className="tb-icon" onClick={() => setHistoryOpen(true)} title="Restore an earlier snapshot">⏱</button>
+      <button className="tb-icon" onClick={() => setHistoryOpen(true)} title={t('Restore an earlier snapshot')}>⏱</button>
       {historyOpen && <HistoryDialog onClose={() => setHistoryOpen(false)} />}
       <select
         className="tb-template"
@@ -100,17 +104,17 @@ export default function Toolbar() {
         onChange={(e) => {
           const pick = e.target.value
           if (!pick) return
-          if (dirty && !window.confirm('Discard unsaved changes?')) return
+          if (dirty && !window.confirm(t('Discard unsaved changes?'))) return
           const source = pick === 'sample' ? samplePlant : pick === 'refinery' ? sampleRefinery : pick === 'hmi-demo' ? templateHmiDemo : pick === 'blank' ? templateBlank : templateUtility
           useStore.getState().loadIntoStore(loadDoc(source))
         }}
       >
-        <option value="">Templates…</option>
-        <option value="sample">Sample plant</option>
-        <option value="refinery">Refinery unit (3 sheets)</option>
-        <option value="hmi-demo">HMI demo (tank level loop)</option>
-        <option value="blank">Blank A3 drawing</option>
-        <option value="utility">Utility headers (A1)</option>
+        <option value="">{t('Templates…')}</option>
+        <option value="sample">{t('Sample plant')}</option>
+        <option value="refinery">{t('Refinery unit (3 sheets)')}</option>
+        <option value="hmi-demo">{t('HMI demo (tank level loop)')}</option>
+        <option value="blank">{t('Blank A3 drawing')}</option>
+        <option value="utility">{t('Utility headers (A1)')}</option>
       </select>
       <span className="tb-sep" />
       <button
@@ -118,7 +122,7 @@ export default function Toolbar() {
           const state = useStore.getState()
           const sheet = activeSheet(state)
           if (sheet.underlay) {
-            if (window.confirm('Remove the DXF underlay from this sheet?')) state.setUnderlay(undefined)
+            if (window.confirm(t('Remove the DXF underlay from this sheet?'))) state.setUnderlay(undefined)
             return
           }
           const input = document.createElement('input')
@@ -131,32 +135,32 @@ export default function Toolbar() {
               const px = sheetPx(sheet.sheetSize)
               const { polylines, warnings } = parseDxfUnderlay(await file.text(), px)
               state.setUnderlay({ name: file.name, polylines })
-              if (warnings.length) window.alert(`Underlay loaded with notes:\n${warnings.join('\n')}`)
+              if (warnings.length) window.alert(t('Underlay loaded with notes:') + '\n' + warnings.join('\n'))
             } catch (err) {
-              window.alert(`Could not read DXF: ${(err as Error).message}`)
+              window.alert(t('Could not read DXF:') + ' ' + (err as Error).message)
             }
           }
           input.click()
         }}
-        title="Load a DXF as a locked trace-over background"
+        title={t('Load a DXF as a locked trace-over background')}
       >
-        Underlay
+        {t('Underlay')}
       </button>
       <span className="tb-sep" />
-      <button className="tb-icon" onClick={undo} title="Undo (Ctrl+Z)">↩</button>
-      <button className="tb-icon" onClick={redo} title="Redo (Ctrl+Y)">↪</button>
+      <button className="tb-icon" onClick={undo} title={t('Undo (Ctrl+Z)')}>↩</button>
+      <button className="tb-icon" onClick={redo} title={t('Redo (Ctrl+Y)')}>↪</button>
       <span className="tb-sep" />
       <label className="tb-line">
-        <span className="tb-line-label">Draw:</span>
+        <span className="tb-line-label">{t('Draw:')}</span>
         <select value={activeLineClass} onChange={(e) => setActiveLineClass(e.target.value as LineClass)}>
           {Object.entries(LINE_CLASS_LABELS).map(([v, label]) => (
-            <option key={v} value={v}>{label}</option>
+            <option key={v} value={v}>{t(label)}</option>
           ))}
         </select>
       </label>
       <button data-testid="tb-fluids" onClick={() => setFluidsOpen(true)}
-        title="Define fluids/services (Water, Steam…) — assign them to lines in the line's properties">
-        Fluids
+        title={t("Define fluids/services (Water, Steam…) — assign them to lines in the line's properties")}>
+        {t('Fluids')}
       </button>
       {fluidsOpen && <FluidsDialog onClose={() => setFluidsOpen(false)} />}
       <BudgetChip />
@@ -164,6 +168,8 @@ export default function Toolbar() {
       <ZoomCluster />
       <span className="tb-grow" />
       <ExportMenu />
+      <button className="tb-lang" data-testid="language-toggle" title={lang === 'zh-CN' ? 'Switch to English' : '切换为中文'}
+        onClick={() => setLanguage(lang === 'zh-CN' ? 'en' : 'zh-CN')}>{lang === 'zh-CN' ? 'EN' : '中'}</button>
       <AccountMenu />
     </header>
   )

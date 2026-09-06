@@ -22,6 +22,7 @@ export function getSymbol(id: string): SymbolDef {
 export function byCategory(): Map<SymbolCategory, SymbolDef[]> {
   const out = new Map<SymbolCategory, SymbolDef[]>()
   for (const def of SYMBOLS.values()) {
+    if (def.placeable === false) continue
     const list = out.get(def.category) ?? []
     list.push(def)
     out.set(def.category, list)
@@ -31,8 +32,9 @@ export function byCategory(): Map<SymbolCategory, SymbolDef[]> {
 
 export function searchSymbols(query: string): SymbolDef[] {
   const q = query.trim().toLowerCase()
-  if (!q) return [...SYMBOLS.values()]
+  if (!q) return [...SYMBOLS.values()].filter((d) => d.placeable !== false)
   return [...SYMBOLS.values()].filter(
-    (d) => d.name.toLowerCase().includes(q) || d.keywords.some((k) => k.includes(q)),
+    (d) => d.placeable !== false &&
+      (d.name.toLowerCase().includes(q) || d.keywords.some((k) => k.includes(q))),
   )
 }

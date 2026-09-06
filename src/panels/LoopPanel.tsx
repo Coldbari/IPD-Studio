@@ -7,12 +7,14 @@ import { deriveLoops } from '../store/selectors'
 import { formatTag } from '../isa/tag'
 import { printLoopDiagram } from '../export/loopDiagram'
 import { useStore } from '../store/store'
+import { useT } from '../i18n'
 
 export default function LoopPanel() {
+  const t = useT()
   const doc = useStore((s) => s.doc)
   const setSelection = useStore((s) => s.setSelection)
   const loops = useMemo(() => deriveLoops(doc), [doc])
-  if (loops.length === 0) return <div className="drawer-empty">No tagged instruments yet.</div>
+  if (loops.length === 0) return <div className="drawer-empty">{t('No tagged instruments yet.')}</div>
   return (
     <div className="drawer-list">
       {loops.map((loop) => (
@@ -21,16 +23,16 @@ export default function LoopPanel() {
             className="drawer-item"
             onClick={() => setSelection(loop.members.map((m) => m.nodeId))}
           >
-            <b>Loop {loop.family}-{loop.loop}</b>{' '}
+            <b>{t('Loop')} {loop.family}-{loop.loop}</b>{' '}
             {loop.members.map((m) => formatTag(m.tag, '-')).join(', ')}
-            {loop.hint && <span className="loop-hint"> — {loop.hint}</span>}
+            {loop.hint && <span className="loop-hint"> — {t(loop.hint)}</span>}
           </button>
           <button
             className="loop-diagram-btn"
-            title="Generate ISA-5.4-style loop diagram"
+            title={t('Generate ISA-5.4-style loop diagram')}
             onClick={() => printLoopDiagram(doc, loop.family, loop.loop)}
           >
-            Diagram
+            {t('Diagram')}
           </button>
         </div>
       ))}

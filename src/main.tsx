@@ -6,6 +6,7 @@ import { lazy, StrictMode, Suspense } from 'react'
 import { createRoot } from 'react-dom/client'
 import './app.css'
 import { navigate, useRoute } from './routes'
+import { tr } from './i18n'
 
 // Split at the route boundary: the homepage must not ship JointJS, the symbol
 // catalog and the HMI simulator just to render a headline.
@@ -21,7 +22,7 @@ function Root() {
 
   if (route === 'app') {
     return (
-      <Suspense fallback={<Loading label="Loading the editor…" />}>
+      <Suspense fallback={<Loading label={tr('Loading the editor…')} />}>
         <EditorRoot />
       </Suspense>
     )
@@ -30,7 +31,7 @@ function Root() {
   // Signing in and opening the editor are the same journey now: the editor
   // route puts the sign-in screen in front of anyone without an account.
   return (
-    <Suspense fallback={<Loading label="Loading…" />}>
+    <Suspense fallback={<Loading label={tr('Loading…')} />}>
       <Home onSignIn={() => navigate('/app')} onOpenEditor={() => navigate('/app')} />
     </Suspense>
   )

@@ -7,6 +7,7 @@ import { WIDGET_DEFAULT_SIZE } from './model'
 import { THEMES } from './theme'
 import { renderWidget } from './widgets/index'
 import { useStore } from '../store/store'
+import { tr, useT } from '../i18n'
 
 export const HMI_DRAG_MIME = 'application/x-hmi-widget'
 
@@ -59,7 +60,7 @@ function ItemPreview({ item }: { item: PaletteItem }) {
   const size = WIDGET_DEFAULT_SIZE[type]
   const widget: HmiWidget = {
     id: `pal-${type}`, type, x: 0, y: 0, ...size,
-    label: type === 'label' ? 'Text' : type === 'button' ? 'START' : type === 'nav' ? 'Screen' : type === 'panel' ? 'Group' : undefined,
+    label: type === 'label' ? tr('Text') : type === 'button' ? tr('START') : type === 'nav' ? tr('Screen') : type === 'panel' ? tr('Group') : undefined,
     props: item.props
       ?? (type === 'valve' ? { throttle: true }
       : type === 'symbol' ? { symbolId: 'vessel.column-tray' }
@@ -77,12 +78,13 @@ function ItemPreview({ item }: { item: PaletteItem }) {
 }
 
 export default function HmiPalette() {
+  const t = useT()
   const addWidget = useStore((s) => s.addWidget)
   return (
     <div style={{ padding: 8 }}>
       {SECTIONS.map((sec) => (
         <div key={sec.title}>
-          <h4 style={{ margin: '8px 0 4px', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6, color: '#667' }}>{sec.title}</h4>
+          <h4 style={{ margin: '8px 0 4px', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6, color: '#667' }}>{t(sec.title)}</h4>
           {sec.items.map((it) => (
             <div
               key={`${it.type}:${it.label}`}
@@ -96,10 +98,10 @@ export default function HmiPalette() {
                 const size = WIDGET_DEFAULT_SIZE[it.type]
                 addWidget({ type: it.type, x: 320, y: 240, ...size, ...(it.props ? { props: it.props } : {}) })
               }}
-              title="Drag onto the canvas (or double-click to place)"
+              title={t('Drag onto the canvas (or double-click to place)')}
             >
               <ItemPreview item={it} />
-              <span>{it.label}</span>
+              <span>{t(it.label)}</span>
             </div>
           ))}
         </div>

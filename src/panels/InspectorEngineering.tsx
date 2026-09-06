@@ -9,6 +9,7 @@ import { RECORD_STATUSES, keyOfNode, kindOfNode, type RecordStatus } from '../mo
 import { pauseHistory, resumeHistory, useStore } from '../store/store'
 import { expandLetters } from '../isa/tag'
 import DatasheetEditor from './DatasheetEditor'
+import { useT } from '../i18n'
 
 const STATUS_LABEL: Record<RecordStatus, string> = {
   draft: 'Draft',
@@ -28,6 +29,7 @@ const STATUS_LABEL: Record<RecordStatus, string> = {
  * here immediately, and the first edit writes it into the record for good.
  */
 export default function InspectorEngineering({ node }: { node: PlantNode }) {
+  const t = useT()
   const doc = useStore((s) => s.doc)
   const setRecordField = useStore((s) => s.setRecordField)
   const setRecordStatus = useStore((s) => s.setRecordStatus)
@@ -36,14 +38,13 @@ export default function InspectorEngineering({ node }: { node: PlantNode }) {
   const key = keyOfNode(node)
   const kind = kindOfNode(node)
 
-  if (!kind) return <div className="drawer-empty">Annotations carry no engineering record.</div>
+  if (!kind) return <div className="drawer-empty">{t('Annotations carry no engineering record.')}</div>
   if (!key) {
     return (
       <div className="eng-untagged">
-        <p>This {kind} has no tag yet, so there is nothing to hang a record on.</p>
+        <p>{t('This')} {t(kind)} {t('has no tag yet, so there is nothing to hang a record on.')}</p>
         <p className="prop-hint">
-          Give it a tag on the Symbol tab and its engineering record appears here — and follows it from then on,
-          even if you delete and redraw the symbol.
+          {t('Give it a tag on the Symbol tab and its engineering record appears here — and follows it from then on, even if you delete and redraw the symbol.')}
         </p>
       </div>
     )
@@ -64,7 +65,7 @@ export default function InspectorEngineering({ node }: { node: PlantNode }) {
         </div>
         <select
           className="eng-status"
-          title="Engineering status of this record"
+          title={t('Engineering status of this record')}
           value={record?.status ?? 'draft'}
           onChange={(e) => {
             // the record has to exist before it can carry a status
@@ -72,21 +73,21 @@ export default function InspectorEngineering({ node }: { node: PlantNode }) {
             setRecordStatus(key, e.target.value as RecordStatus)
           }}
         >
-          {RECORD_STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+          {RECORD_STATUSES.map((s) => <option key={s} value={s}>{t(STATUS_LABEL[s])}</option>)}
         </select>
       </div>
 
-      <div className="eng-progress" title={`${filled} of ${total} fields filled`}>
+      <div className="eng-progress" title={`${filled} ${t('of')} ${total} ${t('fields filled')}`}>
         <span style={{ width: `${total ? (filled / total) * 100 : 0}%` }} />
         <em>{filled}/{total}</em>
       </div>
 
       {sections.map((section) => (
         <section key={section.id} className="eng-section">
-          <div className="prop-title">{section.title}</div>
+          <div className="prop-title">{t(section.title)}</div>
           {section.fields.map((f) => (
             <label className="eng-field" key={f.key}>
-              <span>{f.label}</span>
+              <span>{t(f.label)}</span>
               <input
                 data-testid={`eng-${f.key}`}
                 value={valueOf(f.key)}
@@ -100,7 +101,7 @@ export default function InspectorEngineering({ node }: { node: PlantNode }) {
 
       {node.kind === 'instrument' && (
         <div className="prop-row">
-          <button onClick={() => setDatasheetOpen(true)}>Open as a datasheet…</button>
+          <button onClick={() => setDatasheetOpen(true)}>{t('Open as a datasheet…')}</button>
         </div>
       )}
       {datasheetOpen && <DatasheetEditor node={node} onClose={() => setDatasheetOpen(false)} />}

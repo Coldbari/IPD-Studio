@@ -11,6 +11,7 @@ import {
   scaleUnits, toDisplay, toUsd, trimNum,
 } from '../model/currency'
 import { download } from '../export/csv'
+import { useT } from '../i18n'
 
 const FACTORS: [number, string][] = [
   [1, '1× — hardware only'],
@@ -25,6 +26,7 @@ const FACTORS: [number, string][] = [
  * is something you steer by while drawing, not a status readout.
  */
 export function BudgetChip() {
+  const t = useT()
   const doc = useStore((s) => s.doc)
   const [open, setOpen] = useState(false)
   const { total } = projectCost(doc)
@@ -39,13 +41,13 @@ export function BudgetChip() {
         data-testid="budget-chip"
         onClick={() => setOpen(true)}
         title={
-          empty ? 'Set a project budget and see the live cost estimate as you draw'
-            : over ? 'Over budget — click for the breakdown'
-              : 'Estimated project cost — click for the breakdown'
+          empty ? t('Set a project budget and see the live cost estimate as you draw')
+            : over ? t('Over budget — click for the breakdown')
+              : t('Estimated project cost — click for the breakdown')
         }
       >
         {empty
-          ? '💰 Budget…'
+          ? `💰 ${t('Budget…')}`
           : `💰 ${moneyShort(total, cur)}${target !== undefined ? ` / ${moneyShort(target, cur)}` : ''}`}
       </button>
       {open && <BudgetDialog onClose={() => setOpen(false)} />}
@@ -56,6 +58,7 @@ export function BudgetChip() {
 /** Project budget & cost estimate: set the target, tune unit prices, see the
  *  live breakdown. Prices are budgetary USD defaults — override for your market. */
 export default function BudgetDialog({ onClose }: { onClose(): void }) {
+  const t = useT()
   const doc = useStore((s) => s.doc)
   const setBudget = useStore((s) => s.setBudget)
   const setPriceOverride = useStore((s) => s.setPriceOverride)
@@ -82,7 +85,7 @@ export default function BudgetDialog({ onClose }: { onClose(): void }) {
   const exportCsv = () => {
     const esc = (s: string) => (/[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s)
     const rows = [
-      ['Item', 'Qty', `Unit (${cur.code})`, `Subtotal (${cur.code})`, 'Unit (USD)', 'Basis', 'Evidence'],
+      [t('Item'), t('Qty'), t('Unit') + ' (' + cur.code + ')', t('Subtotal') + ' (' + cur.code + ')', t('Unit') + ' (USD)', t('Basis'), t('Evidence')],
       ...report.lines.map((l) => {
         const e = DEFAULT_PRICES[l.key]
         return [
@@ -93,12 +96,12 @@ export default function BudgetDialog({ onClose }: { onClose(): void }) {
         ]
       }),
       [],
-      ['Hardware subtotal', '', '', String(Math.round(toDisplay(report.hardware, cur)))],
-      ['Install factor', '', '', String(factor)],
-      ['Estimated total', '', '', String(Math.round(toDisplay(report.total, cur)))],
-      ...(target !== undefined ? [['Budget', '', '', String(Math.round(toDisplay(target, cur)))]] : []),
+      [t('Hardware subtotal'), '', '', String(Math.round(toDisplay(report.hardware, cur)))],
+      [t('Install factor'), '', '', String(factor)],
+      [t('Estimated total'), '', '', String(Math.round(toDisplay(report.total, cur)))],
+      ...(target !== undefined ? [[t('Budget'), '', '', String(Math.round(toDisplay(target, cur)))]] : []),
       [],
-      [`Currency ${cur.code} at ${cur.rate} per USD, indicative rate of ${FX_DATE}`],
+      [t('Currency') + ' ' + cur.code + ' ' + t('at') + ' ' + cur.rate + ' ' + t('per USD') + ', ' + t('indicative rate of') + ' ' + FX_DATE],
     ]
     download(
       `${doc.meta.name || 'diagram'}-cost-estimate.csv`,
@@ -108,31 +111,31 @@ export default function BudgetDialog({ onClose }: { onClose(): void }) {
   }
 
   return (
-    <Modal title="Budget & cost estimate" onClose={onClose} width={720}>
+    <Modal title={t('Budget & cost estimate')} onClose={onClose} width={720}>
       <div className="bd">
         {/* ---- summary: the number you came for, first ---- */}
         <div className="bd-summary">
           <div className="bd-figure">
-            <span className="bd-k">Estimated total</span>
+            <span className="bd-k">{t('Estimated total')}</span>
             <strong className="bd-total" data-testid="budget-est">{money(report.total, cur)}</strong>
             <span className="bd-sub">
-              {money(report.hardware, cur)} hardware{factor !== 1 ? ` × ${factor} installed` : ''}
+              {money(report.hardware, cur)} {t('hardware only')}{factor !== 1 ? ' × ' + factor + ' ' + t('installed') : ''}
             </span>
           </div>
           {remaining !== undefined && (
             <div className="bd-figure">
-              <span className="bd-k">{remaining < 0 ? 'Over budget' : 'Remaining'}</span>
+              <span className="bd-k">{remaining < 0 ? t('Over budget') : t('Remaining')}</span>
               <strong className={`bd-total ${remaining < 0 ? 'bd-bad' : 'bd-good'}`}>
                 {money(Math.abs(remaining), cur)}
               </strong>
-              <span className="bd-sub">of {money(target!, cur)} budget</span>
+              <span className="bd-sub">{t('of')} {money(target!, cur)} {t('Budget')}</span>
             </div>
           )}
         </div>
 
         {pct !== undefined && (
           <div className="bd-bar" role="img"
-            aria-label={`${Math.round((report.total / target!) * 100)}% of budget used`}>
+            aria-label={`${Math.round((report.total / target!) * 100)}% ${t('of budget used')}`}>
             <div className={`bd-bar-fill${remaining! < 0 ? ' bd-bar-over' : ''}`}
               style={{ width: `${Math.min(pct, 1) * 100}%` }} />
           </div>
@@ -141,10 +144,10 @@ export default function BudgetDialog({ onClose }: { onClose(): void }) {
         {/* ---- controls ---- */}
         <div className="bd-controls">
           <label>
-            <span className="bd-k">Budget target</span>
+            <span className="bd-k">{t('Budget target')}</span>
             <span className="bd-target">
               <input
-                data-testid="budget-total" type="number" min={0} step="any" placeholder="not set"
+                data-testid="budget-total" type="number" min={0} step="any" placeholder={t('not set')}
                 value={target === undefined ? '' : trimNum(shownTarget / unit.mult)}
                 onChange={(e) => setBudget({
                   total: e.target.value === '' ? undefined : toUsd(Number(e.target.value) * unit.mult, cur),
@@ -153,33 +156,33 @@ export default function BudgetDialog({ onClose }: { onClose(): void }) {
               <select
                 data-testid="budget-scale" value={unit.label}
                 onChange={(e) => setUnitLabel(e.target.value)}
-                title={`Scale — type 7.05 and pick ${units[units.length - 1]!.label} instead of counting zeros`}
+                title={`${t('Scale — type 7.05 and pick a unit instead of counting zeros')} (${units[units.length - 1]!.label})`}
               >
                 {units.map((u) => <option key={u.label} value={u.label} title={u.title}>{u.label}</option>)}
               </select>
+              {target !== undefined && unit.mult > 1 && (
+                <span className="bd-hint">= {money(target, cur)}</span>
+              )}
             </span>
-            {target !== undefined && unit.mult > 1 && (
-              <span className="bd-hint">= {money(target, cur)}</span>
-            )}
           </label>
           <label>
-            <span className="bd-k">Currency</span>
+            <span className="bd-k">{t('Currency')}</span>
             <select
               data-testid="budget-currency"
               value={cur.code}
               onChange={(e) => setBudget({ currency: e.target.value })}
-              title={`Indicative rates of ${FX_DATE}. Prices are stored in USD and converted for display.`}
+              title={`${t('Indicative rates. Prices are stored in USD and converted for display.')} (${FX_DATE})`}
             >
               {CURRENCIES.map((c) => (
-                <option key={c.code} value={c.code}>{c.code} — {c.name}</option>
+                <option key={c.code} value={c.code}>{c.code} — {t(c.name)}</option>
               ))}
             </select>
           </label>
           <label className="bd-grow">
-            <span className="bd-k">Estimate covers</span>
+            <span className="bd-k">{t('Estimate covers')}</span>
             <select data-testid="budget-factor" value={factor}
               onChange={(e) => setBudget({ installFactor: Number(e.target.value) })}>
-              {FACTORS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+              {FACTORS.map(([v, label]) => <option key={v} value={v}>{t(label)}</option>)}
             </select>
           </label>
         </div>
@@ -189,10 +192,10 @@ export default function BudgetDialog({ onClose }: { onClose(): void }) {
           <table className="bd-table">
             <thead>
               <tr>
-                <th>Item</th>
-                <th className="r">Qty</th>
-                <th className="r">Unit price</th>
-                <th className="r">Subtotal</th>
+                <th>{t('Item')}</th>
+                <th className="r">{t('Qty')}</th>
+                <th className="r">{t('Unit price')}</th>
+                <th className="r">{t('Subtotal')}</th>
                 <th />
               </tr>
             </thead>
@@ -201,19 +204,19 @@ export default function BudgetDialog({ onClose }: { onClose(): void }) {
                 const overridden = budget?.overrides?.[l.key] !== undefined
                 const entry = DEFAULT_PRICES[l.key]
                 const range = entry?.low !== undefined && entry.high !== undefined
-                  ? `Typical range ${money(entry.low, cur)} – ${money(entry.high, cur)}`
+                  ? t('Typical range') + ' ' + money(entry.low, cur) + ' – ' + money(entry.high, cur)
                   : ''
-                const tip = [entry?.basis, range,
-                  entry?.ev === 'est' ? 'No published price found — correlation or build-up estimate.' : '']
+                const tip = [entry?.basis ? t(entry.basis) : undefined, range,
+                  entry?.ev === 'est' ? t('No published price found — correlation or build-up estimate.') : '']
                   .filter(Boolean).join('\n\n')
                 return (
                   <tr key={l.key}>
                     <td>
-                      <span className="bd-item" title={tip || undefined}>{l.label}</span>
+                      <span className="bd-item" title={tip || undefined}>{t(l.label)}</span>
                       {entry?.ev === 'est' && (
-                        <span className="bd-est" title="No published price found — this default is a cost-correlation or build-up estimate.">est</span>
+                        <span className="bd-est" title={t('No published price found — this default is a cost-correlation or build-up estimate.')}>est</span>
                       )}
-                      {entry?.basis && <span className="bd-basis">{entry.basis}</span>}
+                      {entry?.basis && <span className="bd-basis">{t(entry.basis)}</span>}
                     </td>
                     <td className="r bd-num">{l.count}</td>
                     <td className="r">
@@ -221,7 +224,7 @@ export default function BudgetDialog({ onClose }: { onClose(): void }) {
                         className={`bd-unit${overridden ? ' bd-overridden' : ''}`}
                         type="number" min={0}
                         value={Math.round(toDisplay(l.unit, cur))}
-                        title={overridden ? 'Overridden for this project — ↺ resets it' : 'Budgetary default — edit for your market'}
+                        title={overridden ? t('Overridden for this project — ↺ resets it') : t('Budgetary default — edit for your market')}
                         onChange={(e) => setPriceOverride(
                           l.key,
                           e.target.value === '' ? undefined : toUsd(Number(e.target.value), cur),
@@ -231,7 +234,7 @@ export default function BudgetDialog({ onClose }: { onClose(): void }) {
                     <td className="r bd-num">{money(l.subtotal, cur)}</td>
                     <td>
                       {overridden && (
-                        <button className="bd-reset" title="Reset to the default price"
+                        <button className="bd-reset" title={t('Reset to the default price')}
                           onClick={() => setPriceOverride(l.key, undefined)}>↺</button>
                       )}
                     </td>
@@ -240,7 +243,7 @@ export default function BudgetDialog({ onClose }: { onClose(): void }) {
               })}
               {report.lines.length === 0 && (
                 <tr><td colSpan={5} className="bd-empty">
-                  Place components on the drawing and they appear here with prices.
+                  {t('Place components on the drawing and they appear here with prices.')}
                 </td></tr>
               )}
             </tbody>
@@ -249,21 +252,19 @@ export default function BudgetDialog({ onClose }: { onClose(): void }) {
 
         {report.unpriced > 0 && (
           <p className="bd-warn">
-            ⚠ {report.unpriced} component{report.unpriced > 1 ? 's have' : ' has'} no price — set one
-            in the table above or on the component itself.
+            ⚠ {report.unpriced} {t(report.unpriced > 1
+              ? 'components have no price — set one in the table above or on the component itself.'
+              : 'component has no price — set one in the table above or on the component itself.')}
           </p>
         )}
 
         {/* ---- footer ---- */}
         <div className="bd-foot">
           <p className="bd-fine">
-            Budgetary hardware prices in USD, researched Aug 2026 — FOB, excluding installation,
-            freight and tax. Real quotes vary several-fold with size, material and rating; hover an
-            item for the size the price assumes. Bold = overridden. For an exact price on one
-            component, select it and use its Cost field.
-            {cur.code !== 'USD' && ` Shown in ${cur.code} at ${cur.rate} per USD (indicative, ${FX_DATE}).`}
+            {t('Budgetary hardware prices in USD, researched Aug 2026 — FOB, excluding installation, freight and tax. Real quotes vary several-fold with size, material and rating; hover an item for the size the price assumes. Bold = overridden. For an exact price on one component, select it and use its Cost field.')}
+            {cur.code !== 'USD' && ` ${t('Shown in')} ${cur.code} ${t('at')} ${cur.rate} ${t('per USD')} (${FX_DATE}).`}
           </p>
-          <button className="bd-csv" onClick={exportCsv}>Cost estimate CSV</button>
+          <button className="bd-csv" onClick={exportCsv}>{t('Cost estimate CSV')}</button>
         </div>
       </div>
     </Modal>

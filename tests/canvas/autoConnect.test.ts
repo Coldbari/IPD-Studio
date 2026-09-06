@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import '../../src/symbols/lib/index'
-import { DOCK_STANDOFF, dockEdge, dockKey, dockRadius, findDock } from '../../src/canvas/autoConnect'
+import { DOCK_STANDOFF, dockEdge, dockKey, dockRadius, findDock, findFreeEndDock } from '../../src/canvas/autoConnect'
 import { portWorld } from '../../src/canvas/alignment'
 import type { PlantEdge, PlantNode } from '../../src/model/types'
 
@@ -129,6 +129,53 @@ describe('dockEdge', () => {
       source: { nodeId: moving.id, portId: 'w' },
       target: { nodeId: fixed.id, portId: 'e' },
     })
+  })
+})
+
+describe('findFreeEndDock', () => {
+  it('snaps a compatible process port onto an existing free line end', () => {
+    const fixed = mk('valve.gate', 200, 200)
+    const moving = mk('valve.gate', 248, 200) // w port at (248, 208)
+    const edge: PlantEdge = {
+      id: 'open-process',
+      lineClass: 'process.major',
+      source: { nodeId: fixed.id, portId: 'e' },
+      target: { x: 248, y: 208 },
+      lineNumber: { size: '2"', spec: 'CS', service: 'FW', seq: '001' },
+      arrow: 'flow',
+    }
+    const dock = findFreeEndDock(moving, [edge], 18)
+    expect(dock).toEqual({
+      movingPortId: 'w',
+      edgeId: edge.id,
+      end: 'target',
+      x: 248,
+      y: 200,
+      at: { x: 248, y: 208 },
+    })
+  })
+
+  it('does not attach a signal line to a process-only port', () => {
+    const cv = mk('cv.globe', 100, 100)
+    const edge: PlantEdge = {
+      id: 'open-process',
+      lineClass: 'signal.electric',
+      source: { nodeId: cv.id, portId: 'sig' },
+      target: { x: 134, y: 104 },
+    }
+    const gate = mk('valve.gate', 134, 96)
+    expect(findFreeEndDock(gate, [edge], 18)).toBeNull()
+  })
+
+  it('ignores endpoints that are already connected to a port', () => {
+    const moving = mk('valve.gate', 248, 200)
+    const edge: PlantEdge = {
+      id: 'closed',
+      lineClass: 'process.major',
+      source: { nodeId: 'other', portId: 'e' },
+      target: { nodeId: 'another', portId: 'w' },
+    }
+    expect(findFreeEndDock(moving, [edge], 18)).toBeNull()
   })
 })
 

@@ -2,8 +2,8 @@
 // Copyright © 2026 Praharsh Nagpure — IPD Studio. Noncommercial use only;
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
-import type { PlantNode, SheetContent } from './types'
-import { isPortEnd } from './types'
+import type { PlantEdge, PlantNode, SheetContent } from './types'
+import { isJunctionEnd, isPortEnd } from './types'
 import { isProcessClass } from '../canvas/lineStyle'
 import { getSymbol } from '../symbols/registry'
 
@@ -34,10 +34,13 @@ export function propagateFluid(content: SheetContent, startEdgeId: string): stri
   const nodesById = new Map(content.nodes.map((n) => [n.id, n]))
   const processEdges = content.edges.filter((e) => isProcessClass(e.lineClass))
   const edgesAt = new Map<string, typeof processEdges>()
+  const keyOf = (end: PlantEdge['source']): string | null =>
+    isPortEnd(end) ? `node:${end.nodeId}` : isJunctionEnd(end) ? `junction:${end.junctionId}` : null
   for (const e of processEdges) {
     for (const end of [e.source, e.target]) {
-      if (!isPortEnd(end)) continue
-      edgesAt.set(end.nodeId, [...(edgesAt.get(end.nodeId) ?? []), e])
+      const key = keyOf(end)
+      if (!key) continue
+      edgesAt.set(key, [...(edgesAt.get(key) ?? []), e])
     }
   }
   const out = new Set<string>([start.id])
@@ -46,10 +49,13 @@ export function propagateFluid(content: SheetContent, startEdgeId: string): stri
     const next: typeof frontier = []
     for (const e of frontier) {
       for (const end of [e.source, e.target]) {
-        if (!isPortEnd(end)) continue
-        const n = nodesById.get(end.nodeId)
-        if (!n || !passesThrough(n)) continue
-        for (const other of edgesAt.get(end.nodeId) ?? []) {
+        const key = keyOf(end)
+        if (!key) continue
+        if (isPortEnd(end)) {
+          const n = nodesById.get(end.nodeId)
+          if (!n || !passesThrough(n)) continue
+        }
+        for (const other of edgesAt.get(key) ?? []) {
           if (out.has(other.id)) continue
           out.add(other.id)
           next.push(other)

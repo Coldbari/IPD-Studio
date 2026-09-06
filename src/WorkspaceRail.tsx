@@ -6,6 +6,7 @@ import { useEffect } from 'react'
 import { WORKSPACES, navigateWorkspace, type Workspace } from './routes'
 import { useStore } from './store/store'
 import { qaFor } from './validate/engine'
+import { useT } from './i18n'
 
 interface Entry {
   icon: string
@@ -26,6 +27,7 @@ const ENTRIES: Record<Workspace, Entry> = {
 }
 
 export default function WorkspaceRail({ active }: { active: Workspace }) {
+  const t = useT()
   // Only actionable counts earn a badge. Warnings and observations would cry
   // wolf on a drawing that is merely unfinished, so the badge counts CRITICALS
   // alone — the things that would stop the drawing being issued.
@@ -44,7 +46,7 @@ export default function WorkspaceRail({ active }: { active: Workspace }) {
   }, [])
 
   return (
-    <nav className="rail" aria-label="Workspaces">
+    <nav className="rail" aria-label={t('Workspaces')}>
       {WORKSPACES.map((w, i) => {
         const e = ENTRIES[w]
         const on = w === active
@@ -56,13 +58,13 @@ export default function WorkspaceRail({ active }: { active: Workspace }) {
             className={`rail-btn${on ? ' on' : ''}`}
             data-testid={`rail-${w}`}
             aria-current={on ? 'page' : undefined}
-            title={`${e.label} — ${e.hint} (Ctrl+${i + 1})`}
+            title={`${t(e.label)} — ${t(e.hint)} (Ctrl+${i + 1})`}
             onClick={() => navigateWorkspace(w)}
           >
             <span className="rail-icon" aria-hidden="true">{e.icon}</span>
-            <span className="rail-label">{e.label}</span>
+            <span className="rail-label">{t(e.label)}</span>
             {badge !== null && (
-              <span className="rail-badge" aria-label={`${badge} findings`}>
+              <span className="rail-badge" aria-label={badge + ' ' + t('findings')}>
                 {badge > 99 ? '99+' : badge}
               </span>
             )}

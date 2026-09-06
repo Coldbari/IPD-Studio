@@ -7,8 +7,10 @@ import { expandLetters, validateLetters } from '../isa/tag'
 import { isDuplicateTag, suggestLoop } from '../isa/autonumber'
 import { pauseHistory, resumeHistory, useStore } from '../store/store'
 import type { PlantNode } from '../model/types'
+import { useT } from '../i18n'
 
 export default function TagEditor({ node }: { node: PlantNode }) {
+  const t = useT()
   const setTag = useStore((s) => s.setTag)
   const doc = useStore((s) => s.doc)
   const tag = node.tag ?? { letters: '', loop: '' }
@@ -30,7 +32,7 @@ export default function TagEditor({ node }: { node: PlantNode }) {
 
   return (
     <div className="prop-group">
-      <div className="prop-title">ISA Tag</div>
+      <div className="prop-title">{t('ISA Tag')}</div>
       <div className="tag-row">
         <input
           className="tag-letters"
@@ -72,7 +74,7 @@ export default function TagEditor({ node }: { node: PlantNode }) {
         />
         <button
           className="tag-auto"
-          title="Next free number for these letters"
+          title={t('Next free number for these letters')}
           onClick={() => update({ loop: suggestLoop(doc, node.id, tag.letters || 'X') })}
         >
           №
@@ -80,7 +82,7 @@ export default function TagEditor({ node }: { node: PlantNode }) {
       </div>
       {expansion && <div className="tag-expansion">{expansion}</div>}
       {validation && !validation.ok && <div className="tag-error">{validation.reason}</div>}
-      {duplicate && <div className="tag-error">Duplicate tag in this drawing</div>}
+      {duplicate && <div className="tag-error">{t('Duplicate tag in this drawing')}</div>}
     </div>
   )
 }

@@ -2,7 +2,7 @@
 // Copyright © 2026 Praharsh Nagpure — IPD Studio. Noncommercial use only;
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
-import { dia, shapes } from '@joint/core'
+import { connectors, dia, shapes } from '@joint/core'
 import type { PlantEdge, PlantNode } from '../model/types'
 import { isPortEnd } from '../model/types'
 import { getSymbol } from '../symbols/registry'
@@ -60,6 +60,17 @@ function markupFor(node: PlantNode): (MarkupNode | string)[] {
         fill: 'transparent',
         stroke: 'none',
         cursor: 'move',
+      },
+    },
+    {
+      tagName: 'rect',
+      selector: 'selectionFrame',
+      attributes: {
+        width: String(def.gridSize.w * 8),
+        height: String(def.gridSize.h * 8),
+        fill: 'transparent',
+        stroke: 'none',
+        'pointer-events': 'none',
       },
     },
     { tagName: 'g', selector: 'sym', children: sym },
@@ -251,6 +262,28 @@ export function rotateDir(dir: Direction, rotation: number): Direction {
 }
 
 function routerFor(edge: PlantEdge, nodes?: Map<string, PlantNode>): Record<string, unknown> {
+  // Fixed routes already contain their complete orthogonal geometry. Running
+  // Manhattan again would add its own endpoint hooks.
+  if (edge.routing === 'fixed') {
+    const pointOf = (end: PlantEdge['source']): { x: number; y: number } | null => {
+      if (!isPortEnd(end)) return { x: end.x, y: end.y }
+      const node = nodes?.get(end.nodeId)
+      return node ? portWorld(node, end.portId) : null
+    }
+    const source = pointOf(edge.source)
+    const target = pointOf(edge.target)
+    // Judge the RAW stored route: the normal router draws straight through
+    // the vertices, so any diagonal leg — e.g. a bend or an endpoint the
+    // user dragged off-axis — must hand the route to Manhattan, which
+    // renders it orthogonally. Checking the orthogonalized route instead
+    // would mask the diagonal and let it render raw.
+    const route = [source, ...(edge.vertices ?? []), target]
+    const hasDiagonal = route.some((point, index) => {
+      const next = route[index + 1]
+      return Boolean(point && next && Math.abs(point.x - next.x) > 0.5 && Math.abs(point.y - next.y) > 0.5)
+    })
+    return hasDiagonal ? { name: 'manhattan', args: { step: 8, padding: 8 } } : { name: 'normal' }
+  }
   const args: Record<string, unknown> = { step: 8, padding: 8 }
   let srcDir: Direction | null = null
   let tgtDir: Direction | null = null
@@ -269,6 +302,24 @@ function routerFor(edge: PlantEdge, nodes?: Map<string, PlantNode>): Record<stri
       tgtDir = rotateDir(dir, tgtNode.rotation)
       args.endDirections = [tgtDir]
     }
+  }
+
+  const sourcePoint = isPortEnd(edge.source)
+    ? (srcNode ? portWorld(srcNode, edge.source.portId) : null)
+    : edge.source
+  const targetPoint = isPortEnd(edge.target)
+    ? (tgtNode ? portWorld(tgtNode, edge.target.portId) : null)
+    : edge.target
+  // Collinear endpoints are already a valid unobstructed straight route —
+  // but only while the link has no bends. Once it carries waypoints,
+  // Manhattan must own the route so every segment stays horizontal or
+  // vertical no matter where the user dragged a bend. The normal router
+  // would draw raw diagonals through off-axis waypoints.
+  if ((!isPortEnd(edge.source) || !isPortEnd(edge.target)) &&
+    (!edge.vertices || edge.vertices.length === 0) &&
+    sourcePoint && targetPoint &&
+    (Math.abs(sourcePoint.x - targetPoint.x) <= 0.5 || Math.abs(sourcePoint.y - targetPoint.y) <= 0.5)) {
+    return { name: 'normal' }
   }
 
   // Facing ports in line at close range route as one straight segment.
@@ -299,9 +350,76 @@ function routerFor(edge: PlantEdge, nodes?: Map<string, PlantNode>): Record<stri
   return { name: 'manhattan', args }
 }
 
+/**
+ * A junction is a real topology node, so its connected limbs must meet
+ * directly. Jumpover is reserved for crossings between unrelated links.
+ */
+type LinkPoint = { x: number; y: number }
+
+const samePoint = (a: LinkPoint | undefined, b: LinkPoint | undefined): boolean =>
+  Boolean(a && b && Math.hypot(a.x - b.x, a.y - b.y) <= 0.5)
+
+/**
+ * JointJS's built-in jumpover treats an intersection at a link endpoint as a
+ * crossing too. That is correct for a free crossing, but wrong for a shared
+ * line junction: the three limbs must meet directly at the tee. Filter only
+ * links sharing one of this link's endpoints before delegating to the stock
+ * connector. All other intersections retain the normal bridge arc.
+ */
+const pidJumpover = Object.defineProperty(function(
+  sourcePoint: LinkPoint,
+  targetPoint: LinkPoint,
+  route: LinkPoint[],
+  args: Record<string, unknown>,
+  linkView: dia.LinkView,
+) {
+  const paper = linkView.paper
+  if (!paper) return connectors.jumpover(sourcePoint as never, targetPoint as never, route as never, args as never, linkView)
+  const graph = paper.model
+  const allLinks = graph.getLinks()
+  const thisModel = linkView.model
+  const endpointOf = (link: dia.Link): [LinkPoint | undefined, LinkPoint | undefined] => {
+    const view = link === thisModel ? linkView : link.findView(paper) as dia.LinkView | null
+    return view ? [view.sourcePoint, view.targetPoint] : [undefined, undefined]
+  }
+  const [thisSource, thisTarget] = endpointOf(thisModel)
+  const filtered = allLinks.filter((link) => {
+    if (link === thisModel) return true
+    const [source, target] = endpointOf(link)
+    return !samePoint(source, thisSource) && !samePoint(target, thisSource) &&
+      !samePoint(source, thisTarget) && !samePoint(target, thisTarget)
+  })
+  const originalGetLinks = graph.getLinks
+  // The built-in connector reads the graph synchronously. Temporarily hiding
+  // shared-endpoint links keeps its update bookkeeping and route math intact.
+  ;(graph as dia.Graph & { getLinks: () => dia.Link[] }).getLinks = () => filtered
+  try {
+    return connectors.jumpover(sourcePoint as never, targetPoint as never, route as never, args as never, linkView)
+  } finally {
+    ;(graph as dia.Graph & { getLinks: () => dia.Link[] }).getLinks = originalGetLinks
+  }
+}, 'name', { value: 'jumpover' }) as unknown as (
+  sourcePoint: LinkPoint,
+  targetPoint: LinkPoint,
+  route: LinkPoint[],
+  args: Record<string, unknown>,
+  linkView: dia.LinkView,
+) => string
+
+function connectorFor(_edge: PlantEdge): unknown {
+  // The function keeps the built-in connector name so jumpover still compares
+  // every unrelated link, while its endpoint filter preserves tee junctions.
+  return pidJumpover
+}
+
 /** Recompute a link's route choice after an endpoint node moved or resized. */
 export function refreshLinkRouter(cell: dia.Link, edge: PlantEdge, nodes?: Map<string, PlantNode>): void {
   cell.router(routerFor(edge, nodes) as never)
+}
+
+/** The router name routerFor picks for an edge, for live re-decisions. */
+export function routerNameFor(edge: PlantEdge, nodes?: Map<string, PlantNode>): string {
+  return String((routerFor(edge, nodes) as { name: string }).name)
 }
 
 const LINK_MARKUP = [
@@ -313,21 +431,24 @@ const LINK_MARKUP = [
 function lineAttrs(edge: PlantEdge, fluidColor?: string): Record<string, Record<string, unknown>> {
   const stroke = strokeFor(edge.lineClass)
   const ink = fluidColor ?? '#111'
-  const marker =
-    edge.arrow === 'flow'
-      ? { type: 'path', d: 'M 10 -4 0 0 10 4 Z', fill: ink }
-      : { type: 'none' }
+  // JointJS links carry a default target marker. Always overwrite it with a
+  // clean, empty marker for non-arrowed segments; omitting the attribute
+  // leaves that default triangle behind after a branch split.
+  const noMarker = { type: 'none', d: '', fill: 'none', stroke: 'none' }
+  const marker = edge.arrow === 'flow'
+    ? { type: 'path', d: 'M 10 -4 0 0 10 4 Z', fill: ink }
+    : noMarker
   const line: Record<string, unknown> = {
     connection: true,
     fill: 'none',
     stroke: stroke.double ? '#fff' : ink,
     strokeWidth: stroke.width,
-    targetMarker: stroke.double ? { type: 'none' } : marker,
+    targetMarker: stroke.double ? noMarker : marker,
   }
   if (stroke.dasharray) line.strokeDasharray = stroke.dasharray
   const outline: Record<string, unknown> = stroke.double
     ? { connection: true, fill: 'none', stroke: ink, strokeWidth: stroke.width + 3, targetMarker: marker }
-    : { connection: true, fill: 'none', stroke: 'none', strokeWidth: 0, targetMarker: { type: 'none' } }
+    : { connection: true, fill: 'none', stroke: 'none', strokeWidth: 0, targetMarker: noMarker }
   return {
     line,
     outline,
@@ -335,17 +456,31 @@ function lineAttrs(edge: PlantEdge, fluidColor?: string): Record<string, Record<
   }
 }
 
+/** The pending-tag half of a link's data: which end waits for a device that
+ *  is not on the sheet yet. Mirrors the pendingTag on the doc edge so the
+ *  decorations pass can label the free end without a model lookup. */
+function pendingData(edge: PlantEdge): { source?: string; target?: string } {
+  const pend = (end: PlantEdge['source'] | PlantEdge['target']): string | undefined =>
+    !isPortEnd(end) && end.pendingTag ? end.pendingTag : undefined
+  const source = pend(edge.source)
+  const target = pend(edge.target)
+  return source || target ? { source, target } : {}
+}
+
 export function makeLink(edge: PlantEdge, nodes?: Map<string, PlantNode>, fluidColor?: string): dia.Link {
   const link = new shapes.standard.Link({
     id: edge.id,
     source: toEnd(edge.source),
     target: toEnd(edge.target),
+    // The model mirrors the stored route exactly: one handle per user
+    // waypoint. Diagonal legs are rendered orthogonally by the router, never
+    // materialized as phantom points — so deleting a bend actually deletes
+    // it, and a save/load round-trip can never resurrect it.
     vertices: edge.vertices ?? [],
     router: routerFor(edge, nodes),
-    // jumpover draws the little hop where unrelated lines cross
-    connector: { name: 'jumpover', args: { size: 5 } },
+    connector: connectorFor(edge) as never,
     markup: LINK_MARKUP,
-    data: { lineClass: edge.lineClass, fluidColor },
+    data: { lineClass: edge.lineClass, fluidColor, pending: pendingData(edge) },
   })
   link.attr(lineAttrs(edge, fluidColor))
   return link
@@ -356,13 +491,29 @@ export function updateLink(cell: dia.Link, edge: PlantEdge, prev: PlantEdge, nod
     cell.source(toEnd(edge.source))
     cell.target(toEnd(edge.target))
   }
-  if (edge.vertices !== prev.vertices) cell.vertices(edge.vertices ?? [])
+  const vertices = edge.vertices ?? []
+  if (edge.vertices !== prev.vertices || JSON.stringify(vertices) !== JSON.stringify(cell.vertices())) cell.vertices(vertices)
   // Route choice depends on endpoints, vertices, and node geometry alike.
   refreshLinkRouter(cell, edge, nodes)
+  cell.connector(connectorFor(edge) as never)
   const prevColor = (cell.get('data') as { fluidColor?: string } | undefined)?.fluidColor
-  if (edge.lineClass !== prev.lineClass || edge.arrow !== prev.arrow || fluidColor !== prevColor) {
+  const prevPending = (cell.get('data') as { pending?: { source?: string; target?: string } } | undefined)?.pending
+  const pending = pendingData(edge)
+  // JointJS may retain a generated marker URL when a link is replaced after
+  // a branch split. Clear both marker attributes before applying the current
+  // line attrs so a formerly arrowed half cannot leave a ghost arrow at the
+  // junction.
+  cell.removeAttr('line/targetMarker')
+  cell.removeAttr('line/sourceMarker')
+  cell.removeAttr('outline/targetMarker')
+  cell.removeAttr('outline/sourceMarker')
+  const styleChanged = edge.lineClass !== prev.lineClass || edge.arrow !== prev.arrow || fluidColor !== prevColor
+    || JSON.stringify(prevPending ?? {}) !== JSON.stringify(pending)
+  // Re-apply attrs after clearing marker state even when only geometry
+  // changed. Otherwise an existing arrow disappears on the next route update.
+  if (styleChanged || edge.vertices !== prev.vertices || edge.source !== prev.source || edge.target !== prev.target) {
     cell.removeAttr('line/strokeDasharray')
     cell.attr(lineAttrs(edge, fluidColor))
-    cell.set('data', { lineClass: edge.lineClass, fluidColor })
+    cell.set('data', { lineClass: edge.lineClass, fluidColor, pending })
   }
 }

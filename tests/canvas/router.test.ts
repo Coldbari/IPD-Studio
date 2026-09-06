@@ -57,4 +57,12 @@ describe('adjacent facing ports route straight', () => {
     const spun = new Map([['a', a], ['b', { ...b, rotation: 180 as const }]])
     expect(routerName(edge(), spun)).toBe('manhattan')
   })
+
+  it('point-to-point links with bends route orthogonally, never raw diagonals', () => {
+    const pt = edge({ source: { x: 0, y: 0 }, target: { x: 96, y: 0 }, vertices: [{ x: 48, y: 48 }] })
+    expect(routerName(pt, nodes)).toBe('manhattan')
+    // still straight when the line has no bends
+    const straight = edge({ source: { x: 0, y: 0 }, target: { x: 96, y: 0 } })
+    expect(routerName(straight, nodes)).toBe('normal')
+  })
 })

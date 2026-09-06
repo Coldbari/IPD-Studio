@@ -9,7 +9,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 interface PidHook {
   useStore: { getState(): any; temporal: { getState(): any } }
-  canvasRef: { paper?: any }
+  canvasRef: { paper?: any; graph?: any }
 }
 declare global {
   interface Window { __pid: PidHook }
@@ -95,6 +95,209 @@ test('vertex drag: one undo step, sticks where dropped, heals straight on the ax
     const e = await edges(page)
     return e[0].vertices?.length ?? 0
   }).toBeGreaterThanOrEqual(1)
+})
+
+test('repositioning a branch end stays orthogonal — mid-drag and after release', async ({ page }) => {
+  await page.goto('/app')
+  await page.waitForFunction(() => Boolean(window.__pid?.canvasRef?.paper))
+  await page.evaluate(() => {
+    const s = window.__pid.useStore.getState()
+    // a branch pulled from a pipe tee to free space: fixed routing, one bend
+    s.addBatch([], [{
+      id: 'branch', lineGroupId: 'branch', lineClass: 'process.major', routing: 'fixed',
+      source: { x: 200, y: 256, junctionId: 'branch-j1' }, target: { x: 280, y: 360 },
+      vertices: [{ x: 200, y: 360 }],
+    }])
+    s.setSelection(['branch'])
+  })
+  await page.waitForTimeout(400)
+
+  const diagonals = () => page.evaluate(() => {
+    const d = document.querySelector('[model-id="branch"] [joint-selector="line"]')?.getAttribute('d') ?? ''
+    const nums = d.match(/-?[\d.]+/g)?.map(Number) ?? []
+    let count = 0
+    for (let i = 0; i + 3 < nums.length; i += 4) {
+      if (nums[i] !== nums[i + 2] && nums[i + 1] !== nums[i + 3]) count++
+    }
+    return count
+  })
+
+  // drag the branch's free end (the target arrowhead) diagonally
+  const from = await clientPoint(page, 280, 360)
+  const to = await clientPoint(page, 240, 320)
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(to.x, to.y, { steps: 10 })
+  await expect.poll(diagonals).toBe(0)
+  await page.mouse.up()
+  await page.waitForTimeout(250)
+  expect(await diagonals()).toBe(0)
+  const state = await page.evaluate(() => {
+    const e = window.__pid.useStore.getState().doc.sheets[0].edges.find((x: any) => x.id === 'branch')
+    return { target: e?.target, vertices: e?.vertices }
+  })
+  // the end lands where it was dropped; the kept bend is untouched
+  expect(state.target).toEqual({ x: 240, y: 320 })
+  expect(state.vertices).toEqual([{ x: 200, y: 360 }])
+})
+
+test('bending a point-to-point line stays orthogonal — no diagonal segments', async ({ page }) => {
+  await page.goto('/app')
+  await page.waitForFunction(() => Boolean(window.__pid?.canvasRef?.paper))
+  await page.evaluate(() => {
+    const s = window.__pid.useStore.getState()
+    s.addBatch([], [{
+      id: 'line', lineGroupId: 'line', lineClass: 'process.major',
+      source: { x: 80, y: 400 }, target: { x: 320, y: 400 },
+      vertices: [{ x: 80, y: 320 }, { x: 320, y: 320 }],
+    }])
+    s.setSelection(['line'])
+  })
+  await page.waitForTimeout(400)
+
+  const diagonals = () => page.evaluate(() => {
+    const d = document.querySelector('[model-id="line"] [joint-selector="line"]')?.getAttribute('d') ?? ''
+    const nums = d.match(/-?[\d.]+/g)?.map(Number) ?? []
+    let count = 0
+    for (let i = 0; i + 3 < nums.length; i += 4) {
+      if (nums[i] !== nums[i + 2] && nums[i + 1] !== nums[i + 3]) count++
+    }
+    return count
+  })
+
+  // drag the left bend handle diagonally — the route must never go diagonal,
+  // not even while the mouse is still down
+  const from = await clientPoint(page, 80, 320)
+  const to = await clientPoint(page, 120, 360)
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(to.x, to.y, { steps: 10 })
+  await expect.poll(diagonals).toBe(0)
+  await page.mouse.up()
+  await page.waitForTimeout(250)
+  expect(await diagonals()).toBe(0)
+  // the bend still lands exactly where the user dropped it
+  const vertices = await page.evaluate(() => {
+    const e = window.__pid.useStore.getState().doc.sheets[0].edges.find((x: any) => x.id === 'line')
+    return e?.vertices
+  })
+  expect(vertices?.[0]).toEqual({ x: 120, y: 360 })
+})
+
+test('deleted bends stay deleted across a save and reopen', async ({ page }) => {
+  await page.goto('/app')
+  await page.waitForFunction(() => Boolean(window.__pid?.canvasRef?.paper))
+  await page.evaluate(() => {
+    const s = window.__pid.useStore.getState()
+    // an L-shaped route with two bends; the user keeps one and deletes the other
+    s.addBatch([], [{
+      id: 'line', lineGroupId: 'line', lineClass: 'process.major',
+      source: { x: 80, y: 400 }, target: { x: 320, y: 560 },
+      vertices: [{ x: 80, y: 560 }, { x: 320, y: 560 }],
+    }])
+    s.setSelection(['line'])
+  })
+  await page.waitForTimeout(400)
+
+  const vertexList = () => page.evaluate(() => {
+    const e = window.__pid.useStore.getState().doc.sheets[0].edges.find((x: any) => x.id === 'line')
+    const paper = window.__pid.canvasRef.paper
+    return (e.vertices ?? []).map((v: any) => {
+      const p = paper.localToClientPoint({ x: v.x, y: v.y })
+      return { x: p.x, y: p.y }
+    })
+  })
+
+  // delete the first bend by double-clicking its handle (retry while tools
+  // re-render); the second bend then sits on the endpoint and heals away too
+  let points = await vertexList()
+  const first = points[0]!
+  for (let guard = 0; points.length === 2 && guard < 10; guard++) {
+    await page.mouse.dblclick(first.x, first.y)
+    await page.waitForTimeout(250)
+    points = await vertexList()
+  }
+  expect(points).toHaveLength(0)
+
+  const beforeSave = await page.evaluate(() => structuredClone(
+    window.__pid.useStore.getState().doc.sheets[0].edges.find((x: any) => x.id === 'line'),
+  ))
+
+  // save + reopen: serialize the document and load it straight back
+  await page.evaluate(() => {
+    const doc = window.__pid.useStore.getState().doc
+    window.__pid.useStore.getState().loadIntoStore(JSON.parse(JSON.stringify(doc)))
+  })
+  await page.waitForTimeout(300)
+  const afterOpen = await page.evaluate(() => structuredClone(
+    window.__pid.useStore.getState().doc.sheets[0].edges.find((x: any) => x.id === 'line'),
+  ))
+  // the reopened line is byte-identical — the deleted point stays deleted
+  expect(afterOpen).toEqual(beforeSave)
+})
+
+test('editing one line vertices does not mutate other lines', async ({ page }) => {
+  await setupWithLine(page)
+  const secondId = await page.evaluate(() => {
+    const s = window.__pid.useStore.getState()
+    const tank = s.doc.sheets[0].nodes.find((n: any) => n.symbolId === 'vessel.tank')
+    const edge = s.addEdge({
+      lineClass: 'process.major',
+      source: { nodeId: tank.id, portId: 'e' },
+      target: { x: 480, y: 128 },
+    })
+    s.setSelection([])
+    return edge
+  })
+  const before = await page.evaluate(() => structuredClone(window.__pid.useStore.getState().doc.sheets[0].edges))
+  const beforeGraph = await page.evaluate((ids) => Object.fromEntries(ids.map((id: string) => {
+    const cell = window.__pid.canvasRef.graph.getCell(id)
+    return [id, cell?.vertices()]
+  })), [before[0].id, secondId])
+
+  await page.mouse.click(...Object.values(await clientPoint(page, 344, 188)) as [number, number])
+  await drag(page, await clientPoint(page, 344, 216), await clientPoint(page, 400, 216), 16)
+
+  const after = await page.evaluate(() => structuredClone(window.__pid.useStore.getState().doc.sheets[0].edges))
+  const afterGraph = await page.evaluate((ids) => Object.fromEntries(ids.map((id: string) => {
+    const cell = window.__pid.canvasRef.graph.getCell(id)
+    return [id, cell?.vertices()]
+  })), [before[0].id, secondId])
+  expect(after.find((edge: any) => edge.id === before[0].id)?.vertices).not.toEqual(before.find((edge: any) => edge.id === before[0].id)?.vertices)
+  expect(after.find((edge: any) => edge.id === secondId)).toEqual(before.find((edge: any) => edge.id === secondId))
+  expect(afterGraph[secondId]).toEqual(beforeGraph[secondId])
+})
+
+test('vertex editing skips sheet-wide endpoint cleanup on untouched lines', async ({ page }) => {
+  await setupWithLine(page)
+  const ids = await page.evaluate(() => {
+    const s = window.__pid.useStore.getState()
+    const sheet = s.doc.sheets[0]
+    const first = sheet.edges[0]
+    const orphanJunction = { x: 520, y: 128, junctionId: 'untouched-junction', pendingTag: 'V-204' }
+    const second = s.addEdge({
+      lineClass: 'process.major',
+      source: orphanJunction,
+      target: { x: 640, y: 128 },
+      routing: 'fixed',
+      vertices: [{ x: 560, y: 128 }],
+    })
+    // The junction is intentionally a stale single-limb endpoint. A vertex
+    // edit on the first line must not clean or reroute this untouched line.
+    s.setSelection([])
+    return { first, second }
+  })
+  const before = await page.evaluate((ids) => {
+    const edge = window.__pid.useStore.getState().doc.sheets[0].edges.find((candidate: any) => candidate.id === ids.second)
+    return structuredClone(edge)
+  }, ids)
+
+  await page.mouse.click(...Object.values(await clientPoint(page, 344, 188)) as [number, number])
+  await drag(page, await clientPoint(page, 344, 216), await clientPoint(page, 400, 216), 16)
+
+  const after = await page.evaluate((ids) =>
+    window.__pid.useStore.getState().doc.sheets[0].edges.find((candidate: any) => candidate.id === ids.second), ids)
+  expect(after).toEqual(before)
 })
 
 test('user pins: arm from the panel, click the symbol, draw a line from the new pin', async ({ page }) => {

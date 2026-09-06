@@ -3,6 +3,7 @@
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
 import { ulid } from 'ulid'
+import { tr } from '../i18n'
 
 /** A repair the QA report can apply for the user. Lives here, with the code
  *  that performs it, rather than with the rules that offer it. */
@@ -29,22 +30,22 @@ export function describeFix(spec: FixSpec, doc: ProjectDoc): { title: string; bl
     case 'insert-ip': {
       const sheet = doc.sheets.find((s) => s.id === spec.sheetId)
       return {
-        title: 'Insert an I/P converter',
-        blastRadius: `Splits one line on ${sheet?.name ?? 'the sheet'} into two and adds a tagged converter between them.`,
+        title: tr('Insert an I/P converter'),
+        blastRadius: tr('Splits one line on') + ' ' + (sheet?.name ?? tr('the sheet')) + ' ' + tr('into two and adds a tagged converter between them.'),
         affectedIds: [spec.edgeId],
       }
     }
     case 'purge-record':
       return {
-        title: `Discard the engineering record for ${spec.key}`,
-        blastRadius: `Deletes ${Object.keys(doc.registry?.[spec.key]?.fields ?? {}).length} stored field(s). Nothing on any sheet carries this key.`,
+        title: tr('Discard the engineering record for') + ' ' + spec.key,
+        blastRadius: tr('Deletes') + ' ' + Object.keys(doc.registry?.[spec.key]?.fields ?? {}).length + ' ' + tr('stored field(s). Nothing on any sheet carries this key.'),
         affectedIds: [],
       }
     case 'assign-tag': {
       const sheet = doc.sheets.find((s) => s.id === spec.sheetId)
       return {
-        title: `Renumber to the next free ${spec.letters} tag`,
-        blastRadius: `Retags one symbol on ${sheet?.name ?? 'the sheet'}. Its engineering record moves with it.`,
+        title: tr('Renumber to the next free') + ' ' + spec.letters + ' ' + tr('tag'),
+        blastRadius: tr('Retags one symbol on') + ' ' + (sheet?.name ?? tr('the sheet')) + tr('. Its engineering record moves with it.'),
         affectedIds: [spec.nodeId],
       }
     }
@@ -73,14 +74,14 @@ export function applyFix(fix: FixSpec): FixResult {
     useStore.getState().purgeRecord(fix.key)
     return had
       ? { ok: true, changedIds: [] }
-      : { ok: false, changedIds: [], message: `No record found for ${fix.key}.` }
+      : { ok: false, changedIds: [], message: tr('No record found for') + ' ' + fix.key }
   }
   if (fix.kind === 'assign-tag') {
     const st = useStore.getState()
     if (st.activeSheetId !== fix.sheetId) st.setActiveSheet(fix.sheetId)
     const now = useStore.getState()
     const exists = now.doc.sheets.some((sh) => sh.nodes.some((n) => n.id === fix.nodeId))
-    if (!exists) return { ok: false, changedIds: [], message: 'That symbol is no longer on the drawing.' }
+    if (!exists) return { ok: false, changedIds: [], message: tr('That symbol is no longer on the drawing.') }
     now.setTag(fix.nodeId, { letters: fix.letters, loop: nextLoopNumber(now.doc, fix.letters) })
     return { ok: true, changedIds: [fix.nodeId] }
   }
@@ -90,14 +91,14 @@ export function applyFix(fix: FixSpec): FixResult {
   const sheet = state.doc.sheets.find((sh) => sh.id === fix.sheetId)
   const edge = sheet?.edges.find((e) => e.id === fix.edgeId)
   if (!sheet || !edge || !isPortEnd(edge.source) || !isPortEnd(edge.target)) {
-    return { ok: false, changedIds: [], message: 'That line is no longer there to split.' }
+    return { ok: false, changedIds: [], message: tr('That line is no longer there to split.') }
   }
 
   const nodeOf = (id: string) => sheet.nodes.find((n) => n.id === id)
   const srcNode = nodeOf(edge.source.nodeId)
   const tgtNode = nodeOf(edge.target.nodeId)
   if (!srcNode || !tgtNode) {
-    return { ok: false, changedIds: [], message: 'One end of that line is missing.' }
+    return { ok: false, changedIds: [], message: tr('One end of that line is missing.') }
   }
   const valveEndIsTarget = tgtNode.symbolId.startsWith('cv.')
   const valve = valveEndIsTarget ? tgtNode : srcNode

@@ -15,7 +15,7 @@ describe('fluid services in the store', () => {
     expect((st().doc.fluids ?? []).map((f) => f.name)).toContain('Water')
   })
 
-  it('assigning a fluid spreads along the connected run in ONE undo step', () => {
+  it('assigning a fluid stays on the selected line section', () => {
     const a = st().addNode({ symbolId: 'vessel.tank', kind: 'equipment', x: 0, y: 0, rotation: 0 })
     const v = st().addNode({ symbolId: 'valve.gate', kind: 'valve', x: 200, y: 40, rotation: 0 })
     const e1 = st().addEdge({ lineClass: 'process.major', source: { nodeId: a, portId: 'e' }, target: { nodeId: v, portId: 'w' } })
@@ -24,7 +24,7 @@ describe('fluid services in the store', () => {
 
     st().setEdgeFluid(e1, water.id)
     expect(sheet().edges.find((e) => e.id === e1)?.fluidId).toBe(water.id)
-    expect(sheet().edges.find((e) => e.id === e2)?.fluidId).toBe(water.id) // spread through the valve
+    expect(sheet().edges.find((e) => e.id === e2)?.fluidId).toBeUndefined()
 
     st().undo()
     expect(sheet().edges.find((e) => e.id === e1)?.fluidId).toBeUndefined()

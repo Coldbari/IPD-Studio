@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react'
 import { forceRefresh } from './VersionNote'
+import { useT } from '../i18n'
 
 let doUpdate: (() => Promise<void>) | null = null
 
@@ -12,6 +13,7 @@ let doUpdate: (() => Promise<void>) | null = null
  *  the toast renders in BOTH workspaces (the old status-bar chip never
  *  existed in the HMI). */
 export default function UpdateToast() {
+  const t = useT()
   const [ready, setReady] = useState(false)
   const [busy, setBusy] = useState(false)
   useEffect(() => {
@@ -64,9 +66,9 @@ export default function UpdateToast() {
 
   return (
     <div className="update-toast" role="status">
-      <span>⟳ A new version of IPD Studio is ready</span>
+      <span>⟳ {t('A new version of IPD Studio is ready')}</span>
       <button onClick={reload} disabled={busy} data-testid="update-reload">
-        {busy ? 'Reloading…' : 'Reload now'}
+        {busy ? t('Reloading…') : t('Reload now')}
       </button>
     </div>
   )

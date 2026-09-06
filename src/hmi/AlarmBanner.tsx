@@ -7,6 +7,7 @@ import { useSimStore } from './simStore'
 import type { AlarmPriority, AlarmRecord, JournalEntry } from './sim/alarms'
 import { commandText } from './sim/commands'
 import { useStore } from '../store/store'
+import { useT } from '../i18n'
 
 const mmss = (t: number) => `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(Math.floor(t % 60)).padStart(2, '0')}`
 
@@ -26,6 +27,7 @@ type SortKey = 'time' | 'pri' | 'tag' | 'level' | 'value' | 'state'
 /** Docked alarm strip above the mimic + expandable summary/journal.
  *  Clicking a tag navigates to the screen that shows it (and pulses it). */
 export default function AlarmBanner({ onJump }: { onJump?(tag: string): void }) {
+  const tr = useT()
   const alarms = useSimStore((s) => s.alarms)
   const journal = useSimStore((s) => s.journal)
   const shelvedMap = useSimStore((s) => s.shelved)
@@ -80,12 +82,12 @@ export default function AlarmBanner({ onJump }: { onJump?(tag: string): void }) 
   )
 
   const ShelveSelect = ({ id }: { id: string }) => (
-    <select className="al-shelve" value="" title="Shelve: hide temporarily, auto-returns"
+    <select className="al-shelve" value="" title={tr('Shelve: hide temporarily, auto-returns')}
       onChange={(e) => { if (e.target.value) shelve(id, Number(e.target.value)) }}>
-      <option value="">Shelve…</option>
-      <option value="5">5 min</option>
-      <option value="15">15 min</option>
-      <option value="30">30 min</option>
+      <option value="">{tr('Shelve…')}</option>
+      <option value="5">{tr('5 min')}</option>
+      <option value="15">{tr('15 min')}</option>
+      <option value="30">{tr('30 min')}</option>
     </select>
   )
 
@@ -108,22 +110,22 @@ export default function AlarmBanner({ onJump }: { onJump?(tag: string): void }) 
           <span key={a.id} className={`al-chip ${a.phase}${a.phase !== 'acked' ? ' hmi-blink' : ''}`}>
             <PrioIcon priority={a.priority} />
             <span className="al-time">{mmss(a.since)}</span>
-            <button className="al-tag" title="Show this tag's screen" onClick={() => jumpTo(a.tag)}><strong>{a.tag}</strong></button>
+            <button className="al-tag" title={tr("Show this tag's screen")} onClick={() => jumpTo(a.tag)}><strong>{a.tag}</strong></button>
             <span>{a.level}</span>
             <span className="al-phase">{a.phase.toUpperCase()}</span>
-            <button data-testid={i === 0 ? 'alarm-ack' : undefined} onClick={() => ack(a.id)}>Ack</button>
+            <button data-testid={i === 0 ? 'alarm-ack' : undefined} onClick={() => ack(a.id)}>{tr('Ack')}</button>
           </span>
         ))}
-        {rows.length > 3 && <span className="al-more">+{rows.length - 3} more</span>}
+        {rows.length > 3 && <span className="al-more">+{rows.length - 3} {tr('more')}</span>}
         <span style={{ flex: 1 }} />
         <button className="al-all" data-testid="alarm-summary-toggle"
           onClick={() => setOpen(open === 'summary' ? 'none' : 'summary')}>
-          {open === 'summary' ? '▴ Summary' : '▾ Summary'}
+          {open === 'summary' ? `▴ ${tr('Summary')}` : `▾ ${tr('Summary')}`}
         </button>
         <button className="al-all" onClick={() => setOpen(open === 'journal' ? 'none' : 'journal')}>
-          {open === 'journal' ? '▴ Journal' : '▾ Journal'}
+          {open === 'journal' ? `▴ ${tr('Journal')}` : `▾ ${tr('Journal')}`}
         </button>
-        <button data-testid="alarm-ack-all" className="al-all" onClick={() => ack()}>Ack all</button>
+        <button data-testid="alarm-ack-all" className="al-all" onClick={() => ack()}>{tr('Ack all')}</button>
       </div>
       {open === 'summary' && (
         <div className="hmi-alarmpanel" data-testid="alarm-summary">
@@ -131,14 +133,14 @@ export default function AlarmBanner({ onJump }: { onJump?(tag: string): void }) 
             {(['all', 'high', 'medium', 'low'] as const).map((f) => (
               <button key={f} className={`al-all${pFilter === f ? ' al-on' : ''}`}
                 data-testid={`sum-${f}`} onClick={() => setPFilter(f)}>
-                {f === 'all' ? 'All' : f[0]!.toUpperCase() + f.slice(1)}
+                {f === 'all' ? tr('All') : tr(f)}
               </button>
             ))}
             <span style={{ flex: 1 }} />
-            {header('time', 'Time')}{header('pri', 'Pri')}{header('tag', 'Tag')}
-            {header('level', 'Lvl')}{header('value', 'Value')}{header('state', 'State')}
+            {header('time', tr('Time'))}{header('pri', tr('Pri'))}{header('tag', tr('Tag'))}
+            {header('level', tr('Lvl'))}{header('value', tr('Value'))}{header('state', tr('State'))}
           </div>
-          {summaryRows.length === 0 && <p className="al-empty">No standing alarms.</p>}
+          {summaryRows.length === 0 && <p className="al-empty">{tr('No standing alarms.')}</p>}
           {summaryRows.map((a) => (
             <div key={a.id} className={`al-row ${a.phase}`}>
               <PrioIcon priority={a.priority} />
@@ -149,41 +151,41 @@ export default function AlarmBanner({ onJump }: { onJump?(tag: string): void }) 
               <span className="al-phase">{a.phase.toUpperCase()}</span>
               <span style={{ flex: 1 }} />
               <ShelveSelect id={a.id} />
-              <button title={`Take ${a.tag} out of service (suppresses all its alarms)`}
-                onClick={() => toggleOos(a.tag)}>OOS</button>
-              {a.phase !== 'acked' && <button onClick={() => ack(a.id)}>Ack</button>}
+              <button title={tr('Take out of service') + ' ' + a.tag}
+                onClick={() => toggleOos(a.tag)}>{tr('OOS')}</button>
+              {a.phase !== 'acked' && <button onClick={() => ack(a.id)}>{tr('Ack')}</button>}
             </div>
           ))}
           {shelvedRows.length > 0 && (
             <>
-              <p className="al-section">Shelved ({shelvedRows.length})</p>
+              <p className="al-section">{tr('Shelved')} ({shelvedRows.length})</p>
               {shelvedRows.map(([id, until]) => (
                 <div key={id} className="al-row acked" data-testid="shelved-row">
                   <span>⏸</span>
                   <span><strong>{id.replace(':', ' ')}</strong></span>
-                  <span className="al-time">back in {mmss(Math.max(0, until - t))}</span>
+                  <span className="al-time">{tr('back in')} {mmss(Math.max(0, until - t))}</span>
                   <span style={{ flex: 1 }} />
-                  <button onClick={() => unshelve(id)}>Unshelve</button>
+                  <button onClick={() => unshelve(id)}>{tr('Unshelve')}</button>
                 </div>
               ))}
             </>
           )}
           {oosTags.length > 0 && (
             <>
-              <p className="al-section">Out of service ({oosTags.length})</p>
+              <p className="al-section">{tr('Out of service')} ({oosTags.length})</p>
               {oosTags.map((tag) => (
                 <div key={tag} className="al-row acked" data-testid="oos-row">
                   <span>⊘</span>
                   <button className="al-tag" onClick={() => jumpTo(tag)}><strong>{tag}</strong></button>
                   <span style={{ flex: 1 }} />
-                  <button onClick={() => toggleOos(tag)}>Back in service</button>
+                  <button onClick={() => toggleOos(tag)}>{tr('Back in service')}</button>
                 </div>
               ))}
             </>
           )}
           {sbdRecs.length > 0 && (
             <>
-              <p className="al-section">Suppressed by design ({sbdRecs.length}) — no running pump on their line</p>
+              <p className="al-section">{tr('Suppressed by design')} ({sbdRecs.length}){tr(' — no running pump on their line')}</p>
               {sbdRecs.map((a) => (
                 <div key={a.id} className="al-row acked" data-testid="sbd-row">
                   <span>⊘</span>
@@ -200,20 +202,20 @@ export default function AlarmBanner({ onJump }: { onJump?(tag: string): void }) 
             {(['all', 'alarms', 'commands'] as const).map((f) => (
               <button key={f} className={`al-all${jFilter === f ? ' al-on' : ''}`}
                 data-testid={`journal-${f}`} onClick={() => setJFilter(f)}>
-                {f[0]!.toUpperCase() + f.slice(1)}
+                {tr(f)}
               </button>
             ))}
             <span style={{ flex: 1 }} />
-            <button className="al-all" data-testid="journal-copy" title="Copy the visible journal lines"
-              onClick={copyJournal}>⧉ Copy</button>
+            <button className="al-all" data-testid="journal-copy" title={tr('Copy the visible journal lines')}
+              onClick={copyJournal}>{tr('⧉ Copy')}</button>
           </div>
-          {journalShown.length === 0 && <p className="al-empty">No events yet.</p>}
+          {journalShown.length === 0 && <p className="al-empty">{tr('No events yet.')}</p>}
           {journalShown.map((ev, i) => (
             <div key={i} className="al-row">
               <span className="al-time">{mmss(ev.t)}</span>
-              <span className={`al-what al-what-${ev.what.toLowerCase()}`}>{ev.what}</span>
+              <span className={`al-what al-what-${ev.what.toLowerCase()}`}>{tr(ev.what)}</span>
               <button className="al-tag" onClick={() => jumpTo(ev.tag)}><strong>{ev.tag}</strong></button>
-              <span>{ev.what === 'CMD' ? commandText(ev) : ev.level}</span>
+              <span>{ev.what === 'CMD' ? tr(commandText(ev)) : ev.level}</span>
             </div>
           ))}
         </div>

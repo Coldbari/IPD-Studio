@@ -86,18 +86,31 @@ export interface PlantNode {
   cost?: number
 }
 
-export type EdgeEnd = { nodeId: string; portId: string } | { x: number; y: number }
+export type EdgeEnd =
+  | { nodeId: string; portId: string }
+  | { x: number; y: number; pendingTag?: string; junctionId?: string }
 
 export function isPortEnd(end: EdgeEnd): end is { nodeId: string; portId: string } {
   return 'nodeId' in end
 }
 
+export function isJunctionEnd(
+  end: EdgeEnd,
+): end is { x: number; y: number; junctionId: string; pendingTag?: string } {
+  return !isPortEnd(end) && typeof end.junctionId === 'string'
+}
+
 export interface PlantEdge {
   id: string
+  /** Stable identity for this persisted line section. */
+  lineGroupId?: string
   lineClass: LineClass
   source: EdgeEnd
   target: EdgeEnd
   vertices?: { x: number; y: number }[]
+  /** Vertices already form a complete orthogonal route (for example, from
+   * auto layout) and must not be re-routed through Manhattan a second time. */
+  routing?: 'fixed'
   lineNumber?: LineNumber
   arrow?: 'none' | 'flow'
   /** Service/medium carried (doc.fluids id); colors the drawn line. */

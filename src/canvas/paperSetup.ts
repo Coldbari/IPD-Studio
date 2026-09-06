@@ -52,7 +52,9 @@ export function createPaper(el: HTMLElement, _sheetSize: SheetSize): { paper: di
     sorting: dia.Paper.sorting.APPROX,
     interactive: { linkMove: false, labelMove: false },
     linkPinning: true,
-    snapLinks: { radius: 24 },
+    // A line connects only when the pointer is actually released on a port.
+    // Nearby ports must not pull a route away from the point the user chose.
+    snapLinks: false,
     markAvailable: true,
   })
   return { paper, graph }

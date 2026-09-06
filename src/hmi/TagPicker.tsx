@@ -6,6 +6,7 @@ import { useMemo, useState } from 'react'
 import { pauseHistory, resumeHistory, useStore } from '../store/store'
 import type { HmiRole } from './tagIndex'
 import { listPlantTags, listSignalRefs } from './tagIndex'
+import { useT } from '../i18n'
 
 export interface PickOption {
   value: string
@@ -30,6 +31,7 @@ export function ComboBox({ value, options, placeholder, onCommit, testid }: {
   onCommit(next: string | undefined): void
   testid?: string
 }) {
+  const t = useT()
   const [open, setOpen] = useState(false)
   const [hi, setHi] = useState(0)
   const [typing, setTyping] = useState(false) // filter only once the user typed
@@ -110,18 +112,12 @@ export function ComboBox({ value, options, placeholder, onCommit, testid }: {
               </li>
             )
           })}
-          {filtered.length > 40 && <li className="hmi-combo-group">…{filtered.length - 40} more — keep typing</li>}
+          {filtered.length > 40 && <li className="hmi-combo-group">…{filtered.length - 40} {t('more — keep typing')}</li>}
         </ul>
       )}
     </span>
   )
 }
-
-const ROLE_GROUP: Record<HmiRole, string> = {
-  measurement: 'Instruments', controller: 'Instruments',
-  motor: 'Equipment', equipment: 'Equipment', valve: 'Valves',
-}
-const GROUP_ORDER = ['Instruments', 'Equipment', 'Valves', 'On screens']
 
 /** Tag binding: offers every identity from the P&ID plus tags already used on
  *  HMI screens. */
@@ -130,25 +126,31 @@ export function TagPicker({ value, onCommit, testid }: {
   onCommit(next: string | undefined): void
   testid?: string
 }) {
+  const t = useT()
   const doc = useStore((s) => s.doc)
+  const ROLE_GROUP: Record<HmiRole, string> = {
+    measurement: t('Instruments'), controller: t('Instruments'),
+    motor: t('Equipment'), equipment: t('Equipment'), valve: t('Valves'),
+  }
+  const GROUP_ORDER = [t('Instruments'), t('Equipment'), t('Valves'), t('On screens')]
   const options = useMemo(() => {
-    const plant: PickOption[] = listPlantTags(doc).map((t) => ({
-      value: t.display, hint: t.description, group: ROLE_GROUP[t.role],
+    const plant: PickOption[] = listPlantTags(doc).map((item) => ({
+      value: item.display, hint: t(item.description), group: ROLE_GROUP[item.role],
     }))
     const have = new Set(plant.map((o) => o.value))
     for (const sc of doc.hmiScreens) {
       for (const w of sc.widgets) {
         if (w.tag && !have.has(w.tag)) {
           have.add(w.tag)
-          plant.push({ value: w.tag, group: 'On screens' })
+          plant.push({ value: w.tag, group: t('On screens') })
         }
       }
     }
     return plant.sort((a, b) =>
       GROUP_ORDER.indexOf(a.group) - GROUP_ORDER.indexOf(b.group) ||
       a.value.localeCompare(b.value, undefined, { numeric: true }))
-  }, [doc])
-  return <ComboBox value={value} options={options} placeholder="e.g. LT-101" onCommit={onCommit} testid={testid} />
+  }, [doc, t])
+  return <ComboBox value={value} options={options} placeholder={t('e.g. LT-101')} onCommit={onCommit} testid={testid} />
 }
 
 /** TAG.SIGNAL binding for lamps/buttons/switches. */
@@ -157,11 +159,12 @@ export function SignalPicker({ value, onCommit, testid }: {
   onCommit(next: string | undefined): void
   testid?: string
 }) {
+  const t = useT()
   const doc = useStore((s) => s.doc)
   const options = useMemo(() => listSignalRefs(doc).map((r) => ({
-    value: r.ref, hint: r.hint, group: r.source === 'hmi' ? 'On screens' : 'From P&ID',
+    value: r.ref, hint: t(r.hint), group: r.source === 'hmi' ? t('On screens') : t('From P&ID'),
   })).sort((a, b) =>
-    (a.group === b.group ? 0 : a.group === 'On screens' ? -1 : 1) ||
-    a.value.localeCompare(b.value, undefined, { numeric: true })), [doc])
+    (a.group === b.group ? 0 : a.group === t('On screens') ? -1 : 1) ||
+    a.value.localeCompare(b.value, undefined, { numeric: true })), [doc, t])
   return <ComboBox value={value} options={options} placeholder="P-101.RUN" onCommit={onCommit} testid={testid} />
 }

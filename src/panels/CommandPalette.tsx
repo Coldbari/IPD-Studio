@@ -10,6 +10,7 @@ import { navigateWorkspace } from '../routes'
 import { downloadInstrumentIndex, downloadLineList } from '../export/csv'
 import { canvasRef, fitView } from '../canvas/paperSetup'
 import { activeSheet } from '../store/store'
+import { useT } from '../i18n'
 
 export interface Command {
   id: string
@@ -55,6 +56,7 @@ type Item =
  * matching commands underneath.
  */
 export default function CommandPalette() {
+  const t = useT()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [cursor, setCursor] = useState(0)
@@ -85,7 +87,7 @@ export default function CommandPalette() {
 
     const commands: Item[] = baseCommands()
       .filter((c) => !lower || c.label.toLowerCase().includes(lower))
-      .map((c) => ({ kind: 'command', key: c.id, label: c.label, sub: c.hint ?? 'Command', run: c.run }))
+        .map((c) => ({ kind: 'command', key: c.id, label: c.label, sub: c.hint ?? t('Command'), run: c.run }))
 
     if (commandsOnly) return commands.slice(0, 12)
 
@@ -122,7 +124,7 @@ export default function CommandPalette() {
         <input
           ref={inputRef}
           data-testid="command-input"
-          placeholder="Find a tag, or type > for commands…  (Esc to close)"
+          placeholder={t('Find a tag, or type > for commands…  (Esc to close)')}
           value={query}
           onChange={(e) => { setQuery(e.target.value); setCursor(0) }}
           onKeyDown={(e) => {
@@ -141,13 +143,13 @@ export default function CommandPalette() {
                 onMouseEnter={() => setCursor(i)}
                 onClick={() => pick(i)}
               >
-                <b>{item.kind === 'command' ? `▸ ${item.label}` : item.label}</b>
+                <b>{item.kind === 'command' ? `▸ ${t(item.label)}` : item.label}</b>
                 <span className="search-sheet">{item.sub}</span>
               </li>
             ))}
           </ul>
         )}
-        {query.trim() && items.length === 0 && <div className="search-empty">No matches</div>}
+        {query.trim() && items.length === 0 && <div className="search-empty">{t('No matches')}</div>}
       </div>
     </div>
   )

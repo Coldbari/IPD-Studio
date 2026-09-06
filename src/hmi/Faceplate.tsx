@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useSimStore } from './simStore'
 import type { HmiWidget } from './model'
 import type { AlarmLevel } from './sim/alarms'
+import { useT } from '../i18n'
 
 /** Remembered for the session so the plate reopens where the operator put it. */
 let fpPos: { left: number; top: number } | null = null
@@ -79,6 +80,7 @@ function Spark({ history, min, max }: { history: number[]; min: number; max: num
 
 /** DCS-style operate popup — draggable, complete for every bindable widget. */
 export default function Faceplate({ widget, onClose }: { widget: HmiWidget; onClose(): void }) {
+  const tr = useT()
   const tag = widget.tag ?? ''
   const t = useSimStore((s) => s.tags[tag]) ?? {}
   const alarms = useSimStore((s) => s.alarms)
@@ -145,21 +147,21 @@ export default function Faceplate({ widget, onClose }: { widget: HmiWidget; onCl
     <div className="hmi-faceplate" data-testid="faceplate" ref={boxRef}
       style={pos ? { left: pos.left, top: pos.top, right: 'auto' } : undefined}>
       <header onPointerDown={onHeaderDown} style={{ cursor: 'grab', touchAction: 'none' }}>
-        <strong>{tag}</strong> <span style={{ opacity: 0.7 }}>{widget.label ?? widget.type}</span>
+        <strong>{tag}</strong> <span style={{ opacity: 0.7 }}>{widget.label ?? tr(widget.type)}</span>
         <button data-testid="fp-close" onClick={onClose} style={{ marginLeft: 'auto', flex: '0 0 auto' }}>×</button>
       </header>
 
       {kind === 'motor' && (
         <>
           <p className="fp-state" style={(t.FAULT ?? 0) >= 0.5 ? { color: '#ff6b6b' } : undefined}>
-            {(t.FAULT ?? 0) >= 0.5 ? 'FAULT'
-              : (t.RUN ?? 0) >= 0.5 ? ((t.RAMP ?? 1) < 1 ? 'STARTING' : 'RUNNING') : 'STOPPED'}
+            {(t.FAULT ?? 0) >= 0.5 ? tr('FAULT')
+              : (t.RUN ?? 0) >= 0.5 ? ((t.RAMP ?? 1) < 1 ? tr('STARTING') : tr('RUNNING')) : tr('STOPPED')}
           </p>
           <div className="fp-row">
-            <button data-testid="fp-start" onClick={() => write(tag, 'RUN', 1)}>Start</button>
-            <button data-testid="fp-stop" onClick={() => write(tag, 'RUN', 0)}>Stop</button>
+            <button data-testid="fp-start" onClick={() => write(tag, 'RUN', 1)}>{tr('Start')}</button>
+            <button data-testid="fp-stop" onClick={() => write(tag, 'RUN', 0)}>{tr('Stop')}</button>
             {(t.FAULT ?? 0) >= 0.5 && (
-              <button data-testid="fp-fault-reset" onClick={() => write(tag, 'FAULT', 0)}>Reset fault</button>
+              <button data-testid="fp-fault-reset" onClick={() => write(tag, 'FAULT', 0)}>{tr('Reset fault')}</button>
             )}
           </div>
         </>
@@ -167,10 +169,10 @@ export default function Faceplate({ widget, onClose }: { widget: HmiWidget; onCl
 
       {kind === 'onoff' && (
         <>
-          <p className="fp-state">{(t.OPEN ?? 0) >= 0.5 ? 'OPEN' : 'CLOSED'}</p>
+          <p className="fp-state">{(t.OPEN ?? 0) >= 0.5 ? tr('OPEN') : tr('CLOSED')}</p>
           <div className="fp-row">
-            <button data-testid="fp-open" onClick={() => write(tag, 'OPEN', 1)}>Open</button>
-            <button data-testid="fp-shut" onClick={() => write(tag, 'OPEN', 0)}>Close</button>
+            <button data-testid="fp-open" onClick={() => write(tag, 'OPEN', 1)}>{tr('Open')}</button>
+            <button data-testid="fp-shut" onClick={() => write(tag, 'OPEN', 0)}>{tr('Close')}</button>
           </div>
         </>
       )}
@@ -178,16 +180,16 @@ export default function Faceplate({ widget, onClose }: { widget: HmiWidget; onCl
       {kind === 'throttle' && (
         <>
           <div style={{ display: 'flex', justifyContent: 'center', gap: 4 }}>
-            <VBar label="Position" value={t.POS ?? t.OP ?? 0} min={0} max={100} unit="%" color="#26c281" />
+            <VBar label={tr('Position')} value={t.POS ?? t.OP ?? 0} min={0} max={100} unit="%" color="#26c281" />
             {t.POS !== undefined && Math.abs((t.OP ?? 0) - t.POS) > 1 && (
-              <VBar label="Command" value={t.OP ?? 0} min={0} max={100} unit="%" color="#9b8cff" />
+              <VBar label={tr('Command')} value={t.OP ?? 0} min={0} max={100} unit="%" color="#9b8cff" />
             )}
           </div>
           <input data-testid="fp-op" type="range" min={0} max={100} value={t.OP ?? 0}
             onChange={(e) => write(tag, 'OP', Number(e.target.value))} style={{ width: '100%' }} />
           <div className="fp-row">
-            <button onClick={() => write(tag, 'OP', 100)}>Open</button>
-            <button onClick={() => write(tag, 'OP', 0)}>Close</button>
+            <button onClick={() => write(tag, 'OP', 100)}>{tr('Open')}</button>
+            <button onClick={() => write(tag, 'OP', 0)}>{tr('Close')}</button>
           </div>
         </>
       )}
@@ -200,8 +202,8 @@ export default function Faceplate({ widget, onClose }: { widget: HmiWidget; onCl
             <VBar label="OUT" value={t.OP ?? 0} min={0} max={100} unit="%" color="#9b8cff" />
           </div>
           <div className="fp-row">
-            <button data-testid="fp-auto" className={auto ? 'active' : ''} onClick={() => write(tag, 'MODE', 1)}>AUTO</button>
-            <button data-testid="fp-man" className={auto ? '' : 'active'} onClick={() => write(tag, 'MODE', 0)}>MAN</button>
+            <button data-testid="fp-auto" className={auto ? 'active' : ''} onClick={() => write(tag, 'MODE', 1)}>{tr('AUTO')}</button>
+            <button data-testid="fp-man" className={auto ? '' : 'active'} onClick={() => write(tag, 'MODE', 0)}>{tr('MAN')}</button>
           </div>
           <div className="fp-row" style={{ alignItems: 'center' }}>
             <span style={{ fontSize: 11, flex: '0 0 auto' }}>SP</span>
@@ -211,7 +213,7 @@ export default function Faceplate({ widget, onClose }: { widget: HmiWidget; onCl
             <button style={{ flex: '0 0 auto' }} onClick={() => write(tag, 'SP', clamp((t.SP ?? 50) + 1, min, max))}>+</button>
           </div>
           <input data-testid="fp-op" type="range" min={0} max={100} value={t.OP ?? 0} disabled={auto}
-            title={auto ? 'Output entry needs MAN mode' : 'Output %'}
+            title={auto ? tr('Output entry needs MAN mode') : tr('Output %')}
             onChange={(e) => write(tag, 'OP', Number(e.target.value))} style={{ width: '100%' }} />
         </>
       )}
@@ -226,10 +228,10 @@ export default function Faceplate({ widget, onClose }: { widget: HmiWidget; onCl
       )}
 
       {flow !== undefined && kind !== 'measure' && kind !== 'controller' && (
-        <p style={{ fontSize: 11, margin: '8px 0 0', opacity: 0.85 }}>Flow through: <strong>{flow.toFixed(1)}</strong></p>
+        <p style={{ fontSize: 11, margin: '8px 0 0', opacity: 0.85 }}>{tr('Flow through')}: <strong>{flow.toFixed(1)}</strong></p>
       )}
 
-      {nSup > 0 && <p style={{ fontSize: 10, margin: '6px 0 0', opacity: 0.7 }}>⊘ {nSup} alarm{nSup === 1 ? '' : 's'} suppressed</p>}
+      {nSup > 0 && <p style={{ fontSize: 10, margin: '6px 0 0', opacity: 0.7 }}>⊘ {nSup} {tr(nSup === 1 ? 'alarm suppressed' : 'alarms suppressed')}</p>}
       {myAlarms.length > 0 && (
         <div style={{ marginTop: 8, borderTop: '1px solid #35567c', paddingTop: 6 }} data-testid="fp-alarms">
           {myAlarms.map((a) => (
@@ -238,9 +240,9 @@ export default function Faceplate({ widget, onClose }: { widget: HmiWidget; onCl
                 {a.priority === 'high' ? '■' : a.priority === 'medium' ? '▲' : '●'}
               </span>
               <span>{a.level}</span>
-              <span style={{ opacity: 0.8 }}>{a.phase.toUpperCase()}</span>
+              <span style={{ opacity: 0.8 }}>{tr(a.phase.toUpperCase())}</span>
               <span style={{ flex: 1 }} />
-              {a.phase !== 'acked' && <button style={{ flex: '0 0 auto' }} onClick={() => ack(a.id)}>Ack</button>}
+              {a.phase !== 'acked' && <button style={{ flex: '0 0 auto' }} onClick={() => ack(a.id)}>{tr('Ack')}</button>}
             </div>
           ))}
         </div>

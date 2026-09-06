@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { register, resetPassword, signIn, signInWithGoogle } from './authStore'
 import { authErrorMessage } from './errors'
 import './auth.css'
+import { useLanguage, useT } from '../i18n'
 
 type Mode = 'signin' | 'register'
 
@@ -22,6 +23,8 @@ export default function AuthForm({ onDone, initialMode = 'signin' }: {
   onDone(): void
   initialMode?: Mode
 }) {
+  const t = useT()
+  const lang = useLanguage()
   const [mode, setMode] = useState<Mode>(initialMode)
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -44,7 +47,7 @@ export default function AuthForm({ onDone, initialMode = 'signin' }: {
     try {
       await action()
     } catch (err) {
-      setError(authErrorMessage(err))
+      setError(authErrorMessage(err, lang))
     } finally {
       setPending(false)
     }
@@ -53,7 +56,7 @@ export default function AuthForm({ onDone, initialMode = 'signin' }: {
   const onSubmit = (e: FormEvent) => {
     e.preventDefault()
     if (password.length < MIN_PASSWORD) {
-      setError(`Passwords need at least ${MIN_PASSWORD} characters.`)
+      setError(t('Passwords need at least {count} characters.').replace('{count}', String(MIN_PASSWORD)))
       return
     }
     void attempt(async () => {
@@ -72,13 +75,13 @@ export default function AuthForm({ onDone, initialMode = 'signin' }: {
 
   const onForgot = () => {
     if (!email.trim()) {
-      setError('Enter your email address first, then choose Forgot password.')
+      setError(t('Enter your email address first, then choose Forgot password.'))
       emailRef.current?.focus()
       return
     }
     void attempt(async () => {
       await resetPassword(email)
-      setNotice(`Reset link sent to ${email.trim()}. Check your inbox, and the spam folder.`)
+      setNotice(t('Reset link sent. Check your inbox, and the spam folder.'))
     })
   }
 
@@ -94,20 +97,20 @@ export default function AuthForm({ onDone, initialMode = 'signin' }: {
 
   return (
     <div className="auth" data-testid="auth-dialog">
-      <div className="auth-tabs" role="tablist" aria-label="Account">
+      <div className="auth-tabs" role="tablist" aria-label={t('Account')}>
           <button
             type="button" role="tab" className="auth-tab" id="auth-tab-signin"
             aria-selected={!signup} aria-controls="auth-form" data-testid="auth-tab-signin"
             onClick={() => switchTo('signin')}
           >
-            Sign in
+            {t('Sign in')}
           </button>
           <button
             type="button" role="tab" className="auth-tab" id="auth-tab-register"
             aria-selected={signup} aria-controls="auth-form" data-testid="auth-tab-register"
             onClick={() => switchTo('register')}
           >
-            Create account
+            {t('Create account')}
           </button>
         </div>
 
@@ -117,17 +120,17 @@ export default function AuthForm({ onDone, initialMode = 'signin' }: {
         >
           {signup && (
             <div className="auth-field">
-              <label htmlFor="auth-name">Name</label>
+              <label htmlFor="auth-name">{t('Name')}</label>
               <input
                 id="auth-name" ref={nameRef} data-testid="auth-name"
-                type="text" autoComplete="name" placeholder="Optional"
+                type="text" autoComplete="name" placeholder={t('Optional')}
                 value={name} onChange={(e) => setName(e.target.value)}
               />
             </div>
           )}
 
           <div className="auth-field">
-            <label htmlFor="auth-email">Email</label>
+            <label htmlFor="auth-email">{t('Email')}</label>
             <input
               id="auth-email" ref={emailRef} data-testid="auth-email"
               type="email" autoComplete="email" required
@@ -136,34 +139,34 @@ export default function AuthForm({ onDone, initialMode = 'signin' }: {
           </div>
 
           <div className="auth-field">
-            <label htmlFor="auth-password">Password</label>
+            <label htmlFor="auth-password">{t('Password')}</label>
             <input
               id="auth-password" data-testid="auth-password"
               type="password" required
               autoComplete={signup ? 'new-password' : 'current-password'}
               value={password} onChange={(e) => setPassword(e.target.value)}
             />
-            {signup && <span className="auth-hint">At least {MIN_PASSWORD} characters.</span>}
+            {signup && <span className="auth-hint">{t('At least 6 characters.')}</span>}
           </div>
 
           {error && <p className="auth-error" role="alert" data-testid="auth-error">{error}</p>}
           {notice && <p className="auth-note" role="status" data-testid="auth-notice">{notice}</p>}
 
           <button className="auth-submit" type="submit" disabled={pending} data-testid="auth-submit">
-            {pending ? 'Working…' : signup ? 'Create account' : 'Sign in'}
+            {pending ? t('Working…') : signup ? t('Create account') : t('Sign in')}
           </button>
 
           {!signup && (
             <div className="auth-row">
               <button className="auth-link" type="button" onClick={onForgot}
                 disabled={pending} data-testid="auth-forgot">
-                Forgot password?
+                {t('Forgot password?')}
               </button>
             </div>
           )}
         </form>
 
-        <div className="auth-or"><span>or</span></div>
+        <div className="auth-or"><span>{t('or')}</span></div>
 
         <button className="auth-google" type="button" onClick={onGoogle}
           disabled={pending} data-testid="auth-google">
@@ -173,12 +176,12 @@ export default function AuthForm({ onDone, initialMode = 'signin' }: {
             <path fill="#fbbc05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33Z" />
             <path fill="#ea4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58Z" />
           </svg>
-          Continue with Google
+          {t('Continue with Google')}
         </button>
 
         <p className="auth-fine">
-          IPD Studio is free for personal, academic, nonprofit and government use.
-          Commercial use requires a paid licence.
+          {t('IPD Studio is free for personal, academic, nonprofit and government use.')}
+          {t('Commercial use requires a paid licence.')}
         </p>
     </div>
   )

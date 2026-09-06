@@ -3,7 +3,7 @@
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
 import type { PlantEdge, PlantNode, ProjectDoc, Sheet } from './types'
-import { isPortEnd } from './types'
+import { isJunctionEnd, isPortEnd } from './types'
 import type { EngineeringRecord, EntityKind } from './registry'
 import { keyOfEdge, keyOfNode, kindOfNode } from './registry'
 import { deriveLoops, type Loop } from '../store/selectors'
@@ -86,6 +86,7 @@ export function buildIndex(doc: ProjectDoc): ProjectIndex {
   }
 
   for (const sheet of doc.sheets) {
+    const edgesByJunction = new Map<string, PlantEdge[]>()
     for (const node of sheet.nodes) {
       const key = keyOfNode(node)
       const indexed: IndexedNode = { node, sheet, key, kind: kindOfNode(node), ports: portsOf(node) }
@@ -114,6 +115,21 @@ export function buildIndex(doc: ProjectDoc): ProjectIndex {
         if (!isPortEnd(a)) continue
         push(edgesByNode, a.nodeId, edge)
         if (isPortEnd(b) && b.nodeId !== a.nodeId) push(neighbours, a.nodeId, b.nodeId)
+      }
+      for (const end of ends) {
+        if (isJunctionEnd(end)) push(edgesByJunction, end.junctionId, edge)
+      }
+    }
+
+    // A shared line endpoint is not a component, but every device attached to
+    // its line group is reachable through it for QA and where-used queries.
+    for (const junctionEdges of edgesByJunction.values()) {
+      const nodeIds = new Set(junctionEdges.flatMap((edge) =>
+        [edge.source, edge.target].filter(isPortEnd).map((end) => end.nodeId),
+      ))
+      for (const nodeId of nodeIds) {
+        for (const edge of junctionEdges) push(edgesByNode, nodeId, edge)
+        for (const other of nodeIds) if (other !== nodeId) push(neighbours, nodeId, other)
       }
     }
   }

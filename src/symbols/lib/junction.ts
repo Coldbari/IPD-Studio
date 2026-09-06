@@ -4,17 +4,14 @@
 
 import type { SymbolDef } from '../types'
 
-/**
- * Branch junction: the filled dot where a line taps into an existing pipe.
- * Inserted automatically when a drawn line is dropped onto a pipe; also
- * placeable by hand for manifolds.
- */
+/** Legacy branch component. Kept visually intact so existing drawings load
+ * exactly as authored, but no longer offered for new placement. */
 export const junction: SymbolDef = {
   id: 'fit.junction',
   name: 'Branch Junction',
   category: 'inline',
+  placeable: false,
   gridSize: { w: 1, h: 1 },
-  // cross stubs under the dot bridge the port-to-center distance seamlessly
   render: () =>
     `<path d="M4 0 V8 M0 4 H8" stroke="currentColor" stroke-width="2" fill="none"/>` +
     `<circle cx="4" cy="4" r="3" fill="currentColor" stroke="none"/>`,

@@ -12,7 +12,7 @@ import SheetTabs from './panels/SheetTabs'
 import StatusBar from './panels/StatusBar'
 import QuickLineEditor from './panels/QuickLineEditor'
 import WelcomeOverlay from './panels/WelcomeOverlay'
-
+import { useT } from './i18n'
 function readPref(key: string, fallback: boolean): boolean {
   try {
     const v = localStorage.getItem(key)
@@ -34,19 +34,20 @@ function writePref(key: string, value: boolean): void {
  *  Workspace switching, the command palette and the update toast belong to the
  *  shell (EditorRoot) so they survive moving between workspaces. */
 export default function App() {
+  const t = useT()
   const [showPalette, setShowPalette] = useState(() => readPref('pid.ui.palette', true))
   const [showProps, setShowProps] = useState(() => readPref('pid.ui.props', true))
   const togglePalette = (v: boolean) => { setShowPalette(v); writePref('pid.ui.palette', v) }
   const toggleProps = (v: boolean) => { setShowProps(v); writePref('pid.ui.props', v) }
 
   return (
-    <div className={`app${showPalette ? '' : ' no-palette'}${showProps ? '' : ' no-props'}`}>
+    <div className={`${showPalette ? 'app' : 'app no-palette'}${showProps ? '' : ' no-props'}`}>
       <Toolbar />
       {showPalette ? (
         <Palette onCollapse={() => togglePalette(false)} />
       ) : (
-        <button className="panel-strip strip-left" title="Show symbol palette" onClick={() => togglePalette(true)}>
-          Symbols ▸
+        <button className="panel-strip strip-left" title={t('Show symbol palette')} onClick={() => togglePalette(true)}>
+          {t('Symbols')} ▸
         </button>
       )}
       <div className="center">
@@ -57,8 +58,8 @@ export default function App() {
       {showProps ? (
         <PropertyPanel onCollapse={() => toggleProps(false)} />
       ) : (
-        <button className="panel-strip strip-right" title="Show properties" onClick={() => toggleProps(true)}>
-          ◂ Properties
+        <button className="panel-strip strip-right" title={t('Show properties')} onClick={() => toggleProps(true)}>
+          ◂ {t('Properties')}
         </button>
       )}
       <StatusBar />

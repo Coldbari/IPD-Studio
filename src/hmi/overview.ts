@@ -5,6 +5,7 @@
 import { ulid } from 'ulid'
 import type { HmiScreen, HmiWidget } from './model'
 import { HMI_WORLD } from './model'
+import { tr } from '../i18n'
 
 export interface KeyTag { tag: string; kind: 'controller' | 'tank' | 'flow' | 'other' }
 
@@ -66,5 +67,5 @@ export function buildOverview(screens: HmiScreen[]): HmiScreen {
     })
   })
 
-  return { id: ulid(), name: 'Plant overview', theme: screens[0]?.theme ?? 'classic', widgets, pipes: [], home: true }
+  return { id: ulid(), name: tr('Plant overview'), theme: screens[0]?.theme ?? 'classic', widgets, pipes: [], home: true }
 }

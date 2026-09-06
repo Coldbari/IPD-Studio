@@ -101,6 +101,17 @@ export interface Dock {
   lineClass: LineClass
 }
 
+/** A compatible symbol port close to an existing edge's unconnected point end. */
+export interface FreeEndDock {
+  movingPortId: string
+  edgeId: string
+  end: 'source' | 'target'
+  /** Where the moving symbol has to sit for its port to meet the free end. */
+  x: number
+  y: number
+  at: { x: number; y: number }
+}
+
 /** Identifies a port pairing, for refusing one the user has shaken off. */
 export function dockKey(dock: Pick<Dock, 'movingPortId' | 'targetNodeId' | 'targetPortId'>): string {
   return `${dock.movingPortId}|${dock.targetNodeId}/${dock.targetPortId}`
@@ -147,6 +158,11 @@ export function findDock(
 ): Dock | null {
   const mine = portsOf(moving)
   if (!mine.length) return null
+
+  // Equipment is positioned deliberately — dragging a tank or pump around
+  // must never snap it onto another symbol. Only smaller components (valves,
+  // instruments, fittings) dock onto a connection point while being moved.
+  if (moving.kind === 'equipment') return null
 
   const joined = new Set<string>()
   for (const e of edges) {
@@ -197,6 +213,47 @@ export function findDock(
         at: { x: t.x, y: t.y },
         portAt,
         lineClass: pickLineClass(mp.kind, t.kind, activeLineClass),
+      }
+    }
+  }
+  return best
+}
+
+/**
+ * Find the nearest unconnected line end that a symbol can accept.
+ *
+ * A free end has no stored port kind, so its line family is the contract:
+ * process/pipe lines accept process ports and signal/internal lines accept
+ * signal ports. Only PointEnd values are considered; a line's middle is
+ * intentionally left to the explicit branch-tap gesture.
+ */
+export function findFreeEndDock(moving: PlantNode, edges: PlantEdge[], radius: number): FreeEndDock | null {
+  const mine = portsOf(moving)
+  if (!mine.length) return null
+
+  let best: FreeEndDock | null = null
+  let bestDistance = radius
+  for (const edge of edges) {
+    const required: PortKind = edge.lineClass.startsWith('process') || edge.lineClass.startsWith('pipe')
+      ? 'process'
+      : 'signal'
+    for (const end of ['source', 'target'] as const) {
+      const point = edge[end]
+      if (isPortEnd(point)) continue
+      for (const mp of mine) {
+        const from = portWorld(moving, mp.id)
+        if (!from) continue
+        const distance = Math.hypot(point.x - from.x, point.y - from.y)
+        if (distance > bestDistance || !compatibleKinds(mp.kind, required)) continue
+        bestDistance = distance
+        best = {
+          movingPortId: mp.id,
+          edgeId: edge.id,
+          end,
+          x: Math.round(moving.x + point.x - from.x),
+          y: Math.round(moving.y + point.y - from.y),
+          at: { x: point.x, y: point.y },
+        }
       }
     }
   }

@@ -4,6 +4,12 @@
 
 export interface Pt { x: number; y: number }
 
+export interface StraightenedRoute {
+  source: Pt
+  target: Pt
+  vertices: Pt[]
+}
+
 const snap8 = (v: number) => Math.round(v / 8) * 8 || 0
 
 function segDist(p: Pt, a: Pt, b: Pt): number {
@@ -32,6 +38,20 @@ export function cleanVertices(
   lineTol = 3,
 ): Pt[] {
   let pts = raw.map((p) => ({ x: snap8(p.x), y: snap8(p.y) }))
+
+  // A very short first/last leg is usually an accidental axis mismatch from
+  // dragging a segment near an off-grid port. Pull that vertex onto the
+  // anchor's dominant axis so the route can collapse back to a straight run.
+  if (src && pts[0]) {
+    const first = pts[0]
+    if (Math.abs(first.x - src.x) <= axisTol) first.x = src.x
+    if (Math.abs(first.y - src.y) <= axisTol) first.y = src.y
+  }
+  if (tgt && pts.at(-1)) {
+    const last = pts.at(-1)!
+    if (Math.abs(last.x - tgt.x) <= axisTol) last.x = tgt.x
+    if (Math.abs(last.y - tgt.y) <= axisTol) last.y = tgt.y
+  }
 
   // two passes so adoption can chain along a run of vertices
   for (let pass = 0; pass < 2; pass++) {
@@ -66,4 +86,42 @@ export function cleanVertices(
     }
   }
   return pts
+}
+
+/**
+ * Let a dangling endpoint follow the route axis when it is only a short
+ * cross-axis offset away. This collapses the small two-elbow hook that cannot
+ * be healed by moving vertices alone because the free endpoint itself is the
+ * remaining off-axis point.
+ */
+export function straightenDanglingRoute(
+  raw: Pt[],
+  source: Pt,
+  target: Pt,
+  free: 'source' | 'target',
+  maxOffset = 32,
+): StraightenedRoute {
+  const nextSource = { ...source }
+  const nextTarget = { ...target }
+  const dx = target.x - source.x
+  const dy = target.y - source.y
+  const moving = free === 'source' ? nextSource : nextTarget
+  const fixed = free === 'source' ? nextTarget : nextSource
+  let projected = raw.map((point) => ({ ...point }))
+  if (Math.abs(dx) <= maxOffset && Math.abs(dy) >= Math.max(48, Math.abs(dx) * 2)) {
+    moving.x = fixed.x
+    projected = projected.map((point) => Math.abs(point.x - fixed.x) <= maxOffset
+      ? { ...point, x: fixed.x }
+      : point)
+  } else if (Math.abs(dy) <= maxOffset && Math.abs(dx) >= Math.max(48, Math.abs(dy) * 2)) {
+    moving.y = fixed.y
+    projected = projected.map((point) => Math.abs(point.y - fixed.y) <= maxOffset
+      ? { ...point, y: fixed.y }
+      : point)
+  }
+  return {
+    source: nextSource,
+    target: nextTarget,
+    vertices: cleanVertices(projected, nextSource, nextTarget),
+  }
 }

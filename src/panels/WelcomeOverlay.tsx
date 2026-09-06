@@ -7,6 +7,7 @@ import Modal from './Modal'
 import { useStore } from '../store/store'
 import { loadDoc } from '../model/migrate'
 import samplePlant from '../../examples/sample-plant.pnid.json'
+import { useT } from '../i18n'
 
 const KEY = 'pid.ui.welcomed'
 /** Streamed from the project site — 23 MB doesn't belong in the PWA bundle. */
@@ -22,16 +23,15 @@ const markSeen = (): void => {
 
 /** First-visit welcome: the demo plays right here, ways in below. Shown once. */
 export default function WelcomeOverlay() {
+  const t = useT()
   const [open, setOpen] = useState(() => !seen())
   if (!open) return null
   const close = () => { markSeen(); setOpen(false) }
   return (
-    <Modal title="Welcome to IPD Studio 👋" onClose={close} width={560}>
+    <Modal title={langTitle(t)} onClose={close} width={560}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <p style={{ fontSize: 13, color: '#556', margin: 0 }}>
-          P&ID drawing with real ISA symbols — and an HMI simulator that
-          brings your plant to life. Free for personal, academic, and nonprofit
-          use. Here's 2½ minutes of it:
+          {t("P&ID drawing with real ISA symbols — and an HMI simulator that brings your plant to life. Free for personal, academic, and nonprofit use. Here's 2½ minutes of it:")}
         </p>
         <video
           data-testid="welcome-video"
@@ -45,16 +45,20 @@ export default function WelcomeOverlay() {
         <div style={{ display: 'flex', gap: 10 }}>
           <button data-testid="welcome-sample" style={{ flex: 1, padding: '10px 12px' }}
             onClick={() => { useStore.getState().loadIntoStore(loadDoc(samplePlant)); close() }}>
-            🏭 <strong>Open the sample plant</strong>
+            🏭 <strong>{t('Open the sample plant')}</strong>
           </button>
           <button data-testid="welcome-blank" style={{ flex: 1, padding: '10px 12px' }} onClick={close}>
-            ✏️ <strong>Start drawing</strong>
+            ✏️ <strong>{t('Start drawing')}</strong>
           </button>
         </div>
         <p style={{ fontSize: 11, color: '#889', margin: 0 }}>
-          Everything stays on your machine — no account, no upload.
+          {t('Everything stays on your machine — no account, no upload.')}
         </p>
       </div>
     </Modal>
   )
+}
+
+function langTitle(t: (text: string) => string): string {
+  return `${t('Welcome to IPD Studio')} 👋`
 }

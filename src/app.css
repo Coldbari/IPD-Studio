@@ -158,24 +158,28 @@ button { font: inherit; }
 .toolbar select { padding-right: 4px; }
 .toolbar button:hover, .toolbar select:hover { background: var(--c-accent-soft); border-color: #bcc6cd; }
 .toolbar button:active { background: #dfeaec; }
+.toolbar button.tb-active { background: var(--c-accent-soft); border-color: var(--c-accent); color: var(--c-accent); }
+.toolbar .tb-lang { min-width: 34px; padding: 3px 7px; font-weight: 700; color: var(--c-accent); }
 .toolbar button:focus-visible, .toolbar select:focus-visible,
 .palette-entry:focus-visible, .sheet-tab:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; }
 /* icon-only buttons stay square so the row reads as a grid, not a ransom note */
 .toolbar button.tb-icon { width: 26px; padding: 0; font-size: 13px; }
 
 /* zoom: one segmented control instead of three loose buttons */
-.tb-zoom { display: inline-flex; align-items: center; }
+.tb-zoom { display: inline-flex; align-items: center; flex: 0 0 auto; min-width: 132px; overflow: visible; }
 .tb-zoom button { border-radius: 0; margin-left: -1px; }
 .tb-zoom button:first-child { border-radius: var(--r) 0 0 var(--r); margin-left: 0; }
 .tb-zoom button:last-child { border-radius: 0 var(--r) var(--r) 0; }
-.tb-zoom button:not(.tb-zoom-pct) { width: 26px; padding: 0; font-size: 14px; }
-.tb-zoom-pct { min-width: 50px; font-variant-numeric: tabular-nums; color: var(--c-ink-2); }
+.tb-zoom button:not(.tb-zoom-pct) { width: 26px; min-width: 26px; padding: 0; font-size: 14px; flex: 0 0 auto; }
+.tb-zoom button:last-child { min-width: 50px; padding-left: 8px; padding-right: 8px; }
+.tb-zoom-pct { width: 56px; min-width: 56px; font-variant-numeric: tabular-nums; color: var(--c-ink-2); flex: 0 0 auto; }
 .app-name { margin-right: 4px; }
 .doc-name { color: #666; font-size: 12px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tb-sep { width: 1px; height: 18px; background: var(--c-line); margin: 0 4px; flex: none; }
 .tb-grow { flex: 1; }
 .tb-line { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #555; }
 .tb-line select { font: inherit; padding: 3px 4px; border: 1px solid #ccc; border-radius: 4px; max-width: 150px; }
+
 
 .sheet-tabs { display: flex; align-items: flex-end; gap: 2px; padding: 4px 8px 0; background: var(--c-chrome-2); border-top: 1px solid var(--c-line); overflow-x: auto; flex: none; }
 .sheet-tab { display: flex; align-items: center; gap: 5px; height: 25px; padding: 0 10px; border: 1px solid var(--c-line); border-bottom: none; border-radius: var(--r) var(--r) 0 0; background: #dfe2e7; color: var(--c-ink-2); font-size: 12px; cursor: pointer; white-space: nowrap; }
@@ -196,6 +200,30 @@ button { font: inherit; }
 .search-box li.active { background: #eef2f7; }
 .search-sheet { color: #888; font-size: 12px; }
 .search-empty { padding: 10px 14px; color: #888; font-size: 13px; border-top: 1px solid #e5e5ea; }
+.ai-overlay { position: fixed; inset: 0; z-index: 50; display: flex; justify-content: flex-end; background: rgba(20,20,30,.28); }
+.ai-panel { width: min(520px, 100vw); height: 100%; overflow-y: auto; padding: 16px; background: #fff; box-shadow: -8px 0 30px rgba(0,0,0,.2); display: flex; flex-direction: column; gap: 10px; }
+.ai-panel > header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #e2e2e8; padding-bottom: 10px; }
+.ai-settings { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ai-settings label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #555; }
+.ai-settings label:first-child { grid-column: 1 / -1; }
+.ai-settings input, .ai-prompt { font: inherit; border: 1px solid #ccc; border-radius: 4px; padding: 6px 8px; }
+.ai-connection { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #53616c; }
+.ai-connection span { color: var(--c-accent); }
+.ai-context { padding: 7px 8px; background: #f1f5f7; border-left: 3px solid var(--c-accent); color: #53616c; font-size: 12px; }
+.ai-history { display: flex; flex-direction: column; gap: 7px; max-height: 230px; overflow-y: auto; }
+.ai-message { display: flex; gap: 8px; padding: 7px 8px; border-radius: 4px; font-size: 12px; line-height: 1.5; }
+.ai-message.user { background: #edf5f6; }
+.ai-message.assistant { background: #f7f7f8; }
+.ai-message b { flex: 0 0 22px; color: var(--c-accent); }
+.ai-ops { padding: 8px; border: 1px solid #d9e4e7; background: #f4fafb; color: #3d5660; font-size: 12px; line-height: 1.6; }
+.ai-ops div { padding-left: 8px; }
+.ai-prompt { min-height: 110px; resize: vertical; }
+
+.ai-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.ai-error { color: #c53030; background: #fff5f5; border: 1px solid #fed7d7; padding: 7px 8px; font-size: 12px; }
+.ai-answer { white-space: pre-wrap; background: #f8fafb; border: 1px solid #e2e8f0; border-radius: 4px; padding: 10px; min-height: 100px; }
+.ai-answer pre { white-space: pre-wrap; font: inherit; line-height: 1.55; }
+.ai-panel small { color: #7b8790; line-height: 1.45; }
 .align-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-bottom: 10px; }
 .align-grid button { padding: 4px 2px; font-size: 11px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; }
 .align-grid button:hover { background: #eef2f7; }
@@ -256,12 +284,21 @@ button { font: inherit; }
 .pid-pinning [joint-selector='hit'] { cursor: crosshair !important; }
 .arm-on { background: #dbeafe !important; border-color: #2b6cb0 !important; color: #2b6cb0; }
 .pid-port-hit:hover { fill: rgba(43, 108, 176, 0.22); stroke: #2b6cb0; }
+.joint-element.pid-selected [joint-selector='selectionFrame'] {
+  fill: rgba(43, 108, 176, 0.08);
+  stroke: #2b6cb0;
+  stroke-width: 2;
+  stroke-dasharray: 5 3;
+}
 /* While dragging a link, every legal target port shows a slim ring. */
 .pid-port-hit.available-magnet { fill: rgba(43, 108, 176, 0.12); stroke: #2b6cb0; stroke-width: 1.25; r: 5px; }
 /* Magnetic docking: dragging a symbol (from the palette or across the sheet)
    raises every connection dot, and a ring marks the point it will click onto
    and connect to when the drag is released. */
 .pid-docking .pid-port-dot { opacity: 1; }
+.joint-link [joint-selector='wrapper'] { cursor: crosshair; }
+.pid-branching [joint-selector='wrapper'] { cursor: crosshair; }
+.pid-branch-preview { opacity: .72; }
 .pid-dock-hint {
   fill: rgba(43, 108, 176, 0.2);
   stroke: #2b6cb0;
@@ -307,10 +344,19 @@ button { font: inherit; }
   align-items: center;
   z-index: 30;
 }
+.line-popover.dragging { user-select: none; }
 .line-popover select { font: inherit; font-size: 12px; max-width: 160px; padding: 2px 4px; border: 1px solid #ccc; border-radius: 4px; }
 .line-popover button { border: 1px solid #ccc; background: #fff; border-radius: 4px; cursor: pointer; padding: 2px 7px; font-size: 12px; }
 .line-popover button:hover { background: #eef2f7; }
 .line-popover button.on { background: #dbeafe; border-color: #2b6cb0; color: #2b6cb0; }
+.line-popover button.line-popover-drag {
+  width: 18px; height: 26px; flex: none; padding: 0;
+  border-color: transparent; background: transparent; color: #8a94a0;
+  cursor: grab; touch-action: none; font-size: 15px; line-height: 1;
+}
+.line-popover button.line-popover-drag:hover { background: #eef2f7; color: #2b6cb0; }
+.line-popover button.line-popover-drag:active,
+.line-popover.dragging button.line-popover-drag { cursor: grabbing; }
 
 /* --- Budget & cost estimate dialog (panels/BudgetDialog.tsx) --- */
 .bd { display: flex; flex-direction: column; gap: 12px; }
@@ -325,10 +371,14 @@ button { font: inherit; }
 .bd-bar-fill { height: 100%; background: #2f7d55; border-radius: 999px; transition: width .18s ease; }
 .bd-bar-fill.bd-bar-over { background: #c53030; }
 
-.bd-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+.bd-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-start; }
 .bd-controls label { display: flex; flex-direction: column; gap: 3px; }
+.bd-controls .bd-k { line-height: 16px; min-height: 16px; }
 .bd-controls .bd-grow { flex: 1; min-width: 200px; }
-.bd-controls input, .bd-controls select { font: inherit; font-size: 13px; padding: 5px 7px; border: 1px solid #ccc; border-radius: 4px; background: #fff; color: #16202a; }
+/* One fixed control height for every widget in the row: the budget input, the
+   scale picker, the currency picker and the install-factor picker all sit on
+   the same horizontal line with matching tops and bottoms. */
+.bd-controls input, .bd-controls select { font: inherit; font-size: 13px; height: 26px; box-sizing: border-box; padding: 0 7px; border: 1px solid #ccc; border-radius: 4px; background: #fff; color: #16202a; }
 .bd-controls input { width: 130px; text-align: right; font-variant-numeric: tabular-nums; }
 .bd-controls .bd-grow select { width: 100%; }
 
@@ -354,10 +404,10 @@ button { font: inherit; }
 .bd-fine { margin: 0; flex: 1; font-size: 10.5px; line-height: 1.45; color: #98a2ac; }
 .bd-csv { white-space: nowrap; padding: 6px 12px; border: 1px solid #ccc; border-radius: 4px; background: #fff; font: inherit; font-size: 12.5px; cursor: pointer; }
 .bd-csv:hover { background: #eef2f7; }
-.bd-target { display: flex; gap: 4px; }
+.bd-target { display: flex; gap: 4px; align-items: center; }
 .bd-target input { width: 96px; }
-.bd-target select { padding: 5px 4px; }
-.bd-hint { font-size: 10.5px; color: #8a95a0; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.bd-target select { padding: 0 4px; }
+.bd-hint { font-size: 10.5px; color: #8a95a0; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* --- per-component price block in the property panel --- */
 .prop-cost { gap: 4px; }
@@ -368,7 +418,7 @@ button { font: inherit; }
 .prop-cost-reset:hover { background: #eef2f7; }
 .prop-cost-note { font-size: 10.5px; color: #8a95a0; text-transform: none; font-variant-numeric: tabular-nums; }
 .prop-cost-note.prop-cost-on { color: #0e6e7a; font-weight: 600; }
-.prop-cost-basis { font-size: 10px; line-height: 1.35; color: #a4adb6; text-transform: none; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.prop-cost-basis { font-size: 10px; line-height: 1.35; color: #a4adb6; text-transform: none; display: -webkit-box; line-clamp: 3; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .prop-est { padding: 0 4px; border-radius: 2px; background: #f4ebdb; color: #9a6a15; font-size: 9px; letter-spacing: .05em; text-transform: uppercase; cursor: help; }
 
 /* the palette's own chrome, aligned to the panel header above it */

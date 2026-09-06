@@ -21,6 +21,7 @@ import Modal from '../panels/Modal'
 import { VersionChip } from '../panels/VersionNote'
 import Faceplate from './Faceplate'
 import AlarmBanner from './AlarmBanner'
+import { useT } from '../i18n'
 
 // The sim store rides the lazy HMI chunk, so the dev/e2e hook gains it here,
 // not in main.tsx (which must not pull sim code into the eager bundle).
@@ -30,6 +31,7 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
 }
 
 export default function HmiWorkspace({ onExit }: { onExit(): void }) {
+  const tr = useT()
   const screen = useStore(activeHmiScreen)
   const activeScreenId = useStore((s) => s.activeScreenId)
   const addScreen = useStore((s) => s.addScreen)
@@ -80,7 +82,7 @@ export default function HmiWorkspace({ onExit }: { onExit(): void }) {
     useStore.getState()[dir]()
     const after = useStore.getState().doc
     if (after !== before && after.hmiScreens === before.hmiScreens) {
-      showNotice(`${dir === 'undo' ? 'Undid' : 'Redid'} a P&ID-side change (shared history)`)
+      showNotice((dir === 'undo' ? tr('Undid') : tr('Redid')) + tr(' a P&ID-side change (shared history)'))
     }
   }
 
@@ -200,10 +202,10 @@ export default function HmiWorkspace({ onExit }: { onExit(): void }) {
           </>
         ) : (
           <div className="hmi-empty">
-            <p>No HMI screens yet.</p>
-            <button onClick={addScreen}>New screen</button>
-            <button data-testid="hmi-import-empty" onClick={runImport}>Build from P&ID sheet…</button>
-            <p style={{ fontSize: 12, opacity: 0.7 }}>Tip: load the “HMI demo” template from the P&ID toolbar, then come back here and press RUN.</p>
+            <p>{tr('No HMI screens yet.')}</p>
+            <button onClick={addScreen}>{tr('New screen')}</button>
+            <button data-testid="hmi-import-empty" onClick={runImport}>{tr('Build from P&ID sheet…')}</button>
+            <p style={{ fontSize: 12, opacity: 0.7 }}>{tr('Tip: load the “HMI demo” template from the P&ID toolbar, then come back here and press RUN.')}</p>
           </div>
         )}
       </div>
@@ -211,7 +213,7 @@ export default function HmiWorkspace({ onExit }: { onExit(): void }) {
         <HmiPropertyPanel selection={selection} onSelect={setSelection} armedPick={armedPick} onArmPick={setArmedPick} />
       </div>
       {pickingSheet && (
-        <Modal title="Build HMI from the P&ID" onClose={() => setPickingSheet(false)}>
+        <Modal title={tr('Build HMI from the P&ID')} onClose={() => setPickingSheet(false)}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {useStore.getState().doc.sheets.map((sh) => (
               <label key={sh.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 2px', cursor: 'pointer' }}>
@@ -223,30 +225,30 @@ export default function HmiWorkspace({ onExit }: { onExit(): void }) {
                     setPickedSheets(next)
                   }} />
                 <strong>{sh.name}</strong>
-                <span style={{ opacity: 0.6 }}>{sh.nodes.length} symbols · {sh.edges.length} lines</span>
+                <span style={{ opacity: 0.6 }}>{sh.nodes.length} {tr('symbols')} · {sh.edges.length} {tr('lines')}</span>
               </label>
             ))}
             <label style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 2px 2px', cursor: 'pointer', borderTop: '1px solid #e2e2e8', marginTop: 4 }}>
               <input type="checkbox" data-testid="import-overview" checked={withOverview}
                 onChange={(e) => setWithOverview(e.target.checked)} />
-              <span>Generate a <strong>plant overview</strong> screen (one tile per sheet, becomes ★ home)</span>
+              <span>{tr('Generate a plant overview')} ({tr('one tile per sheet, becomes ★ home')})</span>
             </label>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
-              <button onClick={() => setPickingSheet(false)}>Cancel</button>
+              <button onClick={() => setPickingSheet(false)}>{tr('Cancel')}</button>
               <button data-testid="import-go" disabled={pickedSheets.size === 0}
                 style={{ background: '#2b6cb0', color: '#fff', border: 'none', borderRadius: 4, padding: '4px 14px' }}
                 onClick={() => {
                   const order = useStore.getState().doc.sheets.filter((sh) => pickedSheets.has(sh.id)).map((sh) => sh.id)
                   void importFrom(order, withOverview)
                 }}>
-                Import {pickedSheets.size} sheet{pickedSheets.size === 1 ? '' : 's'}
+                {tr('Import')} {pickedSheets.size} {tr(pickedSheets.size === 1 ? 'sheet' : 'sheets')}
               </button>
             </div>
           </div>
         </Modal>
       )}
       <StatusBar screenName={screen?.name} selection={selection.length}
-        notice={armedPick ? `Click a ${armedPick.kind === 'tank' ? 'tank widget' : 'pipe'} on the canvas to bind — Esc cancels` : notice} />
+        notice={armedPick ? tr('Click a') + ' ' + tr(armedPick.kind === 'tank' ? 'tank widget' : 'pipe') + ' ' + tr('on the canvas to bind — Esc cancels') : notice} />
     </div>
   )
 }
@@ -254,6 +256,7 @@ export default function HmiWorkspace({ onExit }: { onExit(): void }) {
 const mmss = (t: number) => `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(Math.floor(t % 60)).padStart(2, '0')}`
 
 function StatusBar({ screenName, selection, notice }: { screenName?: string; selection: number; notice?: string | null }) {
+  const tr = useT()
   const mode = useSimStore((s) => s.mode)
   const t = useSimStore((s) => s.t)
   const playing = useSimStore((s) => s.playing)
@@ -263,24 +266,24 @@ function StatusBar({ screenName, selection, notice }: { screenName?: string; sel
   const nBy = (p: 'high' | 'medium' | 'low') => live.filter((a) => a.priority === p).length
   return (
     <div className="hmi-status">
-      <span>HMI workspace</span>
+      <span>{tr('HMI workspace')}</span>
       <VersionChip />
       {screenName && <span>· {screenName}</span>}
       {notice && <span className="hmi-notice" data-testid="hmi-notice">{notice}</span>}
       {mode === 'run' ? (
         <>
-          <span data-testid="sim-clock">⏱ {mmss(t)}{playing ? '' : ' (paused)'}</span>
-          <span>{unacked > 0 ? `⚠ ${unacked} unacked` : 'no unacked alarms'}</span>
+          <span data-testid="sim-clock">⏱ {mmss(t)}{playing ? '' : tr(' (paused)')}</span>
+          <span>{unacked > 0 ? `⚠ ${unacked} ${tr('unacked')}` : tr('no unacked alarms')}</span>
           {nBy('high') > 0 && <span className="al-prio al-prio-high">■ {nBy('high')}</span>}
           {nBy('medium') > 0 && <span className="al-prio al-prio-medium">▲ {nBy('medium')}</span>}
           {nBy('low') > 0 && <span className="al-prio al-prio-low">● {nBy('low')}</span>}
-          <span style={{ marginLeft: 'auto' }}>RUNNING plant-wide — tabs navigate, click equipment to operate</span>
+          <span style={{ marginLeft: 'auto' }}>{tr('RUNNING plant-wide — tabs navigate, click equipment to operate')}</span>
         </>
       ) : (
         screenName && (
           <>
-            {selection > 0 && <span>{selection} selected</span>}
-            <span style={{ marginLeft: 'auto' }}>EDIT — preview values shown; press ▶ RUN to simulate</span>
+            {selection > 0 && <span>{selection} {tr('selected')}</span>}
+            <span style={{ marginLeft: 'auto' }}>{tr('EDIT — preview values shown; press ▶ RUN to simulate')}</span>
           </>
         )
       )}

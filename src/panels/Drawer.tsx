@@ -7,18 +7,20 @@ import IssuesPanel from './IssuesPanel'
 import LoopPanel from './LoopPanel'
 import { useStore } from '../store/store'
 import { qaFor } from '../validate/engine'
+import { useT } from '../i18n'
 
 export default function Drawer() {
+  const t = useT()
   const [tab, setTab] = useState<'issues' | 'loops' | null>(null)
   const { total } = qaFor(useStore((s) => s.doc))
   return (
     <div className="drawer">
       <div className="drawer-tabs">
         <button className={tab === 'issues' ? 'active' : ''} onClick={() => setTab(tab === 'issues' ? null : 'issues')}>
-          Issues{total ? ` (${total})` : ''}
+          {t('Issues')}{total ? ` (${total})` : ''}
         </button>
         <button className={tab === 'loops' ? 'active' : ''} onClick={() => setTab(tab === 'loops' ? null : 'loops')}>
-          Loops
+          {t('Loops')}
         </button>
       </div>
       {tab === 'issues' && <IssuesPanel />}

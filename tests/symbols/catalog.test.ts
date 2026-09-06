@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import '../../src/symbols/lib/index'
-import { getSymbol, SYMBOLS } from '../../src/symbols/registry'
+import { byCategory, getSymbol, searchSymbols, SYMBOLS } from '../../src/symbols/registry'
 
 const PHASE2_IDS = [
   'valve.pinch', 'valve.stopcheck', 'valve.fourway', 'valve.angle', 'valve.knife',
@@ -112,6 +112,12 @@ describe('phase-2 catalog (valves/safety)', () => {
 })
 
 describe('phase-1 catalog', () => {
+  it('keeps the topology junction registered but out of the user palette', () => {
+    expect(getSymbol('fit.junction').placeable).toBe(false)
+    expect(getSymbol('fit.junction').render({})).toContain('<circle')
+    expect([...byCategory().values()].flat().some((def) => def.id === 'fit.junction')).toBe(false)
+    expect(searchSymbols('junction').some((def) => def.id === 'fit.junction')).toBe(false)
+  })
   it('registers every phase-1 id', () => {
     for (const id of PHASE1_IDS) expect(() => getSymbol(id), id).not.toThrow()
   })

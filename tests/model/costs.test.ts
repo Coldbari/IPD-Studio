@@ -39,6 +39,7 @@ describe('unitCost precedence', () => {
   it('category fallback for unknown ids; annotations are free', () => {
     expect(unitCost(node({ symbolId: 'valve.gate' }))).toBeGreaterThan(0)
     expect(unitCost(node({ kind: 'annotation', symbolId: 'ann.text' }))).toBe(0)
+    expect(unitCost(node({ kind: 'fitting', symbolId: 'fit.junction' }))).toBe(30)
   })
 })
 

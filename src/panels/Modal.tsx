@@ -3,6 +3,7 @@
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
 import { useEffect } from 'react'
+import { useT } from '../i18n'
 
 /**
  * The one modal: backdrop + white card, Esc or backdrop click closes. Extracted
@@ -15,6 +16,7 @@ export default function Modal({ title, onClose, children, width = 380 }: {
   children: React.ReactNode
   width?: number
 }) {
+  const t = useT()
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
@@ -25,7 +27,7 @@ export default function Modal({ title, onClose, children, width = 380 }: {
       <div className="datasheet-box" style={{ width, maxWidth: '92vw' }} onClick={(e) => e.stopPropagation()}>
         <div className="datasheet-head">
           <strong>{title}</strong>
-          <button onClick={onClose} title="Close" style={{ marginLeft: 'auto' }}>×</button>
+          <button onClick={onClose} title={t('Close')} style={{ marginLeft: 'auto' }}>×</button>
         </div>
         <div className="datasheet-body">{children}</div>
       </div>

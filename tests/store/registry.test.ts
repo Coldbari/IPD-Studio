@@ -86,6 +86,126 @@ describe('a record follows its object', () => {
   })
 })
 
+describe('pending line endpoints', () => {
+  it('closes a free endpoint when a matching tagged device is added', () => {
+    const s = fresh()
+    const source = s.addNode({ symbolId: 'valve.gate', kind: 'valve', x: 0, y: 0, rotation: 0 })
+    const edgeId = useStore.getState().addEdge({
+      lineClass: 'process.major',
+      source: { nodeId: source, portId: 'e' },
+      target: { x: 80, y: 8, pendingTag: 'TK-101' },
+      lineNumber: { size: '2"', spec: 'CS', service: 'FW', seq: '001' },
+    })
+    const device = useStore.getState().addNode({ symbolId: 'valve.gate', kind: 'valve', x: 80, y: 0, rotation: 0 })
+    useStore.getState().setTag(device, { letters: 'TK', loop: '101' })
+    const edge = useStore.getState().doc.sheets[0]!.edges.find((e) => e.id === edgeId)!
+    expect(edge.target).toEqual({ nodeId: device, portId: 'w' })
+    expect(edge.lineNumber?.service).toBe('FW')
+  })
+
+  it('matches the tag whatever the loop-number zeros look like on either side', () => {
+    const s = fresh()
+    const vessel = s.addNode({ symbolId: 'vessel.vertical', kind: 'equipment', x: 400, y: 300, rotation: 0 })
+    useStore.getState().setTag(vessel, { letters: 'V', loop: '01' })
+    const edgeId = useStore.getState().addEdge({
+      lineClass: 'process.major',
+      source: { nodeId: vessel, portId: 'w1' },
+      // typed by hand with the leading zero; the device is later tagged X-1
+      target: { x: 300, y: 308, pendingTag: 'X01' },
+    })
+    const device = useStore.getState().addNode({ symbolId: 'valve.gate', kind: 'valve', x: 240, y: 300, rotation: 0 })
+    useStore.getState().setTag(device, { letters: 'X', loop: '1' })
+    const edge = useStore.getState().doc.sheets[0]!.edges.find((e) => e.id === edgeId)!
+    expect(edge.target).toEqual({ nodeId: device, portId: 'e' })
+  })
+
+  it('resolves for a device that only carries a label, when the label is set', () => {
+    const s = fresh()
+    const vessel = s.addNode({ symbolId: 'vessel.vertical', kind: 'equipment', x: 400, y: 300, rotation: 0 })
+    useStore.getState().setTag(vessel, { letters: 'V', loop: '01' })
+    const edgeId = useStore.getState().addEdge({
+      lineClass: 'process.major',
+      source: { nodeId: vessel, portId: 'w1' },
+      target: { x: 300, y: 308, pendingTag: 'X01' },
+    })
+    const device = useStore.getState().addNode({ symbolId: 'pump.centrifugal', kind: 'equipment', x: 300, y: 280, rotation: 0 })
+    useStore.getState().setLabel(device, 'X01')
+    const edge = useStore.getState().doc.sheets[0]!.edges.find((e) => e.id === edgeId)!
+    expect(isPortEndTarget(edge)).toBe(true)
+  })
+
+  it('prefers the nozzle that faces back along the line, not the nearest port', () => {
+    const s = fresh()
+    // V01 sits east of the free end; the pipe runs west from its w1 nozzle.
+    const vessel = s.addNode({ symbolId: 'vessel.vertical', kind: 'equipment', x: 400, y: 300, rotation: 0 })
+    useStore.getState().setTag(vessel, { letters: 'V', loop: '01' })
+    const edgeId = useStore.getState().addEdge({
+      lineClass: 'process.major',
+      source: { nodeId: vessel, portId: 'w1' },
+      target: { x: 300, y: 308, pendingTag: 'X01' },
+    })
+    // The pump lands with its suction right ON the free end — the old
+    // nearest-port rule would grab the suction. The discharge faces the
+    // vessel, so the line must land there instead.
+    const pump = useStore.getState().addNode({ symbolId: 'pump.centrifugal', kind: 'equipment', x: 300, y: 280, rotation: 0 })
+    useStore.getState().setTag(pump, { letters: 'X', loop: '01' })
+    const edge = useStore.getState().doc.sheets[0]!.edges.find((e) => e.id === edgeId)!
+    expect(edge.target).toEqual({ nodeId: pump, portId: 'discharge' })
+  })
+
+  it('serves two pending lines on one device with the two facing nozzles', () => {
+    const s = fresh()
+    const upstream = s.addNode({ symbolId: 'vessel.vertical', kind: 'equipment', x: 100, y: 300, rotation: 0 })
+    useStore.getState().setTag(upstream, { letters: 'U', loop: '01' })
+    const downstream = s.addNode({ symbolId: 'vessel.vertical', kind: 'equipment', x: 400, y: 300, rotation: 0 })
+    useStore.getState().setTag(downstream, { letters: 'V', loop: '01' })
+    const inId = useStore.getState().addEdge({
+      lineClass: 'process.major',
+      source: { nodeId: upstream, portId: 'e1' },
+      target: { x: 220, y: 300, pendingTag: 'X01' },
+    })
+    const outId = useStore.getState().addEdge({
+      lineClass: 'process.major',
+      source: { nodeId: downstream, portId: 'w1' },
+      target: { x: 320, y: 300, pendingTag: 'X01' },
+    })
+    const pump = useStore.getState().addNode({ symbolId: 'pump.centrifugal', kind: 'equipment', x: 260, y: 280, rotation: 0 })
+    useStore.getState().setTag(pump, { letters: 'X', loop: '01' })
+    const edges = useStore.getState().doc.sheets[0]!.edges
+    expect(edges.find((e) => e.id === inId)!.target).toEqual({ nodeId: pump, portId: 'suction' })
+    expect(edges.find((e) => e.id === outId)!.target).toEqual({ nodeId: pump, portId: 'discharge' })
+  })
+})
+
+function isPortEndTarget(edge: { target: unknown }): boolean {
+  const t = edge.target as { nodeId?: string }
+  return typeof t.nodeId === 'string'
+}
+
+describe('sheet copies', () => {
+  it('clones nodes and remaps connected edge endpoints', () => {
+    const s = fresh()
+    const source = s.addNode({ symbolId: 'valve.gate', kind: 'valve', x: 0, y: 0, rotation: 0 })
+    const target = s.addNode({ symbolId: 'valve.gate', kind: 'valve', x: 80, y: 0, rotation: 0 })
+    const edge = s.addEdge({
+      lineClass: 'process.major',
+      source: { nodeId: source, portId: 'e' },
+      target: { nodeId: target, portId: 'w' },
+    })
+    const original = doc().sheets[0]!
+    const copy = s.duplicateSheet(original.id, '吹扫方案')!
+    const copied = doc().sheets.find((sh) => sh.id === copy.sheetId)!
+
+    expect(copied.name).toBe('吹扫方案')
+    expect(copied.nodes.map((n) => n.id)).not.toContain(source)
+    expect(copied.nodes).toHaveLength(2)
+    expect(copied.edges).toHaveLength(1)
+    expect(copied.edges[0]!.id).not.toBe(edge)
+    expect(copied.edges[0]!.source).toEqual({ nodeId: copy.nodeIdMap[source], portId: 'e' })
+    expect(copied.edges[0]!.target).toEqual({ nodeId: copy.nodeIdMap[target], portId: 'w' })
+  })
+})
+
 describe('record edits are undoable', () => {
   it('undo restores the previous field value', () => {
     const s = fresh()

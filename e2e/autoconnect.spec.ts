@@ -164,6 +164,28 @@ test('a drag connects the moment the points meet, and goes on stretching the pip
   expect(undone.nodes.find((n: any) => n.id === moving)).toMatchObject({ x: 400, y: 300 })
 })
 
+test('re-clicking a reserved line end keeps its pending device tag', async ({ page }) => {
+  await page.goto('/app')
+  await page.waitForFunction(() => '__pid' in window)
+  await page.evaluate(() => {
+    const s = window.__pid.useStore.getState()
+    const v = s.addNode({ symbolId: 'vessel.vertical', kind: 'equipment', x: 400, y: 300, rotation: 0 })
+    s.setTag(v, { letters: 'V', loop: '01' })
+    s.addEdge({ lineClass: 'process.major', source: { nodeId: v, portId: 'w1' }, target: { x: 260, y: 308, pendingTag: 'X07' } })
+    s.setSelection([])
+  })
+  // vessel + its reserved line, both rendered
+  await expect(page.locator('[model-id]')).toHaveCount(2)
+
+  // Click the free end — the gesture that re-selects the line. The endpoint
+  // re-attach used to rewrite the end as a bare point and drop the tag.
+  await page.mouse.click(...(await point(page, 260, 308)))
+
+  const target = (await sheet(page)).edges[0].target as { nodeId?: string; pendingTag?: string }
+  expect(target.nodeId).toBeUndefined()
+  expect(target.pendingTag).toBe('X07')
+})
+
 test('shaking the symbol mid-drag cuts the line that drag just made', async ({ page }) => {
   await withGateValve(page)
   const moving = await page.evaluate(() => {

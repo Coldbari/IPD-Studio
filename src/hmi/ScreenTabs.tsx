@@ -6,11 +6,13 @@ import { useState } from 'react'
 import { useStore } from '../store/store'
 import { useSimStore } from './simStore'
 import Modal from '../panels/Modal'
+import { useT } from '../i18n'
 
 /** Tab strip: switch, double-click rename, drag to reorder, ★ home, ⧉
  *  duplicate; deletes confirm in a proper modal. RUN keeps tabs as pure
  *  navigation (no editing affordances). */
 export default function ScreenTabs() {
+  const t = useT()
   const screens = useStore((s) => s.doc.hmiScreens)
   const activeScreenId = useStore((s) => s.activeScreenId)
   const setActiveScreen = useStore((s) => s.setActiveScreen)
@@ -54,18 +56,18 @@ export default function ScreenTabs() {
             />
           ) : (
             <>
-              {sc.home && <span title="Home screen — RUN starts here">★</span>}
+              {sc.home && <span title={t('Home screen — RUN starts here')}>★</span>}
               <span>{sc.name}</span>
               {editingTabs && sc.id === activeScreenId && (
                 <>
                   <button className="sheet-close" data-testid="screen-home"
-                    title={sc.home ? 'Unset home screen' : 'Make home screen (RUN starts here)'}
+                    title={sc.home ? t('Unset home screen') : t('Make home screen (RUN starts here)')}
                     onClick={(e) => { e.stopPropagation(); setHomeScreen(sc.id, !sc.home) }}>
                     {sc.home ? '★' : '☆'}
                   </button>
-                  <button className="sheet-close" data-testid="screen-dup" title="Duplicate screen"
+                  <button className="sheet-close" data-testid="screen-dup" title={t('Duplicate screen')}
                     onClick={(e) => { e.stopPropagation(); duplicateScreen(sc.id) }}>⧉</button>
-                  <button className="sheet-close" title="Delete screen"
+                  <button className="sheet-close" title={t('Delete screen')}
                     onClick={(e) => { e.stopPropagation(); setDeleting(sc.id) }}>×</button>
                 </>
               )}
@@ -73,16 +75,16 @@ export default function ScreenTabs() {
           )}
         </div>
       ))}
-      {editingTabs && <button className="hmi-tab" title="Add screen" onClick={addScreen}>＋</button>}
+      {editingTabs && <button className="hmi-tab" title={t('Add screen')} onClick={addScreen}>＋</button>}
       {doomed && (
-        <Modal title="Delete screen" onClose={() => setDeleting(null)}>
+        <Modal title={t('Delete screen')} onClose={() => setDeleting(null)}>
           <p style={{ margin: '4px 0 12px' }}>
-            Delete <strong>{doomed.name}</strong> with {doomed.widgets.length} widget{doomed.widgets.length === 1 ? '' : 's'}? Undo (Ctrl+Z) can bring it back.
+            {t('Delete')} <strong>{doomed.name}</strong> {t('with')} {doomed.widgets.length} {t(doomed.widgets.length === 1 ? 'widget' : 'widgets')}? {t('Undo (Ctrl+Z) can bring it back.')}
           </p>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button onClick={() => setDeleting(null)}>Cancel</button>
+            <button onClick={() => setDeleting(null)}>{t('Cancel')}</button>
             <button data-testid="screen-delete-confirm" style={{ background: '#c53030', color: '#fff', border: 'none', borderRadius: 4, padding: '4px 14px' }}
-              onClick={() => { deleteScreen(doomed.id); setDeleting(null) }}>Delete</button>
+              onClick={() => { deleteScreen(doomed.id); setDeleting(null) }}>{t('Delete')}</button>
           </div>
         </Modal>
       )}

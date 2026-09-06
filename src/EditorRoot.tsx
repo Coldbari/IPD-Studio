@@ -15,6 +15,7 @@ import WorkspaceRail from './WorkspaceRail'
 import CommandPalette from './panels/CommandPalette'
 import UpdateToast from './panels/UpdateToast'
 import { navigateWorkspace, useWorkspace } from './routes'
+import { tr, useT } from './i18n'
 
 // Split at the workspace boundary, the way the homepage is already split from
 // the editor: Draw must not pay for the HMI simulator or the report tables.
@@ -27,6 +28,7 @@ const HmiWorkspace = lazy(() => import('./hmi/HmiWorkspace'))
  * persist across workspaces — switching screens must never cost you Ctrl+K.
  */
 function Workspaces() {
+  const t = useT()
   const workspace = useWorkspace()
   return (
     <div className="shell">
@@ -35,7 +37,7 @@ function Workspaces() {
         {workspace === 'draw' ? (
           <App />
         ) : (
-          <Suspense fallback={<div className="route-loading">Loading {workspace}…</div>}>
+          <Suspense fallback={<div className="route-loading">{t('Loading…')} {workspace}…</div>}>
             {workspace === 'data' && <DataWorkspace />}
             {workspace === 'checks' && <ChecksWorkspace />}
             {workspace === 'hmi' && <HmiWorkspace onExit={() => navigateWorkspace('draw')} />}
@@ -61,7 +63,7 @@ function bootEditor(): void {
   startAutosave()
   startCloudAutosave()
   void restoreAutosave().then((saved) => {
-    if (saved && window.confirm(`Restore autosaved drawing “${saved.meta.name}”?`)) {
+    if (saved && window.confirm(`${tr('Restore autosaved drawing?')} ${saved.meta.name}`)) {
       useStore.getState().loadIntoStore(saved)
     }
   })
@@ -98,6 +100,7 @@ function devBypass(): boolean {
 }
 
 export default function EditorRoot() {
+  const t = useT()
   const user = useAuthStore((s) => s.user)
   const ready = useAuthStore((s) => s.ready)
   // With no Firebase project configured — a fork, or a local build with no
@@ -115,7 +118,7 @@ export default function EditorRoot() {
   }, [allowed])
 
   if (firebaseReady && !ready && !devBypass()) {
-    return <div className="route-loading">Checking your account…</div>
+    return <div className="route-loading">{t('Checking your account…')}</div>
   }
   if (!allowed) return <AuthScreen />
   return <Workspaces />

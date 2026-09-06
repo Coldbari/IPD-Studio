@@ -47,4 +47,6 @@ export interface SymbolDef {
   /** Config keys -> allowed values, drives the property panel selects. */
   configOptions?: Record<string, string[]>
   keywords: string[]
+  /** Registered for loading old documents, but never offered in the palette. */
+  placeable?: boolean
 }

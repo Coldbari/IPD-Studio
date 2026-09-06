@@ -88,6 +88,128 @@ describe('store', () => {
     expect(s.selection).toEqual(pasted.map((p) => p.id))
   })
 
+  it('pasteNodes remaps shared line junction ids away from the original', () => {
+    const a = addPump(0, 0)
+    const b = addPump(100, 0)
+    const junction = { x: 50, y: 20, junctionId: 'original-junction' }
+    const sheet = activeSheet(useStore.getState())
+    useStore.getState().pasteNodes(
+      sheet.nodes,
+      [
+        { id: 'left', lineClass: 'process.major', source: { nodeId: a, portId: 'out' }, target: junction },
+        { id: 'right', lineClass: 'process.major', source: junction, target: { nodeId: b, portId: 'in' } },
+      ],
+    )
+    const copied = activeSheet(useStore.getState()).edges
+    const ids = copied.flatMap((edge) => [edge.source, edge.target])
+      .flatMap((end) => 'junctionId' in end && end.junctionId ? [end.junctionId] : [])
+    expect(new Set(ids).size).toBe(1)
+    expect(ids[0]).not.toBe('original-junction')
+  })
+
+  it('edits one persisted section without changing adjacent sections', () => {
+    const a = addPump(0, 0)
+    const b = addPump(200, 0)
+    const junction = { x: 100, y: 20, junctionId: 'line-junction' }
+    useStore.getState().addBatch([], [
+      { id: 'left', lineGroupId: 'main', lineClass: 'process.major', source: { nodeId: a, portId: 'out' }, target: junction },
+      { id: 'right', lineGroupId: 'main', lineClass: 'process.major', source: junction, target: { nodeId: b, portId: 'in' } },
+      { id: 'branch', lineGroupId: 'branch', lineClass: 'process.major', source: junction, target: { x: 100, y: 160 } },
+    ])
+    useStore.getState().setEdge('right', { arrow: 'flow', lineClass: 'process.minor' })
+    const edges = activeSheet(useStore.getState()).edges
+    expect(edges.find((edge) => edge.id === 'right')?.lineClass).toBe('process.minor')
+    expect(edges.find((edge) => edge.id === 'left')?.lineClass).toBe('process.major')
+    expect(edges.find((edge) => edge.id === 'branch')?.lineClass).toBe('process.major')
+    expect(edges.find((edge) => edge.id === 'right')?.arrow).toBe('flow')
+    expect(edges.filter((edge) => edge.arrow === 'flow')).toHaveLength(1)
+  })
+
+  it('keeps untouched fixed routes stable during a free-end vertex edit', () => {
+    const untouched = {
+      id: 'untouched-fixed',
+      lineGroupId: 'untouched-fixed',
+      lineClass: 'process.major' as const,
+      routing: 'fixed' as const,
+      source: { x: 64, y: 64 },
+      target: { x: 192, y: 64 },
+      vertices: [{ x: 128, y: 64 }],
+    }
+    useStore.getState().addBatch([], [
+      {
+        id: 'edited-free',
+        lineGroupId: 'edited-free',
+        lineClass: 'process.major',
+        source: { x: 32, y: 160, pendingTag: 'L-101' },
+        target: { x: 224, y: 160 },
+        vertices: [{ x: 128, y: 160 }],
+      },
+      untouched,
+    ])
+    const before = activeSheet(useStore.getState()).edges.find((edge) => edge.id === untouched.id)!
+    useStore.getState().setEdge('edited-free', {
+      source: { x: 40, y: 168, pendingTag: 'L-101' },
+      vertices: [{ x: 128, y: 168 }],
+    }, { preserveOtherEdges: true })
+    const after = activeSheet(useStore.getState()).edges
+    expect(after.find((edge) => edge.id === untouched.id)).toBe(before)
+    expect(after.find((edge) => edge.id === untouched.id)).toEqual(untouched)
+  })
+
+  it('toggles the flow arrow on the selected section', () => {
+    const a = addPump(0, 0)
+    const b = addPump(200, 0)
+    const junction = { x: 100, y: 20, junctionId: 'cycle-junction' }
+    useStore.getState().addBatch([], [
+      { id: 'left', lineGroupId: 'main', lineClass: 'process.major', source: { nodeId: a, portId: 'out' }, target: junction },
+      { id: 'right', lineGroupId: 'main', lineClass: 'process.major', source: junction, target: { nodeId: b, portId: 'in' } },
+      { id: 'branch', lineGroupId: 'branch', lineClass: 'process.major', source: junction, target: { x: 100, y: 160 } },
+    ])
+    const positions = () => activeSheet(useStore.getState()).edges.filter((edge) => edge.arrow === 'flow').map((edge) => edge.id)
+    expect(positions()).toEqual([])
+    useStore.getState().cycleEdgeArrow('left')
+    expect(positions()).toEqual(['left'])
+    useStore.getState().cycleEdgeArrow('left')
+    expect(positions()).toEqual([])
+    useStore.getState().cycleEdgeArrow('left')
+    expect(positions()).toEqual(['left'])
+  })
+
+  it('toggles and reverses one line section', () => {
+    const a = addPump(0, 0)
+    const b = addPump(200, 0)
+    const junction = { x: 100, y: 20, junctionId: 'reverse-junction' }
+    useStore.getState().addBatch([], [
+      { id: 'left', lineGroupId: 'main', lineClass: 'process.major', source: { nodeId: a, portId: 'out' }, target: junction, vertices: [{ x: 40, y: 20 }] },
+      { id: 'right', lineGroupId: 'main', lineClass: 'process.major', source: junction, target: { nodeId: b, portId: 'in' }, vertices: [{ x: 160, y: 20 }] },
+      { id: 'branch', lineGroupId: 'branch', lineClass: 'process.major', source: junction, target: { x: 100, y: 160 }, vertices: [{ x: 120, y: 20 }] },
+    ])
+    useStore.getState().setEdge('branch', { arrow: 'flow' })
+    expect(activeSheet(useStore.getState()).edges.filter((edge) => edge.arrow === 'flow').map((edge) => edge.id)).toEqual(['branch'])
+    useStore.getState().setEdge('branch', { arrow: 'none' })
+    expect(activeSheet(useStore.getState()).edges.some((edge) => edge.arrow === 'flow')).toBe(false)
+    useStore.getState().reverseEdgeDirection('right')
+    const edges = activeSheet(useStore.getState()).edges
+    expect(edges.find((edge) => edge.id === 'right')?.source).toEqual({ nodeId: b, portId: 'in' })
+    expect(edges.find((edge) => edge.id === 'right')?.target).toEqual(junction)
+    expect(edges.find((edge) => edge.id === 'right')?.vertices).toEqual([{ x: 160, y: 20 }])
+  })
+
+  it('keeps a branch selection independent from the original line', () => {
+    const a = addPump(0, 0)
+    const b = addPump(200, 0)
+    const junction = { x: 100, y: 20, junctionId: 'selection-junction' }
+    useStore.getState().addBatch([], [
+      { id: 'left', lineGroupId: 'main', lineClass: 'process.major', source: { nodeId: a, portId: 'out' }, target: junction },
+      { id: 'right', lineGroupId: 'main', lineClass: 'process.major', source: junction, target: { nodeId: b, portId: 'in' } },
+      { id: 'branch', lineGroupId: 'branch', lineClass: 'process.major', source: junction, target: { x: 100, y: 160 } },
+    ])
+    useStore.getState().setSelection(['branch'])
+    expect(useStore.getState().selection).toEqual(['branch'])
+    useStore.getState().setSelection(['right'])
+    expect(useStore.getState().selection).toEqual(['right'])
+  })
+
   it('undo/redo replay doc changes but not selection', () => {
     const a = addPump()
     useStore.getState().setSelection([a])
@@ -95,6 +217,31 @@ describe('store', () => {
     expect(activeSheet(useStore.getState()).nodes).toHaveLength(0)
     useStore.getState().redo()
     expect(activeSheet(useStore.getState()).nodes).toHaveLength(1)
+  })
+
+  it('auto layout is one undoable edit and leaves other sheets untouched', async () => {
+    const a = addPump(300, 220)
+    const b = addPump(304, 224)
+    useStore.getState().addEdge({
+      lineClass: 'process.major',
+      source: { nodeId: a, portId: 'out' },
+      target: { nodeId: b, portId: 'in' },
+      vertices: [{ x: 310, y: 230 }],
+    })
+    const before = structuredClone(activeSheet(useStore.getState()))
+    const otherSheetId = useStore.getState().addSheet()
+    const otherNode = addPump(777, 333)
+    useStore.getState().setActiveSheet(before.id)
+
+    const arranged = activeSheet(useStore.getState())
+    expect(arranged.nodes[0]!.x).toBeLessThan(arranged.nodes[1]!.x)
+    expect(arranged.edges[0]!.vertices?.length ?? 0).toBeLessThanOrEqual(2)
+    expect(useStore.getState().doc.sheets.find((candidate) => candidate.id === otherSheetId)!.nodes[0])
+      .toMatchObject({ id: otherNode, x: 777, y: 333 })
+
+    useStore.getState().undo()
+    expect(activeSheet(useStore.getState()).nodes).toEqual(before.nodes)
+    expect(activeSheet(useStore.getState()).edges).toEqual(before.edges)
   })
 
   it('loadIntoStore clears history and dirty', () => {

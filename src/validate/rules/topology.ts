@@ -4,7 +4,7 @@
 
 import type { Rule } from '../rules'
 import { finding } from '../rules'
-import { isPortEnd } from '../../model/types'
+import { isJunctionEnd, isPortEnd } from '../../model/types'
 import { portKindAt } from '../../model/projectIndex'
 import { canConnect } from '../../canvas/connectionRules'
 
@@ -17,7 +17,7 @@ export const danglingEnd: Rule = {
   run(ix) {
     const out = []
     for (const e of ix.allEdges) {
-      const free = [e.edge.source, e.edge.target].filter((end) => !isPortEnd(end)).length
+      const free = [e.edge.source, e.edge.target].filter((end) => !isPortEnd(end) && !isJunctionEnd(end)).length
       if (!free) continue
       out.push(
         finding(danglingEnd, e.key ?? e.edge.id, free === 2 ? 'Line is attached at neither end' : 'Line has an unterminated free end', {
