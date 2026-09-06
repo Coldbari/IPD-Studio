@@ -7,6 +7,7 @@ import type { PlantEdge, PlantNode, ProjectDoc, Sheet, SheetSize } from './types
 import type { Registry } from './registry'
 import { keyOfNode, kindOfNode } from './registry'
 import { checkWidgetProps } from '../hmi/model'
+import { standardFromLegacySettings } from './standard'
 
 export class DocError extends Error {}
 
@@ -137,7 +138,17 @@ export function loadDoc(raw: unknown): ProjectDoc {
     if (doc.registry !== undefined && (typeof doc.registry !== 'object' || doc.registry === null || Array.isArray(doc.registry))) {
       throw new DocError('registry is malformed')
     }
-    const migrated = { ...doc, schemaVersion: 5, hmiScreens: doc.hmiScreens ?? [] } as ProjectDoc
+    // The tag conventions used to live in `settings`. They fold into the
+    // standard so ONE place answers "how are tags formatted here" — but the old
+    // fields are left in place and still read, so a v5 file written by this
+    // build still opens correctly in the build before it.
+    const standard = doc.standard ?? standardFromLegacySettings(doc.settings ?? {})
+    const migrated = {
+      ...doc,
+      schemaVersion: 5,
+      hmiScreens: doc.hmiScreens ?? [],
+      ...(standard ? { standard } : {}),
+    } as ProjectDoc
     const registry = buildRegistry(migrated)
     return registry ? { ...migrated, registry } : migrated
   }

@@ -103,6 +103,9 @@ export const noFailPosition: Rule = {
   discipline: 'instrumentation',
   why: 'What the valve does on loss of signal is a safety decision. It cannot be left unstated — and it is not one software should guess, so there is no auto-fix here on purpose.',
   run(ix) {
+    // A house that records fail position on the datasheet rather than the P&ID
+    // switches this off for the whole project from the Standards page.
+    if (ix.standard.conventions.valveFailPosition === 'optional') return []
     const out = []
     for (const n of ix.allNodes) {
       if (!n.node.symbolId.startsWith('cv.')) continue

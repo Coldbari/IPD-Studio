@@ -8,6 +8,7 @@ import { TOPOLOGY_RULES } from './topology'
 import { INSTRUMENTATION_RULES } from './instrumentation'
 import { PROCESS_RULES } from './process'
 import { DATA_RULES } from './data'
+import { STANDARD_RULES } from './standard'
 
 /** Every check the engine runs. Order here is irrelevant — the report sorts by
  *  severity, then discipline, then title. */
@@ -17,6 +18,7 @@ export const ALL_RULES: Rule[] = [
   ...INSTRUMENTATION_RULES,
   ...PROCESS_RULES,
   ...DATA_RULES,
+  ...STANDARD_RULES,
 ]
 
 export const RULES_BY_ID: Record<string, Rule> = Object.fromEntries(ALL_RULES.map((r) => [r.id, r]))

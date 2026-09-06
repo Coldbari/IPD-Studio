@@ -4,22 +4,8 @@
 
 import type { Rule } from '../rules'
 import { finding } from '../rules'
-import type { EntityKind } from '../../model/registry'
 import { labelForField } from '../../model/fields'
-
-/**
- * The minimum an object needs before its record means anything.
- *
- * A built-in default for now. From v0.18 the active company standard supplies
- * this list, and the same rule reads it — which is why it is a lookup rather
- * than a hardcoded condition.
- */
-export const REQUIRED_FIELDS: Record<EntityKind, string[]> = {
-  instrument: ['general.service', 'signal.range'],
-  valve: ['element.size', 'actuation.failPosition'],
-  equipment: ['general.service'],
-  line: ['spec.size', 'spec.material'],
-}
+import { requiredFor } from '../../model/standard'
 
 export const orphanRecord: Rule = {
   id: 'orphan-record',
@@ -60,7 +46,7 @@ export const requiredFieldEmpty: Rule = {
     for (const [key, group] of ix.nodesByKey) {
       const first = group[0]!
       if (!first.kind) continue
-      const required = REQUIRED_FIELDS[first.kind]
+      const required = requiredFor(ix.standard, first.kind)
       if (!required.length) continue
       const record = ix.records[key]
       // Only nag about a record someone has STARTED. Firing on every tagged

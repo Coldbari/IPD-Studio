@@ -7,6 +7,7 @@ import { isPortEnd } from './types'
 import type { EngineeringRecord, EntityKind } from './registry'
 import { keyOfEdge, keyOfNode, kindOfNode } from './registry'
 import { deriveLoops, type Loop } from '../store/selectors'
+import { standardOf, type StandardProfile } from './standard'
 import { getSymbol } from '../symbols/registry'
 import type { PortKind } from '../symbols/types'
 
@@ -54,6 +55,9 @@ export interface ProjectIndex {
   /** Every key currently drawn — a record outside this set is an orphan. */
   liveKeys: Set<string>
   records: Record<string, EngineeringRecord>
+  /** The profile every rule checks against. Resolved once here so no rule has
+   *  to remember that an absent standard means the default. */
+  standard: StandardProfile
 }
 
 function portsOf(node: PlantNode): { id: string; kind: PortKind }[] {
@@ -131,6 +135,7 @@ export function buildIndex(doc: ProjectDoc): ProjectIndex {
     loops: deriveLoops(doc),
     liveKeys,
     records: doc.registry ?? {},
+    standard: standardOf(doc),
   }
 }
 

@@ -42,7 +42,19 @@ export function runRules(ix: ProjectIndex, ignored: Record<string, IgnoredEntry>
   const counts: Record<Severity, number> = { critical: 0, warning: 0, info: 0 }
   const suppressed: QaReport['ignored'] = []
 
-  for (const rule of ALL_RULES) {
+  // The active standard may force a rule to a different severity, or silence
+  // it outright. Applied HERE rather than in each rule so that every consumer —
+  // the report, the counts, the rail badge, the status bar — sees one severity
+  // and cannot disagree about how serious a finding is.
+  const overrides = ix.standard.severityOverrides ?? {}
+
+  for (const baseRule of ALL_RULES) {
+    const override = overrides[baseRule.id]
+    if (override === 'off') continue
+    // A shallow clone, so `group.rule.severity` is the EFFECTIVE severity and
+    // no consumer has to know overrides exist.
+    const rule: Rule = override ? { ...baseRule, severity: override } : baseRule
+
     let produced: RuleFinding[]
     try {
       produced = rule.run(ix)

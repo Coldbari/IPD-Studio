@@ -6,6 +6,7 @@
 
 import type { HmiScreen } from '../hmi/model'
 import type { Registry } from './registry'
+import type { StandardProfile } from './standard'
 
 /** A finding the user has explicitly accepted, with the reason why. */
 export interface IgnoredFinding {
@@ -171,6 +172,11 @@ export interface ProjectDoc {
   /** Engineering records keyed by tag / line number (v0.15.0+, schemaVersion 5).
    *  See model/registry.ts for why the key is the tag and not the node id. */
   registry?: Registry
+  /** The company standard this project is checked against (v0.19.0+).
+   *  Absent means the built-in default, which is exactly what the engine
+   *  checked against before standards existed — so an old document's QA report
+   *  does not change when it is opened by a build that has this feature. */
+  standard?: StandardProfile
   /** QA state. `ignored` is keyed by RuleFinding.key — rule + engineering key,
    *  never a node id — so an accepted finding stays accepted across a redraw. */
   qa?: { ignored: Record<string, IgnoredFinding> }

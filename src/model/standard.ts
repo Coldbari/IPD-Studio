@@ -170,6 +170,32 @@ export function missingLineParts(
   return std.lineNumber.order.filter((part) => !ln[part] || ln[part].trim() === '')
 }
 
+/**
+ * A profile carrying the tag conventions a pre-v0.19 project chose by hand.
+ *
+ * Returns undefined when those settings already match the default, and that is
+ * the important half: stamping an explicit standard onto every document ever
+ * opened would freeze each one to today's defaults, so a later improvement to
+ * DEFAULT_STANDARD would reach new projects only. A document only gains a
+ * standard of its own when its author actually chose something.
+ */
+export function standardFromLegacySettings(settings: {
+  tagSeparator?: '-' | ''
+  numberStart?: 100 | 1
+}): StandardProfile | undefined {
+  const separator = settings.tagSeparator ?? DEFAULT_STANDARD.tagFormat.separator
+  const numberStart = settings.numberStart ?? DEFAULT_STANDARD.tagFormat.numberStart
+  if (separator === DEFAULT_STANDARD.tagFormat.separator && numberStart === DEFAULT_STANDARD.tagFormat.numberStart) {
+    return undefined
+  }
+  return {
+    ...DEFAULT_STANDARD,
+    id: 'migrated-project-settings',
+    name: 'Project settings',
+    tagFormat: { ...DEFAULT_STANDARD.tagFormat, separator, numberStart },
+  }
+}
+
 export interface ProfileProblem {
   field: string
   message: string
