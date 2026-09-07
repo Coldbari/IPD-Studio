@@ -6,6 +6,13 @@ All notable changes to IPD Studio. Format follows
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-09-07 — company standards
+
+The QA engine stops checking every drawing against the same generic rules and
+starts checking yours — with the cost of adopting a convention shown before
+you adopt it, and the standard travelling inside the `.pnid` so a reviewer
+checks a file against the rules its author used.
+
 ### Added
 
 - **Company standards — the validator checks *your* rules, not generic ones.**
