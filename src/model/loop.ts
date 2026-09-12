@@ -445,6 +445,55 @@ export function evaluateLoop(loop: Loop, members: readonly LoopMember[]): LoopEv
   }
 }
 
+/* ------------------------------------------------------------ uniqueness */
+
+/**
+ * The comparable form of a loop number: trimmed and case-folded.
+ *
+ * ONE definition, exported so the store's duplicate refusal and the
+ * `duplicate-loop-number` rule ask the same question. Two implementations of
+ * "the same number" is how a store starts accepting what QA then reports, or
+ * refusing what QA thinks is fine.
+ *
+ * Trimmed and case-folded because "101 " out of a paste and "101" typed are
+ * the same loop to every engineer who will ever read them, exactly as
+ * `resolveUnitByCode` treats a unit code.
+ */
+export const loopNumberKey = (number: string): string => number.trim().toLowerCase()
+
+/**
+ * Loops that share a number, grouped by the comparable form.
+ *
+ * Only genuine collisions are returned — a number worn by one loop is not in
+ * the map. Blank numbers are skipped: a loop with no number has nothing to
+ * collide on, and reporting every blank as a duplicate of every other blank
+ * would bury the real conflicts.
+ */
+export function duplicateLoopNumbers(loops: readonly Loop[] | undefined): Map<string, Loop[]> {
+  const byNumber = new Map<string, Loop[]>()
+  for (const loop of loops ?? []) {
+    const k = loopNumberKey(loop.number)
+    if (!k) continue
+    const list = byNumber.get(k)
+    if (list) list.push(loop)
+    else byNumber.set(k, [loop])
+  }
+  for (const [k, list] of byNumber) if (list.length < 2) byNumber.delete(k)
+  return byNumber
+}
+
+/** Would `number` collide with an existing loop? `exceptId` excludes the loop
+ *  being renumbered, so setting a loop's own number back to itself is allowed. */
+export function loopNumberTaken(
+  loops: readonly Loop[] | undefined,
+  number: string,
+  exceptId?: string,
+): boolean {
+  const k = loopNumberKey(number)
+  if (!k) return false
+  return (loops ?? []).some((l) => l.id !== exceptId && loopNumberKey(l.number) === k)
+}
+
 /* ------------------------------------------------------- document integrity */
 
 /** A record whose `loopId` names a loop that is not in the project. */
@@ -473,8 +522,16 @@ export function danglingLoopMembers(
 ): DanglingLoopRef[] {
   const ids = new Set((loops ?? []).map((l) => l.id))
   const out: DanglingLoopRef[] = []
-  for (const [key, rec] of Object.entries(registry ?? {})) {
-    if (rec.loopId && !ids.has(rec.loopId)) out.push({ key, loopId: rec.loopId })
+  // `for...in` rather than Object.entries: the registry is the biggest map in
+  // the document and entries() allocates a pair array for all of it before the
+  // first assignment is read. This runs on every QA pass of every project,
+  // including the overwhelming majority that have no loops at all, so it has
+  // to cost nothing there.
+  if (registry) {
+    for (const key in registry) {
+      const loopId = registry[key]?.loopId
+      if (loopId && !ids.has(loopId)) out.push({ key, loopId })
+    }
   }
   return out.sort((a, b) => a.key.localeCompare(b.key))
 }

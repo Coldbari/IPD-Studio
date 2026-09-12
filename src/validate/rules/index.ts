@@ -11,6 +11,7 @@ import { DATA_RULES } from './data'
 import { STANDARD_RULES } from './standard'
 import { SIGNAL_RULES } from './signal'
 import { HIERARCHY_RULES } from './hierarchy'
+import { LOOP_RULES } from './loop'
 
 /** Every check the engine runs. Order here is irrelevant — the report sorts by
  *  severity, then discipline, then title. */
@@ -23,6 +24,7 @@ export const ALL_RULES: Rule[] = [
   ...STANDARD_RULES,
   ...SIGNAL_RULES,
   ...HIERARCHY_RULES,
+  ...LOOP_RULES,
 ]
 
 export const RULES_BY_ID: Record<string, Rule> = Object.fromEntries(ALL_RULES.map((r) => [r.id, r]))

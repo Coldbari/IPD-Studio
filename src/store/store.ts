@@ -64,6 +64,9 @@ import { propagateFluid } from '../model/fluidFlow'
 import type { EngineeringRecord, EntityKind, RecordStatus, Registry } from '../model/registry'
 import { keyOfEdge, keyOfNode } from '../model/registry'
 import type { Area, LegacyRow, Unit } from '../model/hierarchy'
+import type { Loop, LoopType } from '../model/loop'
+import { loopNumberTaken, newLoop } from '../model/loop'
+import { liveKeys } from '../model/registry'
 import type { QaEvidence, StandardProvenance } from '../model/provenance'
 import { issueGateFor } from '../model/standard'
 import { evaluateConformance, issueBlockers } from '../model/conformance'
@@ -75,6 +78,28 @@ import { isPortEnd } from '../model/types'
 import { createEmptyDoc, createSheet } from '../model/doc'
 import type { HmiPipe, HmiScreen, HmiTheme, HmiWidget } from '../hmi/model'
 import { createScreen } from '../hmi/model'
+
+export interface LoopInit {
+  name?: string
+  description?: string
+  type?: LoopType
+  status?: string
+}
+
+/**
+ * What a loop mutation did.
+ *
+ * `ok: false` means NOTHING happened — no document mutation, no partial write
+ * and no undo step, because the action returned the state object it was handed
+ * and zundo's `equality` compares `doc` by identity. `reason` is the sentence
+ * a caller can show; it is never a code to switch on.
+ */
+export interface LoopResult {
+  ok: boolean
+  /** The loop acted on. Present on success, and on `addLoop` it is the new id. */
+  id?: string
+  reason?: string
+}
 
 /** What a rename did to the engineering record behind a tag or line number. */
 export interface RetagResult {
@@ -199,6 +224,23 @@ export interface StoreState {
   removeUnit(id: string): { cleared: number }
   /** Assign one engineering record to a Unit, or clear it with ''/undefined. */
   assignUnit(key: string, kind: EntityKind, unitId: string | undefined): void
+  /* ------------------------------------------------------ persistent loops */
+  /** Create a Loop. Refused when `number` is blank or already worn by another
+   *  loop; the refusal touches nothing and records no undo step. */
+  addLoop(number: string, init?: LoopInit): LoopResult
+  /** Change a Loop's number, name, description, type or status. `id` never
+   *  moves. A renumber onto a number another loop wears is refused whole. */
+  updateLoop(id: string, patch: Partial<Omit<Loop, 'id'>>): LoopResult
+  /** Delete a Loop and clear `loopId` from every record assigned to it.
+   *  ONE undo step; reports what it cleared so the caller can say so first.
+   *  Records, nodes and HMI objects are never deleted. */
+  removeLoop(id: string): LoopResult & { cleared: number }
+  /** Assign one engineering record to a Loop, by stable Loop id — never by
+   *  loop number. Refused for an unknown loop or a key that names nothing. */
+  assignLoop(key: string, kind: EntityKind, loopId: string): LoopResult
+  /** Clear a record's loop assignment. Explicit, and deliberately NOT reachable
+   *  by clearing a tag: those are different intentions. */
+  unassignLoop(key: string): LoopResult
   /** Apply a legacy Area/Unit mapping plan as ONE undo step. Only rows the
    *  plan marked `mapped` carry a unit; nothing else is touched, and the
    *  legacy `general.area` text is left exactly where it is. */
@@ -975,6 +1017,168 @@ export const useStore = create<StoreState>()(
             const record: EngineeringRecord = { ...prev, unitId: unitId || undefined, updated: new Date().toISOString() }
             return { doc: touched({ ...s.doc, registry: { ...s.doc.registry, [key]: record } }), dirty: true }
           })
+        },
+
+        /* --------------------------------------------- persistent loops */
+
+        /**
+         * Loop lifecycle, and the one rule that shapes all of it: a loop is
+         * identified by its ULID and DISPLAYED by its number.
+         *
+         * Every action below either does the whole thing or does nothing at
+         * all. A refusal returns the state object it was given, so `doc` keeps
+         * its identity, zundo's `equality` (past.doc === current.doc) sees no
+         * change, and no undo step is recorded — the same mechanism `setTag`
+         * uses to refuse a colliding rename.
+         *
+         * WHY THE STORE REFUSES A DUPLICATE NUMBER at all, when `addArea` and
+         * `addUnit` happily accept duplicate codes: a unit code is scoped by
+         * its area and `resolveUnitByCode` disambiguates on that, so two units
+         * numbered 101 are resolvable. A loop number has no scope — "the
+         * diagram for loop 101" is simply undefined if two loops wear it. That
+         * puts loops with TAGS rather than with the hierarchy, and `setTag`
+         * refuses a colliding rename for exactly the same reason.
+         *
+         * `duplicate-loop-number` still exists as a critical check, because the
+         * store is not the only way a number arrives: a hand-edited file, and
+         * later an import, both bypass every action in this file.
+         */
+        addLoop(number, init = {}) {
+          const trimmed = number.trim()
+          if (!trimmed) return { ok: false, reason: 'A loop needs a number.' }
+          const state = get()
+          if (loopNumberTaken(state.doc.loops, trimmed)) {
+            return { ok: false, reason: `Loop ${trimmed} already exists. Loop numbers are unique across the project.` }
+          }
+          const loop = newLoop(trimmed, init)
+          set((sx) => ({ doc: touched({ ...sx.doc, loops: [...(sx.doc.loops ?? []), loop] }), dirty: true }))
+          return { ok: true, id: loop.id }
+        },
+
+        /** Renumbering changes what prints and nothing else. Every membership
+         *  points at the id, so assignments follow silently and correctly —
+         *  which is the entire reason the id exists. */
+        updateLoop(id, patch) {
+          const state = get()
+          const existing = (state.doc.loops ?? []).find((l) => l.id === id)
+          if (!existing) return { ok: false, reason: 'That loop is no longer in this project.' }
+
+          if (patch.number !== undefined) {
+            const trimmed = patch.number.trim()
+            if (!trimmed) return { ok: false, reason: 'A loop needs a number.' }
+            if (loopNumberTaken(state.doc.loops, trimmed, id)) {
+              return { ok: false, reason: `Loop ${trimmed} already exists. Loop numbers are unique across the project.` }
+            }
+          }
+
+          set((sx) => ({
+            doc: touched({
+              ...sx.doc,
+              loops: (sx.doc.loops ?? []).map((l) =>
+                // `id` is spread first and the patch cannot carry one, so a
+                // stable identity is not merely convention here — it is not
+                // reachable from this action.
+                l.id === id ? { ...l, ...patch, ...(patch.number !== undefined ? { number: patch.number.trim() } : {}), id: l.id } : l,
+              ),
+            }),
+            dirty: true,
+          }))
+          return { ok: true, id }
+        },
+
+        /**
+         * Deleting a Loop takes its memberships with it — and nothing else.
+         *
+         * Cascading rather than leaving dangling `loopId`s, for the reason
+         * `removeArea` gives: a half-deleted relationship is a state nothing
+         * downstream can describe. The ENGINEERING RECORDS SURVIVE. So do the
+         * symbols, and so do the HMI screens: deleting a loop and binning an
+         * approved datasheet are two different intentions, and only one of them
+         * was expressed.
+         *
+         * One `set`, so undo restores the loop AND every membership together.
+         */
+        removeLoop(id) {
+          const state = get()
+          if (!(state.doc.loops ?? []).some((l) => l.id === id)) {
+            return { ok: false, cleared: 0, reason: 'That loop is no longer in this project.' }
+          }
+          let cleared = 0
+          set((sx) => {
+            const registry: Registry = { ...sx.doc.registry }
+            for (const [key, rec] of Object.entries(registry)) {
+              if (rec.loopId !== id) continue
+              const { loopId: _drop, ...rest } = rec
+              registry[key] = rest
+              cleared += 1
+            }
+            return {
+              doc: touched({
+                ...sx.doc,
+                loops: (sx.doc.loops ?? []).filter((l) => l.id !== id),
+                ...(cleared ? { registry } : {}),
+              }),
+              dirty: true,
+            }
+          })
+          return { ok: true, id, cleared }
+        },
+
+        /**
+         * Assign a record to a loop, BY STABLE ID.
+         *
+         * Never by number: a number is display text that the user is expected
+         * to change, and a foreign key that moves is not a foreign key.
+         *
+         * A key that names nothing at all is refused. A key that IS drawn but
+         * has no record yet gets one minted, which is exactly what `assignUnit`
+         * does — "tag it before you can spec it" is the rule, and a freshly
+         * tagged instrument is taggable and therefore assignable.
+         */
+        assignLoop(key, kind, loopId) {
+          const state = get()
+          if (!key) return { ok: false, reason: 'That object has no engineering tag, so there is nothing to assign.' }
+          if (!(state.doc.loops ?? []).some((l) => l.id === loopId)) {
+            return { ok: false, reason: 'That loop is no longer in this project.' }
+          }
+          const known = Boolean(state.doc.registry?.[key]) || liveKeys(state.doc.sheets).has(key)
+          if (!known) return { ok: false, reason: `Nothing in this project is tagged ${key}.` }
+
+          set((sx) => {
+            const prev: EngineeringRecord = sx.doc.registry?.[key] ?? { key, kind, fields: {} }
+            // Re-assigning the same loop changes nothing — and returning `sx`
+            // means it also records no undo step, so a UI that fires on every
+            // render cannot fill the history with nothing.
+            if (prev.loopId === loopId) return sx
+            const record: EngineeringRecord = { ...prev, loopId, updated: new Date().toISOString() }
+            return { doc: touched({ ...sx.doc, registry: { ...sx.doc.registry, [key]: record } }), dirty: true }
+          })
+          return { ok: true, id: loopId }
+        },
+
+        /** The explicit opposite. Deliberately its own action rather than a
+         *  side effect of clearing a tag: P0 already established that clearing
+         *  a tag strands references rather than tidying them, and a loop
+         *  assignment is a decision someone made about the object. */
+        unassignLoop(key) {
+          const state = get()
+          const prev = state.doc.registry?.[key]
+          if (!prev) return { ok: false, reason: `There is no engineering record for ${key}.` }
+          if (!prev.loopId) return { ok: false, reason: `${key} is not assigned to a loop.` }
+          const was = prev.loopId
+          set((sx) => {
+            const rec = sx.doc.registry?.[key]
+            if (!rec?.loopId) return sx
+            const { loopId: _drop, ...rest } = rec
+            return {
+              doc: touched({
+                ...sx.doc,
+                registry: { ...sx.doc.registry, [key]: { ...rest, updated: new Date().toISOString() } },
+              }),
+              dirty: true,
+            }
+          })
+          return { ok: true, id: was }
         },
 
         applyLegacyMapping(rows) {

@@ -175,6 +175,12 @@ export function collectTagRefs(doc: ProjectDoc, key: string): TagRef[] {
     const fieldCount = Object.keys(record.fields).length
     const parts = [`${fieldCount} field${fieldCount === 1 ? '' : 's'}`]
     if (record.unitId) parts.push('unit assignment')
+    // A loop assignment travels with the record like everything else. It is
+    // NOT a tag reference and gets no RefWhere of its own — `loopId` is a
+    // stable id, so a rename carries it without rewriting anything — but the
+    // preview must still say it is being carried, or it under-reports what a
+    // rename moves.
+    if (record.loopId) parts.push('loop assignment')
     out.push({
       class: 'auto',
       where: 'registry',

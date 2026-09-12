@@ -13,6 +13,10 @@ import { parseSignalRef } from '../hmi/model'
 export type FixSpec =
   | { kind: 'insert-ip'; sheetId: string; edgeId: string }
   | { kind: 'purge-record'; key: string }
+  /** Clear ONE record's loop assignment, for a `loopId` pointing at a loop that
+   *  is gone. Targeted at the record, never at the loop, and never a repair
+   *  that invents the missing loop back. */
+  | { kind: 'clear-loop'; key: string }
   /** Clear ONE orphaned HMI binding. `tag` is the value the finding described:
    *  the applier re-checks it before clearing, so a binding edited since the
    *  report was produced is left alone rather than silently wiped. */
@@ -76,6 +80,16 @@ export function describeFix(spec: FixSpec, doc: ProjectDoc): { title: string; bl
         blastRadius: `Deletes ${Object.keys(doc.registry?.[spec.key]?.fields ?? {}).length} stored field(s). Nothing on any sheet carries this key.`,
         affectedIds: [],
       }
+    case 'clear-loop': {
+      const loopId = doc.registry?.[spec.key]?.loopId
+      return {
+        title: `Clear the loop assignment on ${spec.key}`,
+        blastRadius: loopId
+          ? `Removes one reference to a loop that is not in this project. ${spec.key} keeps its record, its fields and its unit.`
+          : `${spec.key} has no loop assignment any more.`,
+        affectedIds: [],
+      }
+    }
     case 'assign-tag': {
       const sheet = doc.sheets.find((s) => s.id === spec.sheetId)
       return {
@@ -148,6 +162,20 @@ export function applyFix(fix: FixSpec): FixResult {
     return had
       ? { ok: true, changedIds: [] }
       : { ok: false, changedIds: [], message: `No record found for ${fix.key}.` }
+  }
+  if (fix.kind === 'clear-loop') {
+    // Re-read before clearing: a report can be older than the document, and a
+    // record whose assignment has since been repaired must be left alone.
+    const st = useStore.getState()
+    const rec = st.doc.registry?.[fix.key]
+    if (!rec?.loopId) {
+      return { ok: false, changedIds: [], message: `${fix.key} is not assigned to a loop.` }
+    }
+    if (st.doc.loops?.some((l) => l.id === rec.loopId)) {
+      return { ok: false, changedIds: [], message: `${fix.key} now points at a loop that exists — nothing to clear.` }
+    }
+    const r = st.unassignLoop(fix.key)
+    return r.ok ? { ok: true, changedIds: [] } : { ok: false, changedIds: [], message: r.reason }
   }
   if (fix.kind === 'clear-binding') {
     const st = useStore.getState()

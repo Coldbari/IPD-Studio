@@ -175,6 +175,32 @@ test.skipIf(!process.env.PERF)('P1 hot paths', () => {
    * A project with NO persistent loops pays nothing; 125 loops over 500
    * assigned records cost about +0.27 ms on the index build.
    *
+   * P2-C PROGRAM 2 added the seven loop rules. Measured the same way, against
+   * the Program 1 commit in a worktree, minutes apart:
+   *
+   *                                   PROGRAM 1 (median)  PROGRAM 2 (median)
+   *   runRules, index reused, no loops     5.86 ms            6.07 ms   +0.21
+   *   runRules, 125 loops assigned            n/a             6.48 ms
+   *   the seven loop rules, no loops          n/a             0.05 ms
+   *   the seven loop rules, 125 loops         n/a             0.41 ms
+   *
+   * Read the +0.21 honestly: only ~0.05 ms of it is the loop rules DOING
+   * anything on a project with no loops. The rest is the engine's fixed
+   * per-rule overhead — an override lookup, a try/catch, two Set allocations —
+   * paid seven more times. That is the price of a rule existing, not of it
+   * being slow, and the only way to avoid it is to ship fewer checks.
+   *
+   * Two costs were found here and fixed rather than absorbed, both in Program
+   * 2's own code: `danglingLoopMembers` allocated an Object.entries pair array
+   * over the whole registry on every pass (0.145 -> 0.025 ms with `for...in`),
+   * and three rules each rebuilt the same per-loop evaluation (0.60 -> 0.07 ms
+   * once `loopViews()` memoised it on the index).
+   *
+   * `loop-units-conflict` is now the most expensive of the seven at ~0.25 ms
+   * with 125 loops, because it is the one rule that walks members without
+   * using the shared evaluation. Named here rather than buried: it is 4% of
+   * the rule pass and has not been optimised further.
+   *
    * THE DOMINANT COST IS NOT THE LOOP LAYER. `no-receiver` alone is ~4.5 ms of
    * the ~8.1 ms rule pass: it runs `ix.allNodes.some(...)` inside a loop over
    * `ix.allNodes`, so 500 x 501 on this fixture. It is pre-existing, it is
@@ -197,9 +223,44 @@ test.skipIf(!process.env.PERF)('P1 hot paths', () => {
   // short-circuits past the record walk — measuring only that would be
   // measuring the absence of the feature.
   const looped = withLoops(doc, 4)
+  const rixWarm = buildIndex(doc)
   process.stderr.write(`  (loop fixture: ${looped.loops!.length} loops over ${Object.keys(looped.registry!).length} records)\n`)
   bench('buildIndex, no loops declared', 20, () => { buildIndex(doc) })
   bench('buildIndex, 125 loops assigned', 20, () => { buildIndex(looped) })
+
+  /*
+   * P2-C PROGRAM 2: what the seven loop rules cost.
+   *
+   * Measured on BOTH shapes, because they answer different questions:
+   *
+   *   no loops declared  — every project that has not adopted them. Each rule
+   *                        iterates `doc.loops`, which is empty, so this is the
+   *                        cost of the feature being present but unused.
+   *   125 loops assigned — a fully adopted project of this size.
+   */
+  const lix = buildIndex(looped)
+  bench('runRules, no loops declared', 20, () => { runRules(rixWarm, {}) })
+  bench('runRules, 125 loops assigned', 20, () => { runRules(lix, {}) })
+
+  const LOOP_RULE_IDS = new Set([
+    'record-orphan-loop', 'duplicate-loop-number', 'loop-incomplete',
+    'loop-units-conflict', 'loop-io-conflict', 'loop-type-unstated', 'loop-empty',
+  ])
+  for (const [name, ix2] of [['no loops', rixWarm], ['125 loops', lix]] as const) {
+    let total = 0
+    const each: string[] = []
+    for (const r of ALL_RULES) {
+      if (!LOOP_RULE_IDS.has(r.id)) continue
+      r.run(ix2); r.run(ix2)
+      const t0 = performance.now()
+      for (let i = 0; i < 20; i++) r.run(ix2)
+      const ms = (performance.now() - t0) / 20
+      total += ms
+      each.push(`${r.id}=${ms.toFixed(3)}`)
+    }
+    process.stderr.write(`  loop rules, ${name.padEnd(10)} TOTAL ${total.toFixed(3)} ms/call\n`)
+    process.stderr.write(`    ${each.join('  ')}\n`)
+  }
 
   const rix = buildIndex(doc)
   const costs = ALL_RULES.map((r) => {
