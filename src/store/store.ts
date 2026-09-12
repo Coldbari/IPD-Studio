@@ -67,7 +67,7 @@ import type { Area, LegacyRow, Unit } from '../model/hierarchy'
 import type { Loop, LoopType } from '../model/loop'
 import { loopNumberKey, loopNumberTaken, newLoop } from '../model/loop'
 import type { AdoptionRow } from '../model/loopAdoption'
-import { liveKeys } from '../model/registry'
+import { drawnKinds, liveKeys } from '../model/registry'
 import type { QaEvidence, StandardProvenance } from '../model/provenance'
 import { issueGateFor } from '../model/standard'
 import { evaluateConformance, issueBlockers } from '../model/conformance'
@@ -1212,7 +1212,12 @@ export const useStore = create<StoreState>()(
             const loops: Loop[] = [...(sx.doc.loops ?? [])]
             const taken = new Set(loops.map((l) => loopNumberKey(l.number)))
             const registry: Registry = { ...sx.doc.registry }
-            const drawn = liveKeys(sx.doc.sheets)
+            // One walk, two answers: which keys are drawn, and what sort of
+            // object wears each. The kind matters because a member that has no
+            // record yet gets one minted here, and a valve filed as an
+            // instrument is a wrong engineering fact written by a migration —
+            // exactly what this path exists not to do.
+            const drawn = drawnKinds(sx.doc.sheets)
             const now = new Date().toISOString()
 
             for (const r of wanted) {
@@ -1231,8 +1236,19 @@ export const useStore = create<StoreState>()(
               taken.add(loopNumberKey(number))
               loopCount += 1
               for (const key of members) {
-                const prev: EngineeringRecord = registry[key] ?? { key, kind: 'instrument', fields: {} }
-                registry[key] = { ...prev, loopId: loop.id, updated: now }
+                const prev = registry[key]
+                if (prev) {
+                  // An existing record keeps everything it had, `kind`
+                  // included. Adoption assigns a loop; it does not reclassify.
+                  registry[key] = { ...prev, loopId: loop.id, updated: now }
+                } else {
+                  const kind = drawn.get(key)
+                  // Unreachable — the filter above kept only keys that are
+                  // recorded or drawn — but a record is not worth minting
+                  // under a guessed kind if that ever stops being true.
+                  if (!kind) continue
+                  registry[key] = { key, kind, fields: {}, loopId: loop.id, updated: now }
+                }
                 assignedCount += 1
               }
             }

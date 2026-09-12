@@ -152,6 +152,34 @@ export function liveKeys(sheets: { nodes: PlantNode[]; edges: PlantEdge[] }[]): 
 }
 
 /**
+ * Every key currently drawn, with the KIND of object wearing it.
+ *
+ * The same walk as `liveKeys` above and the same two resolvers — `keyOfNode`
+ * and `kindOfNode` for symbols, `keyOfEdge` for lines — so the key SET is
+ * identical to `liveKeys`'s and cannot drift from it. What this adds is the
+ * answer to "and what sort of thing is that", which anything minting a record
+ * for a key it did not already have needs, and which no caller should work out
+ * for itself: `node.kind` is not `EntityKind` (annotations have no record, and
+ * everything that is not an instrument or a valve is equipment), and a second
+ * place deciding that is a second place to get it wrong.
+ */
+export function drawnKinds(sheets: { nodes: PlantNode[]; edges: PlantEdge[] }[]): Map<string, EntityKind> {
+  const kinds = new Map<string, EntityKind>()
+  for (const sheet of sheets) {
+    for (const n of sheet.nodes) {
+      const key = keyOfNode(n)
+      const kind = kindOfNode(n)
+      if (key && kind && !kinds.has(key)) kinds.set(key, kind)
+    }
+    for (const e of sheet.edges) {
+      const key = keyOfEdge(e)
+      if (key && !kinds.has(key)) kinds.set(key, 'line')
+    }
+  }
+  return kinds
+}
+
+/**
  * Read one engineering value for a node: the record first, then the object's
  * legacy `node.datasheet`.
  *
