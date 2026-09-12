@@ -37,6 +37,8 @@ import { newLoop } from '../../src/model/loop'
 import { loopViews } from '../../src/model/loopIndex'
 import { planLoopAdoption } from '../../src/model/loopAdoption'
 import { compareDocs } from '../../src/model/diff'
+import { loopListCsv, loopListRows } from '../../src/export/csv'
+import { persistentLoopDiagramSvg } from '../../src/export/loopDiagram'
 import { serializeDoc } from '../../src/persist/file'
 import { ENGINEERING_SPEC } from '../../src/export/csv'
 import { MAX_EVIDENCE_BYTES, MAX_EVIDENCE_FINDINGS } from '../../src/model/provenance'
@@ -220,6 +222,25 @@ test.skipIf(!process.env.PERF)('P1 hot paths', () => {
    * No O(N^2) anywhere in the workflow: every one of these is a single pass
    * over the loops or the records, off the one ProjectIndex.
    *
+   * P2-C PROGRAM 4 added the Loop list and the diagram projection:
+   *
+   *   loopListRows, no loops declared               0.000 ms (early return)
+   *   loopListRows, 125 loops                       ~2.2 ms
+   *   loopListCsv, 125 loops                        ~2.1 ms
+   *   persistentLoopDiagramSvg, one loop            ~0.85 ms
+   *   the seven loop rules, 125 loops    0.41 -> 0.245 ms
+   *
+   * The report figures each include their own `buildIndex` and one
+   * `deriveIoList`, which is how every other report in this file works; none
+   * of them is on a render path. A project with no declared loops returns an
+   * empty list without walking anything.
+   *
+   * The loop RULES got faster: `loop-units-conflict` was the one rule walking
+   * members without the shared evaluation, and moving it onto `LoopView.unitIds`
+   * — the derivation the Loop Manager and the Loop list also read — removed a
+   * duplicate pass rather than adding a fourth implementation of "which units
+   * is this loop in".
+   *
    * THE DOMINANT COST IS NOT THE LOOP LAYER. `no-receiver` alone is ~4.5 ms of
    * the ~8.1 ms rule pass: it runs `ix.allNodes.some(...)` inside a loop over
    * `ix.allNodes`, so 500 x 501 on this fixture. It is pre-existing, it is
@@ -290,6 +311,13 @@ test.skipIf(!process.env.PERF)('P1 hot paths', () => {
   bench('planLoopAdoption, 125 derived', 20, () => { planLoopAdoption(lix) })
   const renamed = { ...looped, loops: (looped.loops ?? []).map((l, i) => (i % 2 ? { ...l, number: `${l.number}b` } : l)) }
   bench('diffLoops via compareDocs, 125 loops', 20, () => { compareDocs(looped, renamed) })
+
+  // P2-C PROGRAM 4: the Loop list and the diagram projection.
+  bench('loopListRows, no loops declared', 20, () => { loopListRows(doc) })
+  bench('loopListRows, 125 loops', 20, () => { loopListRows(looped) })
+  bench('loopListCsv, 125 loops', 20, () => { loopListCsv(looped) })
+  const firstLoop = looped.loops![0]!.id
+  bench('persistentLoopDiagramSvg', 20, () => { persistentLoopDiagramSvg(looped, firstLoop) })
 
   const rix = buildIndex(doc)
   const costs = ALL_RULES.map((r) => {

@@ -177,20 +177,15 @@ export const loopUnitsConflict: Rule = {
     const out: RuleFinding[] = []
     for (const view of loopViews(ix)) {
       const loop = view.loop
-      const units = new Set<string>()
-      for (const key of ix.loopMembers.get(loop.id) ?? []) {
-        const unitId = ix.records[key]?.unitId
-        // An unassigned member says nothing, and a member assigned to a unit
-        // that has been deleted is `record-orphan-unit`'s finding, not this
-        // one — counting it here would report one mistake as two.
-        if (unitId && ix.hierarchy.unitById.has(unitId)) units.add(unitId)
-      }
-      if (units.size < 2) continue
-      const codes = [...units]
-        .map((id) => placementOf(ix.hierarchy, id).unit?.code ?? id)
-        .sort((a, b) => a.localeCompare(b))
+      // The SHARED derivation. An unassigned member says nothing, and a member
+      // assigned to a deleted unit is `record-orphan-unit`'s finding — both
+      // rules live in `loopViews`, so the Loop Manager, the Loop list and this
+      // check cannot disagree about which units a loop is in.
+      const units = view.unitIds
+      if (units.length < 2) continue
+      const codes = units.map((id) => placementOf(ix.hierarchy, id).unit?.code ?? id)
       out.push(
-        finding(loopUnitsConflict, loop.id, `${label(loop)} has members in ${units.size} units: ${codes.join(', ')}`, {
+        finding(loopUnitsConflict, loop.id, `${label(loop)} has members in ${units.length} units: ${codes.join(', ')}`, {
           key: `${loopUnitsConflict.id}:${loop.id}`,
           ...at(view),
         }),

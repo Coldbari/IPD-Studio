@@ -14,6 +14,8 @@ import { areaCodeOf, buildHierarchy, unitCodeOf, type Hierarchy } from '../model
 import { useStore } from '../store/store'
 import { buildIndex } from '../model/projectIndex'
 import { countNonIo, deriveIoList } from '../model/ioList'
+import { loopPlaceLabel, loopViews } from '../model/loopIndex'
+import { LOOP_TYPE_LABELS, type LoopCompleteness } from '../model/loop'
 
 /**
  * Neutralise a value a spreadsheet would EXECUTE rather than display.
@@ -138,7 +140,16 @@ export interface ReportRow {
    * the table.
    */
   recordKey: string | null
-  recordKind: EntityKind
+  /**
+   * Absent where the row is not a registry record at all.
+   *
+   * The Loop list is the case: a Loop is its own entity with a stable id, not
+   * an `EngineeringRecord`, and `EntityKind` deliberately does not have a
+   * `loop` member. Stamping one of the four kinds onto a loop row to satisfy
+   * the type would be a small lie in the data, and the editable path reads
+   * this only after `recordKey` has already proved the row IS a record.
+   */
+  recordKind?: EntityKind
 }
 
 /**
@@ -572,6 +583,113 @@ const ENGINEERING_ROUND_TRIP_FIELDS = [
  * the stable id, and refuses anything it cannot resolve rather than inventing
  * the hierarchy the file implies.
  */
+/* ------------------------------------------------------------- loop list */
+
+/**
+ * How a structural verdict is allowed to be WORDED in a deliverable.
+ *
+ * "Complete" on its own would be read as an approval by anybody skimming a
+ * CSV, and this software cannot approve a control scheme — it can only say
+ * which roles the declared loop type needs and whether they are present. Every
+ * label below says `Structurally`, and the Basis column carries the
+ * evaluation's own sentence, which ends by saying what it did not check.
+ */
+const LOOP_STATE_LABEL: Record<LoopCompleteness, string> = {
+  complete: 'Structurally complete',
+  incomplete: 'Structurally incomplete',
+  broken: 'Broken membership',
+  unknown: 'Type not stated',
+  'not-applicable': 'Not applicable',
+}
+
+/**
+ * THE LOOP LIST — export only, and read only.
+ *
+ * Persistent loops, never the derived grouping: a derived loop is an
+ * observation about tag numbers, and printing it in the same table as a
+ * declared engineering entity would let a reader mistake one for the other.
+ * A project that has declared none exports an empty list, which is the honest
+ * answer rather than a manufactured one.
+ *
+ * EVERY COLUMN IS DERIVED, so none of them carries a `field` and the Data
+ * workspace renders the whole table read-only without needing to be told. A
+ * Loop is not an `EngineeringRecord`; there is nowhere for a cell edit to go.
+ */
+export const LOOP_LIST_SPEC: ReportColumn[] = [
+  ...derived(
+    'Loop', 'Name', 'Description', 'Type', 'Type source', 'Status', 'State', 'Basis',
+    'Members', 'Member tags', 'Area / Unit', 'I/O',
+  ),
+]
+export const LOOP_LIST_COLUMNS = LOOP_LIST_SPEC.map((c) => c.label)
+
+export function loopListRows(doc: ProjectDoc): ReportRow[] {
+  // A project that has declared no loops has an empty list, and there is no
+  // reason for it to pay for an index walk and an I/O derivation to find that
+  // out — which is every project that has not adopted them.
+  if (!doc.loops?.length) return []
+  const ix = buildIndex(doc)
+  // One index, one evaluation. `loopViews` is what the Loop Manager and the
+  // QA rules read, so the CSV cannot disagree with either about whether a
+  // loop is finished.
+  const views = loopViews(ix)
+  const io = new Map(deriveIoList(ix).map((r) => [r.key, r.type]))
+
+  return views.map((view) => {
+    const { loop, evaluation } = view
+    // A member whose symbol is not on any sheet is SAID so rather than
+    // dropped: the record outlives the symbol, and a list that quietly
+    // shortened itself would under-report the loop.
+    const tags = view.members.map((m) => (m.drawn ? m.key : `${m.key} (not drawn)`))
+
+    // Counted from the I/O list's own verdicts. Nothing is classified here,
+    // and a member the list left out as `none` — a local gauge, a relief
+    // valve — is simply not an I/O point and is not counted as one.
+    const counts = new Map<string, number>()
+    for (const m of view.members) {
+      const t = io.get(m.key)
+      if (!t) continue
+      counts.set(t, (counts.get(t) ?? 0) + 1)
+    }
+    const ioSummary = [...counts.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([t, n]) => `${n} ${t}`)
+      .join(', ')
+
+    return {
+      // The anchor is the first DRAWN member, so clicking the row finds
+      // something. A loop with nothing drawn has no id to offer and falls back
+      // to its own — stable, and never an array index.
+      id: view.anchor?.targetId ?? loop.id,
+      sheetId: view.anchor?.sheetId ?? '',
+      // Not a registry record, so no key and no kind. See ReportRow.
+      recordKey: null,
+      cells: [
+        loop.number,
+        loop.name ?? '',
+        loop.description ?? '',
+        evaluation.type ? LOOP_TYPE_LABELS[evaluation.type] : '',
+        evaluation.typeSource === 'none' ? '' : evaluation.typeSource,
+        loop.status ?? '',
+        // An EMPTY loop gets its own word rather than 'Structurally
+        // incomplete'. `loop-incomplete` deliberately skips a loop with no
+        // members and `loop-empty` reports it as info, so a report that called
+        // it incomplete would be saying something the checker declines to say.
+        view.members.length === 0 ? 'No members' : LOOP_STATE_LABEL[evaluation.completeness],
+        evaluation.basis,
+        String(view.members.length),
+        tags.join('; '),
+        loopPlaceLabel(ix, view),
+        ioSummary,
+      ],
+    }
+  })
+}
+
+export function loopListCsv(doc: ProjectDoc): string {
+  return toCsv(LOOP_LIST_COLUMNS, loopListRows(doc))
+}
+
 export const ENGINEERING_SPEC: ReportColumn[] = [
   ...derived('Tag'),
   ...HIERARCHY_COLUMNS,
@@ -650,6 +768,11 @@ export function downloadLineList(): void {
 export function downloadEquipmentList(): void {
   const doc = useStore.getState().doc
   download(`${doc.meta.name || 'diagram'}-equipment-list.csv`, equipmentListCsv(doc), 'text/csv')
+}
+
+export function downloadLoopList(): void {
+  const doc = useStore.getState().doc
+  download(`${doc.meta.name || 'project'}-loops.csv`, loopListCsv(doc), 'text/csv')
 }
 
 export function downloadValveList(): void {

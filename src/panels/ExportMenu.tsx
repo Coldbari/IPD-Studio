@@ -16,6 +16,7 @@ import {
   downloadInstrumentIndex,
   downloadIoList,
   downloadLineList,
+  downloadLoopList,
   downloadValveList,
 } from '../export/csv'
 import { notify } from '../feedback/notices'
@@ -51,6 +52,7 @@ const SECTIONS: { title: string; items: Item[] }[] = [
       { label: 'Line list', run: () => downloadLineList() },
       { label: 'Equipment list', run: () => downloadEquipmentList() },
       { label: 'Valve list', run: () => downloadValveList() },
+      { label: 'Loop list', hint: 'Declared control loops, their type and structural state', run: () => downloadLoopList() },
       { label: 'Datasheet matrix', run: () => downloadDatasheetMatrix() },
     ],
   },

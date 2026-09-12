@@ -14,6 +14,7 @@ import {
   downloadEquipmentList,
   downloadInstrumentIndex,
   downloadLineList,
+  downloadLoopList,
   downloadValveList,
 } from '../export/csv'
 import { navigateWorkspace } from '../routes'
@@ -371,6 +372,7 @@ export function commandsFor(ctx: CommandContext): AppCommand[] {
   out.push({ id: 'export.lines', label: 'Export line list (CSV)', group: 'Document', keywords: ['report', 'csv'], run: () => downloadLineList() })
   out.push({ id: 'export.equipment', label: 'Export equipment list (CSV)', group: 'Document', keywords: ['report', 'csv', 'pump', 'vessel'], run: () => downloadEquipmentList() })
   out.push({ id: 'export.valves', label: 'Export valve list (CSV)', group: 'Document', keywords: ['report', 'csv', 'valve'], run: () => downloadValveList() })
+  out.push({ id: 'export.loops', label: 'Export loop list (CSV)', group: 'Document', keywords: ['report', 'csv', 'loop', 'control'], run: () => downloadLoopList() })
   out.push({
     id: 'help.shortcuts', label: 'Keyboard shortcuts', group: 'Document', shortcut: 'app.shortcuts',
     keywords: ['keys', 'help', 'bindings'], run: () => window.dispatchEvent(new Event('pid:shortcuts')),

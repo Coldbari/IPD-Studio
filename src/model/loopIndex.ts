@@ -24,6 +24,7 @@
 
 import type { ProjectIndex } from './projectIndex'
 import { evaluateLoop, type Loop, type LoopEvaluation, type LoopMember } from './loop'
+import { placementOf } from './hierarchy'
 
 export interface LoopView {
   loop: Loop
@@ -31,6 +32,21 @@ export interface LoopView {
   evaluation: LoopEvaluation
   /** First drawn member, so a report or a panel can jump somewhere. */
   anchor?: { targetId: string; sheetId: string }
+  /**
+   * The distinct, EXISTING units the members are assigned to, sorted by code.
+   *
+   * A loop owns no `unitId` of its own — a record names its unit, the unit
+   * names its area, and a third copy on the loop would be a third answer to
+   * one question (model/hierarchy.ts says this about areas; it is the same
+   * argument one level up). So it is derived, once, here — and the Loop
+   * Manager, the Loop list and `loop-units-conflict` all read THIS rather than
+   * each walking the members again and eventually disagreeing.
+   *
+   * Unassigned members contribute nothing, and a member assigned to a unit
+   * that has been deleted is left out: that is `record-orphan-unit`'s finding,
+   * and counting it here would report one mistake as two.
+   */
+  unitIds: string[]
 }
 
 /**
@@ -79,13 +95,38 @@ export function loopViews(ix: ProjectIndex): LoopView[] {
   const views = loops.map((loop) => {
     const members = membersOf(ix, loop.id)
     const anchor = anchorOf(ix, loop.id)
+    const units = new Set<string>()
+    for (const m of members) {
+      const unitId = ix.records[m.key]?.unitId
+      if (unitId && ix.hierarchy.unitById.has(unitId)) units.add(unitId)
+    }
+    const unitIds = [...units].sort((a, b) =>
+      (ix.hierarchy.unitById.get(a)?.code ?? a).localeCompare(ix.hierarchy.unitById.get(b)?.code ?? b))
     return {
       loop,
       members,
       evaluation: evaluateLoop(loop, members),
       ...(anchor ? { anchor } : {}),
+      unitIds,
     }
   })
   VIEWS.set(ix, views)
   return views
+}
+
+/**
+ * Where a loop sits in the plant, as a reader sees it.
+ *
+ * ONE formatter, so the Loop Manager and the Loop list cannot describe the
+ * same loop two ways. `Mixed units` is a real answer, not a failure: a
+ * transmitter in the process unit feeding a controller filed under the control
+ * room is a legitimate arrangement, and `loop-units-conflict` is what decides
+ * whether it is worth a warning.
+ */
+export function loopPlaceLabel(ix: ProjectIndex, view: LoopView): string {
+  if (view.unitIds.length === 0) return 'Unassigned'
+  if (view.unitIds.length > 1) return `Mixed units (${view.unitIds.length})`
+  const place = placementOf(ix.hierarchy, view.unitIds[0])
+  if (!place.unit) return 'Unassigned'
+  return place.area ? `${place.area.code} / ${place.unit.code}` : place.unit.code
 }

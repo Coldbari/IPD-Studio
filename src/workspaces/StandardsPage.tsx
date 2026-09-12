@@ -19,6 +19,7 @@ import {
 } from '../model/standard'
 import { FIELD_CATALOG, labelForField } from '../model/fields'
 import { UNIT_FIELD } from '../model/hierarchy'
+import { LOOP_FIELD } from '../model/loop'
 import { fingerprintStandard } from '../model/provenance'
 import type { EntityKind } from '../model/registry'
 import type { Severity } from '../validate/rules'
@@ -40,6 +41,10 @@ import './standards.css'
 const requirableFields = (kind: EntityKind): { key: string; label: string }[] => [
   ...FIELD_CATALOG[kind].flatMap((section) => section.fields),
   { key: UNIT_FIELD, label: labelForField(UNIT_FIELD) },
+  // Same reasoning one level along: a control loop is a reference rather than
+  // a typed value, and "this must belong to a declared loop" is a rule a house
+  // may or may not have. Offered here, never on by default.
+  { key: LOOP_FIELD, label: labelForField(LOOP_FIELD) },
 ]
 
 const KINDS: { id: EntityKind; label: string }[] = [
@@ -359,7 +364,12 @@ export default function StandardsPage() {
                   const on = (draft.required[id] ?? []).includes(f.key)
                   return (
                     <label key={f.key} className={`std-field${on ? ' on' : ''}`}>
-                      <input type="checkbox" checked={on} onChange={() => toggleRequired(id, f.key)} />
+                      <input
+                        type="checkbox"
+                        data-testid={`std-req-${id}-${f.key}`}
+                        checked={on}
+                        onChange={() => toggleRequired(id, f.key)}
+                      />
                       {labelForField(f.key)}
                     </label>
                   )

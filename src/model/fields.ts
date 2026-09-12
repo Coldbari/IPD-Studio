@@ -5,6 +5,7 @@
 import type { EntityKind } from './registry'
 import { DATASHEET_SECTIONS } from './datasheet'
 import { HIERARCHY_FIELD_LABELS } from './hierarchy'
+import { LOOP_FIELD_LABELS } from './loop'
 
 export interface FieldDef {
   key: string
@@ -170,6 +171,7 @@ const LABELS: Record<string, string> = {
     ),
   ),
   ...HIERARCHY_FIELD_LABELS,
+  ...LOOP_FIELD_LABELS,
 }
 
 export function labelForField(key: string): string {

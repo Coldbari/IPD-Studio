@@ -33,9 +33,12 @@ import {
   valveListRows,
   type ReportColumn,
   type ReportRow,
+  LOOP_LIST_SPEC,
+  loopListRows,
+  downloadLoopList,
 } from '../export/csv'
 
-type Tab = 'instruments' | 'io' | 'lines' | 'equipment' | 'valves'
+type Tab = 'instruments' | 'io' | 'lines' | 'equipment' | 'valves' | 'loops'
 
 interface Report {
   label: string
@@ -48,7 +51,7 @@ interface Report {
   note?: string
 }
 
-const TABS: Tab[] = ['instruments', 'io', 'lines', 'equipment', 'valves']
+const TABS: Tab[] = ['instruments', 'io', 'lines', 'equipment', 'valves', 'loops']
 
 /** Which cell is open for editing. One at a time — a table where every cell is
  *  a live input costs thousands of DOM nodes and invites edits nobody meant. */
@@ -151,6 +154,17 @@ export default function DataWorkspace() {
         download: downloadEquipmentList,
         empty: 'No equipment on the drawing yet. Place a pump, vessel or exchanger and it appears here — tagged or not.',
       },
+      // READ-ONLY, and it needs no switch to make it so: every column is
+      // derived, so none carries a `field`, so `editableAt` returns null for
+      // every cell. A Loop is not an EngineeringRecord and there is nowhere
+      // for an edit to go.
+      loops: {
+        label: 'Loop list',
+        columns: LOOP_LIST_SPEC,
+        rows: loopListRows(doc),
+        download: downloadLoopList,
+        empty: 'No loops declared yet. A loop is an engineering entity with a type and a number — declare one under Loops on the toolbar, or adopt what the tag numbers already imply.',
+      },
       valves: {
         label: 'Valve list',
         columns: VALVE_LIST_SPEC,
@@ -245,6 +259,7 @@ export default function DataWorkspace() {
     setEdit(null)
     if (!field || !row.recordKey) return
     if (value === (row.cells[col] ?? '')) return
+    if (!row.recordKind) return
     useStore.getState().setRecordField(row.recordKey, row.recordKind, field, value)
     setTouched((prev) => new Set(prev).add(cellId(row.recordKey!, field)))
   }
@@ -449,7 +464,7 @@ export default function DataWorkspace() {
                         // what it writes is the stable id, and the code the
                         // column prints is only ever a label. Renaming a unit
                         // later cannot reinterpret an assignment made here.
-                        if (assign === 'unit' && r.recordKey) {
+                        if (assign === 'unit' && r.recordKey && r.recordKind) {
                           return (
                             <td key={i} className="ws-cell ws-cell-assign">
                               <UnitPicker
@@ -459,7 +474,7 @@ export default function DataWorkspace() {
                                 value={unitIdOf(r)}
                                 disabled={hierarchy.units.length === 0}
                                 onChange={(unitId) => {
-                                  useStore.getState().assignUnit(r.recordKey!, r.recordKind, unitId)
+                                  useStore.getState().assignUnit(r.recordKey!, r.recordKind!, unitId)
                                   setTouched((prev) => new Set(prev).add(cellId(r.recordKey!, UNIT_FIELD)))
                                 }}
                               />

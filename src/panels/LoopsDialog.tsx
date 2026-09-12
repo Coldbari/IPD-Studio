@@ -6,12 +6,12 @@ import { useMemo, useState } from 'react'
 import Modal from './Modal'
 import { useStore } from '../store/store'
 import { qaFor } from '../validate/engine'
-import { loopViews, type LoopView } from '../model/loopIndex'
+import { loopViews, loopPlaceLabel, type LoopView } from '../model/loopIndex'
 import { LOOP_TYPES, LOOP_TYPE_LABELS, asLoopType, type LoopCompleteness } from '../model/loop'
 import { planLoopAdoption, type AdoptionRow } from '../model/loopAdoption'
-import { placementOf } from '../model/hierarchy'
 import { RECORD_STATUSES } from '../model/registry'
 import { locateCell } from '../canvas/locate'
+import { printPersistentLoopDiagram } from '../export/loopDiagram'
 
 /**
  * THE LOOP MANAGER.
@@ -38,21 +38,6 @@ const STATE_LABEL: Record<LoopCompleteness, string> = {
   broken: 'Broken',
   'not-applicable': 'Not checked',
   unknown: 'Type unstated',
-}
-
-/** Area/Unit is DERIVED from the members and never stored on the loop: a
- *  record names its unit, the unit names its area, and a third copy on the
- *  loop would be a third answer to one question. */
-function placeOf(view: LoopView, ix: ReturnType<typeof qaFor>['index']): string {
-  const units = new Set<string>()
-  for (const m of view.members) {
-    const unitId = ix.records[m.key]?.unitId
-    if (unitId && ix.hierarchy.unitById.has(unitId)) units.add(unitId)
-  }
-  if (units.size === 0) return 'Unassigned'
-  if (units.size > 1) return `Mixed units (${units.size})`
-  const place = placementOf(ix.hierarchy, [...units][0])
-  return place.area ? `${place.area.code} / ${place.unit!.code}` : place.unit!.code
 }
 
 export default function LoopsDialog({ onClose }: { onClose(): void }) {
@@ -141,6 +126,13 @@ export default function LoopsDialog({ onClose }: { onClose(): void }) {
                   <option value="">— no status —</option>
                   {RECORD_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
+                <button
+                  data-testid={`loop-diagram-${loop.id}`}
+                  title="Print an ISA-5.4-style loop sheet for this loop"
+                  onClick={() => printPersistentLoopDiagram(doc, loop.id)}
+                >
+                  Diagram
+                </button>
                 <button data-testid={`loop-del-${loop.id}`} title="Delete this loop" onClick={() => del(view)}>✕</button>
               </div>
 
@@ -151,7 +143,7 @@ export default function LoopsDialog({ onClose }: { onClose(): void }) {
                 <span data-testid={`loop-count-${loop.id}`}>
                   {view.members.length} member{view.members.length === 1 ? '' : 's'}
                 </span>
-                <span data-testid={`loop-place-${loop.id}`}>{placeOf(view, ix)}</span>
+                <span data-testid={`loop-place-${loop.id}`}>{loopPlaceLabel(ix, view)}</span>
                 {/* The verdict's own words, so the panel cannot paraphrase the
                     rule into something stronger than it says. */}
                 <span className="loops-basis">{view.evaluation.basis}</span>

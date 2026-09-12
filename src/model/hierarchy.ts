@@ -44,6 +44,7 @@
 
 import { ulid } from 'ulid'
 import type { EngineeringRecord, Registry } from './registry'
+import { LOOP_FIELD } from './loop'
 
 export interface Area {
   /** Stable identity. Never displayed, never reused, never derived. */
@@ -174,6 +175,15 @@ export function areaLabel(a: Area): string {
  */
 export function recordFieldValue(record: EngineeringRecord | undefined, field: string): string {
   if (field === UNIT_FIELD) return record?.unitId ?? ''
+  // The loop assignment, resolved the same way and through the same accessor —
+  // so a standard that requires one is checked by `required-field-empty` and
+  // no second rule.
+  //
+  // A DERIVED loop never satisfies this. The value read is `record.loopId`,
+  // which only a deliberate assignment sets; sharing a tag number with three
+  // other instruments is an observation, not a declaration, and treating it as
+  // one would let a requirement pass without anybody having decided anything.
+  if (field === LOOP_FIELD) return record?.loopId ?? ''
   return record?.fields[field] ?? ''
 }
 

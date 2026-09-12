@@ -234,3 +234,143 @@ test('a record pointing at a deleted loop says so and can be repaired', async ({
   await expect(page.getByTestId('eng-loop-note')).toBeVisible()
   expect((await recordOf(page, 'LT-101')).loopId).toBeUndefined()
 })
+
+/* ------------------------------------- Program 4: the list and the diagram */
+
+test('the Loop list reports the declared loop, and export mutates nothing', async ({ page }) => {
+  await app(page)
+  await drawLoop(page)
+
+  // Declare and populate entirely through the UI.
+  await page.getByTestId('tb-loops').click()
+  await page.getByTestId('loop-add').click()
+  const loopId = (await loopsInDoc(page))[0]!.id
+  await page.getByTestId(`loop-number-${loopId}`).fill('101')
+  await page.getByTestId(`loop-name-${loopId}`).fill('Vessel level')
+  await page.getByTestId(`loop-type-${loopId}`).selectOption('control')
+  await closeModal(page)
+  for (const letters of ['LT', 'LIC', 'LV']) {
+    await select(page, letters)
+    await page.getByTestId('insp-eng').click()
+    await page.getByTestId('eng-loop').selectOption(loopId)
+  }
+
+  // The Data workspace's Loop tab, read-only.
+  await page.getByTestId('rail-data').click()
+  await page.getByTestId('data-tab-loops').click()
+  const table = page.getByTestId('data-table-loops')
+  await expect(table.locator('tbody tr')).toHaveCount(1)
+  await expect(table).toContainText('101')
+  await expect(table).toContainText('Vessel level')
+  await expect(table).toContainText('Control')
+  await expect(table).toContainText('Structurally complete')
+  // Not one cell is editable: a Loop is not an engineering record.
+  await expect(table.locator('.ws-cell-btn')).toHaveCount(0)
+  await expect(table).not.toContainText(loopId)
+
+  // Reading the report changes nothing.
+  const before = await page.evaluate(() => {
+    const { useStore } = (window as never as { __pid: { useStore: Store } }).__pid
+    return JSON.stringify(useStore.getState().doc)
+  })
+  await page.getByTestId('data-tab-instruments').click()
+  await page.getByTestId('data-tab-loops').click()
+  expect(await page.evaluate(() => {
+    const { useStore } = (window as never as { __pid: { useStore: Store } }).__pid
+    return JSON.stringify(useStore.getState().doc)
+  })).toBe(before)
+
+  // Renumber, and the report follows the number without changing identity.
+  await page.getByTestId('rail-draw').click()
+  await page.getByTestId('tb-loops').click()
+  await page.getByTestId(`loop-number-${loopId}`).fill('201')
+  await closeModal(page)
+  await page.getByTestId('rail-data').click()
+  await page.getByTestId('data-tab-loops').click()
+  await expect(page.getByTestId('data-table-loops')).toContainText('201')
+  expect((await loopsInDoc(page))[0]!.id).toBe(loopId)
+
+  // Rename a member tag; the list follows it through the registry.
+  await page.getByTestId('rail-draw').click()
+  await page.evaluate(() => {
+    const { useStore } = (window as never as { __pid: { useStore: Store } }).__pid
+    const s = useStore.getState()
+    const n = s.doc.sheets[0].nodes.find((x: any) => x.tag?.letters === 'LT')
+    s.setTag(n.id, { letters: 'LT', loop: '301' })
+  })
+  await page.getByTestId('rail-data').click()
+  await page.getByTestId('data-tab-loops').click()
+  await expect(page.getByTestId('data-table-loops')).toContainText('LT-301')
+})
+
+test('a declared loop prints its own diagram, and printing persists nothing', async ({ page }) => {
+  await app(page)
+  await drawLoop(page)
+
+  await page.getByTestId('tb-loops').click()
+  await page.getByTestId('loop-add').click()
+  const loopId = (await loopsInDoc(page))[0]!.id
+  await page.getByTestId(`loop-number-${loopId}`).fill('101')
+  await page.getByTestId(`loop-type-${loopId}`).selectOption('control')
+  await closeModal(page)
+  for (const letters of ['LT', 'LIC', 'LV']) {
+    await select(page, letters)
+    await page.getByTestId('insp-eng').click()
+    await page.getByTestId('eng-loop').selectOption(loopId)
+  }
+
+  // The print pipeline builds a hidden iframe and calls print(); the dialog
+  // cannot be driven from here, so the assertion is on what it put IN it.
+  await page.evaluate(() => { window.print = () => {} })
+  const before = await page.evaluate(() => {
+    const { useStore } = (window as never as { __pid: { useStore: Store } }).__pid
+    return JSON.stringify(useStore.getState().doc)
+  })
+
+  await page.getByTestId('tb-loops').click()
+  await page.getByTestId(`loop-diagram-${loopId}`).click()
+
+  const svg = await page.evaluate(() =>
+    [...document.querySelectorAll('iframe')]
+      .map((f) => f.contentDocument?.body?.innerHTML ?? '')
+      .find((h) => h.includes('LOOP')) ?? '')
+  expect(svg).toContain('LOOP 101')
+  expect(svg).toContain('LT-101')
+  expect(svg).toContain('Structurally complete')
+  expect(svg).toMatch(/not a verified wiring diagram/i)
+  expect(svg).not.toContain(loopId)
+
+  expect(await page.evaluate(() => {
+    const { useStore } = (window as never as { __pid: { useStore: Store } }).__pid
+    return JSON.stringify(useStore.getState().doc)
+  })).toBe(before)
+})
+
+test('a house standard can require a loop, and the default does not', async ({ page }) => {
+  await app(page)
+  await drawLoop(page)
+
+  await page.getByTestId('rail-standards').click()
+  const box = page.getByTestId('std-req-instrument-general.loop')
+
+  // Offered, and OFF by default — a project that never asks sees no change.
+  await expect(box).toBeVisible()
+  await expect(box).not.toBeChecked()
+  expect(await page.evaluate(() => {
+    const { useStore } = (window as never as { __pid: { useStore: Store } }).__pid
+    return useStore.getState().doc.standard?.required?.instrument ?? null
+  })).toBeNull()
+
+  // A house ticks it and applies. The Standards screen edits a DRAFT and shows
+  // what adopting it would cost before anything changes, so the tick alone is
+  // not the decision — pressing Apply is.
+  await box.check()
+  await expect(box).toBeChecked()
+  await page.getByRole('button', { name: 'Apply to this project' }).click()
+
+  const required = await page.evaluate(() => {
+    const { useStore } = (window as never as { __pid: { useStore: Store } }).__pid
+    return useStore.getState().doc.standard?.required?.instrument ?? []
+  })
+  expect(required).toContain('general.loop')
+})

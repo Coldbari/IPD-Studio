@@ -445,6 +445,28 @@ export function evaluateLoop(loop: Loop, members: readonly LoopMember[]): LoopEv
   }
 }
 
+/**
+ * The reserved required-field key for a Loop assignment.
+ *
+ * NOT in `FIELD_CATALOG`, for the reason `UNIT_FIELD` is not: a loop is not a
+ * text field, it is a reference edited with a picker and stored as a stable
+ * id. But "an object must belong to a loop before its record is usable" is
+ * exactly what `StandardProfile.required` exists to express, and a second
+ * mechanism beside it would be a second place to look.
+ *
+ * DELIBERATELY NOT IN `DEFAULT_STANDARD.required`. Whether an instrument must
+ * belong to a declared loop is a house decision, and adding it to the default
+ * would change the fingerprint of every project that never asked for it — and
+ * fire the requirement at every one of them at once. A house that wants it
+ * ticks the box, its own fingerprint moves, and that is correct: the house
+ * changed its standard.
+ */
+export const LOOP_FIELD = 'general.loop'
+
+export const LOOP_FIELD_LABELS: Record<string, string> = {
+  [LOOP_FIELD]: 'Loop',
+}
+
 /* ------------------------------------------------------------ uniqueness */
 
 /**
