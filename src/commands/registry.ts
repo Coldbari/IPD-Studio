@@ -17,6 +17,7 @@ import {
   downloadValveList,
 } from '../export/csv'
 import { navigateWorkspace } from '../routes'
+import { keyOfNode, kindOfNode } from '../model/registry'
 
 /**
  * What the application can be asked to do.
@@ -257,6 +258,85 @@ export function commandsFor(ctx: CommandContext): AppCommand[] {
     out.push({
       id: 'edit.paste', label: 'Paste', group: 'Selection', shortcut: 'edit.paste', run: pasteClipboard,
     })
+  }
+
+  // ── control loops ────────────────────────────────────────────────────
+  //
+  // Three commands, all of which call the store actions from P2-C Program 2.
+  // Nothing here decides whether a number collides, whether a key exists or
+  // what an undo step contains — a palette-flavoured copy of those rules is
+  // exactly the second implementation this registry's header warns about.
+  //
+  // Deliberately absent: drag-to-assign, and anything that would put loop
+  // geometry on the canvas. A loop is engineering data, not canvas decoration.
+  {
+    const record = (() => {
+      if (ctx.nodeIds.length !== 1) return null
+      const node = ctx.sheet.nodes.find((n) => n.id === ctx.nodeIds[0])
+      if (!node) return null
+      const key = keyOfNode(node)
+      const kind = kindOfNode(node)
+      return key && kind ? { key, kind } : null
+    })()
+
+    if (record) {
+      const assigned = s.doc.registry?.[record.key]?.loopId
+      const loops = s.doc.loops ?? []
+
+      out.push({
+        id: 'loop.create',
+        label: `Create a loop from ${record.key}`,
+        group: 'Document',
+        keywords: ['loop', 'control', 'new', 'declare'],
+        run: () => {
+          const number = window.prompt(`Loop number for ${record.key}?`, '')?.trim()
+          if (!number) return
+          const made = s.addLoop(number)
+          if (!made.ok || !made.id) { showStatus(made.reason ?? 'That loop could not be created.'); return }
+          const r = s.assignLoop(record.key, record.kind, made.id)
+          showStatus(r.ok ? `${record.key} is now in loop ${number}.` : r.reason ?? 'Assigned nothing.')
+        },
+      })
+
+      if (loops.length > 0) {
+        out.push({
+          id: 'loop.assign',
+          label: `Assign ${record.key} to a loop`,
+          group: 'Document',
+          keywords: ['loop', 'control', 'member', 'join'],
+          run: () => {
+            const list = loops.map((l) => l.number).join(', ')
+            const typed = window.prompt(`Which loop should ${record.key} join?\n\n${list}`, '')?.trim()
+            if (!typed) return
+            // Resolved against DECLARED loops only, and never created — the
+            // same doctrine as `resolveUnitByCode`. A typo is refused, not
+            // turned into a new loop.
+            const hits = loops.filter((l) => l.number.trim().toLowerCase() === typed.toLowerCase())
+            if (hits.length !== 1) {
+              showStatus(hits.length === 0
+                ? `No loop numbered ${typed}. Declare it under Loops first.`
+                : `${hits.length} loops are numbered ${typed} — fix the duplicate first.`)
+              return
+            }
+            const r = s.assignLoop(record.key, record.kind, hits[0]!.id)
+            showStatus(r.ok ? `${record.key} is now in loop ${hits[0]!.number}.` : r.reason ?? 'Assigned nothing.')
+          },
+        })
+      }
+
+      if (assigned) {
+        out.push({
+          id: 'loop.remove',
+          label: `Remove ${record.key} from its loop`,
+          group: 'Document',
+          keywords: ['loop', 'unassign', 'clear'],
+          run: () => {
+            const r = s.unassignLoop(record.key)
+            showStatus(r.ok ? `${record.key} is no longer in a loop.` : r.reason ?? 'Nothing changed.')
+          },
+        })
+      }
+    }
   }
 
   // ── the view ─────────────────────────────────────────────────────────

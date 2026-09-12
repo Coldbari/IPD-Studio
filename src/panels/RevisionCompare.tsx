@@ -33,11 +33,23 @@ const ENTITY_LABEL: Record<DocChange['entityType'], string> = {
   'qa-accepted': 'Accepted finding',
   area: 'Area',
   unit: 'Unit',
+  loop: 'Loop',
   document: 'Document',
 }
 
 const show = (v: DocChange['before']): string =>
   v === undefined || v === '' ? '—' : String(v)
+
+/**
+ * What a reviewer reads in the "Tag / key" column.
+ *
+ * A loop prints as its NUMBER, which is what an engineer calls it. The ULID
+ * behind it is the identity the comparison ran on and is deliberately not
+ * shown — it identifies the loop to the software, not to the reader, and a
+ * table full of 26-character ids is a table nobody scans.
+ */
+const keyOf = (c: DocChange): string =>
+  c.entityType === 'loop' ? `Loop ${c.entityKey ?? '—'}` : c.entityKey ?? '—'
 
 export default function RevisionCompare({ sheet }: { sheet: Sheet }) {
   const issued = revisionsOf(sheet).filter(isIssued)
@@ -153,7 +165,7 @@ export default function RevisionCompare({ sheet }: { sheet: Sheet }) {
                   <tr key={`${c.entityType}-${c.entityId}-${c.field ?? ''}-${i}`} className={`cmp-${c.kind}`}>
                     <td>{c.kind}</td>
                     <td>{ENTITY_LABEL[c.entityType]}</td>
-                    <td>{c.entityKey ?? '—'}</td>
+                    <td>{keyOf(c)}</td>
                     <td>{c.field ?? '—'}</td>
                     <td>{show(c.before)}</td>
                     <td>{show(c.after)}</td>

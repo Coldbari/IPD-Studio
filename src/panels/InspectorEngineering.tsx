@@ -10,7 +10,9 @@ import { pauseHistory, resumeHistory, useStore } from '../store/store'
 import { expandLetters } from '../isa/tag'
 import DatasheetEditor from './DatasheetEditor'
 import UnitPicker from './UnitPicker'
+import LoopPicker from './LoopPicker'
 import { LEGACY_AREA_FIELD, buildHierarchy, placementOf } from '../model/hierarchy'
+import { LOOP_TYPE_LABELS } from '../model/loop'
 
 const STATUS_LABEL: Record<RecordStatus, string> = {
   draft: 'Draft',
@@ -34,6 +36,8 @@ export default function InspectorEngineering({ node }: { node: PlantNode }) {
   const setRecordField = useStore((s) => s.setRecordField)
   const setRecordStatus = useStore((s) => s.setRecordStatus)
   const assignUnit = useStore((s) => s.assignUnit)
+  const assignLoop = useStore((s) => s.assignLoop)
+  const unassignLoop = useStore((s) => s.unassignLoop)
   const [datasheetOpen, setDatasheetOpen] = useState(false)
   // Above the early returns, because a hook may not sit behind one — and
   // memoised on the document because this panel re-renders on every keystroke
@@ -116,6 +120,62 @@ export default function InspectorEngineering({ node }: { node: PlantNode }) {
                 ? 'This unit’s area is missing from the project.'
                 : 'Not assigned to a unit.'}
         </p>
+      </section>
+
+      {/*
+        THE LOOP. A reference, like the unit above it — the same shape of
+        control, writing the same shape of value: a stable id, displayed by the
+        number an engineer reads. The id never appears on screen.
+
+        A `loopId` naming no loop is shown as BROKEN rather than silently blank.
+        Nothing is fabricated to fill the gap: the loop is gone, the record says
+        so, and there is a button to say so too.
+      */}
+      <section className="eng-section eng-place">
+        <div className="prop-title">Control loop</div>
+        <label className="eng-field">
+          <span>Loop</span>
+          <LoopPicker
+            testId="eng-loop"
+            loops={doc.loops ?? []}
+            value={record?.loopId}
+            onChange={(loopId) => {
+              // Straight to the authoritative actions. The panel decides
+              // nothing about collisions, membership or history.
+              if (loopId) assignLoop(key, kind, loopId)
+              else unassignLoop(key)
+            }}
+          />
+        </label>
+        {(() => {
+          const loop = record?.loopId ? (doc.loops ?? []).find((l) => l.id === record.loopId) : undefined
+          if (record?.loopId && !loop) {
+            return (
+              <p className="prop-hint eng-loop-broken" data-testid="eng-loop-broken">
+                <b>Broken:</b> this object is assigned to a loop that is not in the project any more.{' '}
+                <button data-testid="eng-loop-repair" onClick={() => unassignLoop(key)}>
+                  Clear the assignment
+                </button>
+              </p>
+            )
+          }
+          if (!loop) {
+            return (
+              <p className="prop-hint" data-testid="eng-loop-note">
+                {(doc.loops ?? []).length === 0
+                  ? 'No loops declared yet — add them under Loops on the toolbar.'
+                  : 'Not assigned to a loop.'}
+              </p>
+            )
+          }
+          return (
+            <p className="prop-hint" data-testid="eng-loop-note">
+              Loop {loop.number}
+              {loop.name ? ` — ${loop.name}` : ''}
+              {loop.type ? ` · ${LOOP_TYPE_LABELS[loop.type]}` : ' · type not stated'}
+            </p>
+          )
+        })()}
       </section>
 
       {sections.map((section) => (

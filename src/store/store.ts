@@ -65,7 +65,8 @@ import type { EngineeringRecord, EntityKind, RecordStatus, Registry } from '../m
 import { keyOfEdge, keyOfNode } from '../model/registry'
 import type { Area, LegacyRow, Unit } from '../model/hierarchy'
 import type { Loop, LoopType } from '../model/loop'
-import { loopNumberTaken, newLoop } from '../model/loop'
+import { loopNumberKey, loopNumberTaken, newLoop } from '../model/loop'
+import type { AdoptionRow } from '../model/loopAdoption'
 import { liveKeys } from '../model/registry'
 import type { QaEvidence, StandardProvenance } from '../model/provenance'
 import { issueGateFor } from '../model/standard'
@@ -241,6 +242,10 @@ export interface StoreState {
   /** Clear a record's loop assignment. Explicit, and deliberately NOT reachable
    *  by clearing a tag: those are different intentions. */
   unassignLoop(key: string): LoopResult
+  /** Apply an adopted-loop plan as ONE undo step. Only rows the plan marked
+   *  `adopt` are acted on, each re-checked against the live document first;
+   *  nothing is renamed, deleted or inferred. */
+  applyLoopAdoption(rows: readonly AdoptionRow[]): { loops: number; assigned: number }
   /** Apply a legacy Area/Unit mapping plan as ONE undo step. Only rows the
    *  plan marked `mapped` carry a unit; nothing else is touched, and the
    *  legacy `general.area` text is left exactly where it is. */
@@ -1179,6 +1184,64 @@ export const useStore = create<StoreState>()(
             }
           })
           return { ok: true, id: was }
+        },
+
+        /**
+         * Adopt derived loops, as ONE undo step.
+         *
+         * The plan was computed against a document that may since have moved
+         * on, so every row is re-checked here — the same defensive re-read
+         * `applyLegacyMapping` does, and for the same reason: re-deciding
+         * something the user has decided since is exactly what a migration
+         * must not do.
+         *
+         * IDEMPOTENT. A number already taken is skipped rather than duplicated,
+         * and a member that has gained a loop since is left where it is. Running
+         * the same plan twice therefore changes nothing the second time.
+         *
+         * It creates loops and assigns records. It does not touch tags, nodes,
+         * HMI screens, the derived grouping, or anything else.
+         */
+        applyLoopAdoption(rows) {
+          const wanted = rows.filter((r) => r.verdict === 'adopt' && r.loopNumber)
+          if (!wanted.length) return { loops: 0, assigned: 0 }
+          let loopCount = 0
+          let assignedCount = 0
+
+          set((sx) => {
+            const loops: Loop[] = [...(sx.doc.loops ?? [])]
+            const taken = new Set(loops.map((l) => loopNumberKey(l.number)))
+            const registry: Registry = { ...sx.doc.registry }
+            const drawn = liveKeys(sx.doc.sheets)
+            const now = new Date().toISOString()
+
+            for (const r of wanted) {
+              const number = r.loopNumber!
+              if (taken.has(loopNumberKey(number))) continue
+              // Only members that still exist and are still unassigned.
+              const members = r.members.filter((key) => {
+                const rec = registry[key]
+                if (rec?.loopId) return false
+                return Boolean(rec) || drawn.has(key)
+              })
+              if (members.length < 2) continue
+
+              const loop = newLoop(number, r.suggestedType ? { type: r.suggestedType } : {})
+              loops.push(loop)
+              taken.add(loopNumberKey(number))
+              loopCount += 1
+              for (const key of members) {
+                const prev: EngineeringRecord = registry[key] ?? { key, kind: 'instrument', fields: {} }
+                registry[key] = { ...prev, loopId: loop.id, updated: now }
+                assignedCount += 1
+              }
+            }
+
+            if (loopCount === 0) return sx
+            return { doc: touched({ ...sx.doc, loops, registry }), dirty: true }
+          })
+
+          return { loops: loopCount, assigned: assignedCount }
         },
 
         applyLegacyMapping(rows) {

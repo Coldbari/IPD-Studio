@@ -31,6 +31,7 @@ import { isPortEnd } from './types'
 import { keyOfEdge, keyOfNode } from './registry'
 import type { EngineeringRecord } from './registry'
 import { buildHierarchy, type Hierarchy } from './hierarchy'
+import type { Loop } from './loop'
 import { fingerprintStandard } from './provenance'
 import type { IssueGate } from './standard'
 
@@ -40,7 +41,7 @@ export type EntityType =
   | 'sheet' | 'node' | 'edge' | 'record'
   | 'hmi-screen' | 'hmi-widget' | 'hmi-pipe'
   | 'standard' | 'fluid' | 'budget' | 'custom-symbol' | 'qa-accepted'
-  | 'area' | 'unit' | 'document'
+  | 'area' | 'unit' | 'loop' | 'document'
 
 /** Engineering changed the plant; graphical changed the picture of it. */
 export type ChangeCategory = 'engineering' | 'graphical' | 'metadata'
@@ -168,7 +169,7 @@ const ENTITY_ORDER: Record<EntityType, number> = {
   sheet: 0, node: 1, edge: 2, record: 3,
   'hmi-screen': 4, 'hmi-widget': 5, 'hmi-pipe': 6,
   standard: 7, fluid: 8, 'custom-symbol': 9, 'qa-accepted': 10, budget: 11,
-  area: 12, unit: 13, document: 14,
+  area: 12, unit: 13, loop: 14, document: 15,
 }
 
 /** Sheet, then category, then engineering key, then field — so the same pair
@@ -270,6 +271,7 @@ export function compareDocs(before: ProjectDoc, after: ProjectDoc, qa?: DocDiff[
 
   diffDocumentMeta(before, after, push)
   diffHierarchy(before, after, push)
+  diffLoops(before, after, push)
   diffRegistry(before, after, renames, push)
   diffHmi(before, after, renames, push)
   diffStandard(before, after, push)
@@ -419,6 +421,16 @@ function diffRegistry(before: ProjectDoc, after: ProjectDoc, renames: Map<string
         before: unitText(wasH, oldRec.unitId), after: unitText(nowH, newRec.unitId), category: 'engineering',
       })
     }
+    // Loop membership, compared by stable ID and displayed by NUMBER — the
+    // same split as the unit above, and for the same reason: renumbering a
+    // loop is ONE change reported on the loop, and must not also report every
+    // member as having moved. Only a genuine reassignment lands here.
+    if ((oldRec.loopId ?? '') !== (newRec.loopId ?? '')) {
+      push({
+        kind: 'modified', entityType: 'record', entityId: toKey, entityKey: toKey, field: 'loop',
+        before: loopText(before, oldRec.loopId), after: loopText(after, newRec.loopId), category: 'engineering',
+      })
+    }
   }
 
   for (const key of Object.keys(now)) if (was[key]) compare(key, key)
@@ -492,6 +504,61 @@ function diffHierarchy(before: ProjectDoc, after: ProjectDoc, push: (c: DocChang
     // why it is reported here rather than on each record.
     if (old.areaId !== u.areaId) {
       push({ kind: 'modified', entityType: 'unit', entityId: id, entityKey: u.code, field: 'area', before: areaCode(before, old.areaId), after: areaCode(after, u.areaId), category: 'engineering' })
+    }
+  }
+}
+
+/** A loop as a reviewer reads it, for a membership change. The NUMBER, never
+ *  the id — and the raw id only when the loop is gone and there is no number
+ *  left to print, where silence would be misleading. Mirrors `unitText`. */
+function loopText(doc: ProjectDoc, loopId: string | undefined): DiffValue {
+  if (!loopId) return undefined
+  const loop = (doc.loops ?? []).find((l) => l.id === loopId)
+  return loop ? loop.number : `(deleted loop ${loopId})`
+}
+
+/**
+ * Persistent loops.
+ *
+ * Keyed on the stable id, so reordering `doc.loops` — which ordinary editing
+ * does — produces nothing at all, and RENUMBERING is one `renamed` on the loop
+ * rather than a change reported against every member. That is the whole reason
+ * membership points at an id: `diffRegistry` compares `loopId` by id and
+ * displays it by number, so only a genuine REASSIGNMENT lands there.
+ *
+ * `type` is engineering: what kind of loop this is decides what it must
+ * contain, what it is commissioned as, and how it is checked. `name`,
+ * `description` and `status` are metadata — a reviewer wants them listed, but
+ * none of them changes the plant.
+ *
+ * MEMBERSHIP IS NOT DIFFED HERE. A member joining or leaving is a change to
+ * the RECORD, and `diffRegistry` reports it there. Reporting it twice — once
+ * on the record and once on the loop — would double every membership edit in
+ * the table and leave a reviewer counting the same move as two.
+ */
+function diffLoops(before: ProjectDoc, after: ProjectDoc, push: (c: DocChange) => void) {
+  const was = byId<Loop>(before.loops ?? [])
+  const now = byId<Loop>(after.loops ?? [])
+
+  for (const [id, loop] of was) {
+    if (!now.has(id)) push({ kind: 'removed', entityType: 'loop', entityId: id, entityKey: loop.number, category: 'engineering' })
+  }
+  for (const [id, loop] of now) {
+    const old = was.get(id)
+    if (!old) {
+      push({ kind: 'added', entityType: 'loop', entityId: id, entityKey: loop.number, category: 'engineering' })
+      continue
+    }
+    if (old.number !== loop.number) {
+      push({ kind: 'renamed', entityType: 'loop', entityId: id, entityKey: loop.number, field: 'number', before: old.number, after: loop.number, category: 'engineering' })
+    }
+    if ((old.type ?? '') !== (loop.type ?? '')) {
+      push({ kind: 'modified', entityType: 'loop', entityId: id, entityKey: loop.number, field: 'type', before: old.type, after: loop.type, category: 'engineering' })
+    }
+    for (const field of ['name', 'description', 'status'] as const) {
+      if ((old[field] ?? '') !== (loop[field] ?? '')) {
+        push({ kind: 'modified', entityType: 'loop', entityId: id, entityKey: loop.number, field, before: old[field], after: loop[field], category: 'metadata' })
+      }
     }
   }
 }
@@ -858,7 +925,10 @@ export const DOC_FIELD_COVERAGE: Record<keyof ProjectDoc, 'compared' | string> =
   qa: 'compared',
   areas: 'compared',
   units: 'compared',
-  loops: 'Excluded: P2-C Program 1 adds the entity and its membership reference only — nothing here compares them yet. Loop added / removed / renumbered / retyped is Program 3, where diffLoops and the loop EntityType land together. Until then a loop edit produces no change, which is the intended Program 1 behaviour rather than an omission.',
+  // Compared by stable id and displayed by number. MEMBERSHIP is compared on
+  // the record (`loopId` below), not here, so a member moving is one change
+  // rather than two.
+  loops: 'compared',
   schemaVersion: 'Excluded: a migration artefact, identical for two snapshots of one project.',
   // The controlled-document identity fields. META_FIELD_COVERAGE above is the
   // second ledger, saying which of them are compared and which are timestamps.
@@ -881,7 +951,7 @@ export const RECORD_FIELD_COVERAGE: Record<keyof EngineeringRecord, 'compared' |
   status: 'compared',
   owner: 'compared',
   unitId: 'compared — by stable id, displayed as AREA/UNIT codes',
-  loopId: 'Excluded: the membership reference exists from P2-C Program 1, and nothing compares it yet. Program 3 reports a member joining or leaving a loop — by stable id, displayed as the loop NUMBER, so renumbering a loop stays one change on the loop rather than one per member.',
+  loopId: 'compared — by stable id, displayed as the loop NUMBER, so renumbering a loop stays one change on the loop rather than one per member',
   key: 'Excluded: it IS the identity the comparison is keyed on; a changed key is a rename, reported on the node.',
   kind: 'Excluded: derived from the object that wears the tag, and a change there is already reported as the node changing kind.',
   rev: 'Excluded: stamped BY issuing, so comparing it across two issues reports the act of comparing.',

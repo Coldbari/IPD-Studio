@@ -34,6 +34,9 @@ import { qaFor, resetQaCache } from '../../src/validate/engine'
 import { runRules } from '../../src/validate/engine'
 import { ALL_RULES } from '../../src/validate/rules/index'
 import { newLoop } from '../../src/model/loop'
+import { loopViews } from '../../src/model/loopIndex'
+import { planLoopAdoption } from '../../src/model/loopAdoption'
+import { compareDocs } from '../../src/model/diff'
 import { serializeDoc } from '../../src/persist/file'
 import { ENGINEERING_SPEC } from '../../src/export/csv'
 import { MAX_EVIDENCE_BYTES, MAX_EVIDENCE_FINDINGS } from '../../src/model/provenance'
@@ -201,6 +204,22 @@ test.skipIf(!process.env.PERF)('P1 hot paths', () => {
    * using the shared evaluation. Named here rather than buried: it is 4% of
    * the rule pass and has not been optimised further.
    *
+   * P2-C PROGRAM 3 added the workflow. Measured on the same fixture:
+   *
+   *   loopViews, no loops declared                 ~0.00 ms (over buildIndex)
+   *   loopViews, 125 loops, cold index             ~0.09 ms (over buildIndex)
+   *   loopViews, 125 loops, memo hit                0.000 ms
+   *   planLoopAdoption, 125 derived loops           0.50 ms
+   *   compareDocs incl. diffLoops, 125 loops        1.73 ms
+   *
+   * The Loop Manager's data preparation IS `loopViews(ix)` — the panel derives
+   * nothing of its own and re-reads the index `qaFor` already caches — so the
+   * memo-hit row is what a re-render costs. Adoption planning and the revision
+   * comparison are both user-initiated and neither is on a render path.
+   *
+   * No O(N^2) anywhere in the workflow: every one of these is a single pass
+   * over the loops or the records, off the one ProjectIndex.
+   *
    * THE DOMINANT COST IS NOT THE LOOP LAYER. `no-receiver` alone is ~4.5 ms of
    * the ~8.1 ms rule pass: it runs `ix.allNodes.some(...)` inside a loop over
    * `ix.allNodes`, so 500 x 501 on this fixture. It is pre-existing, it is
@@ -261,6 +280,16 @@ test.skipIf(!process.env.PERF)('P1 hot paths', () => {
     process.stderr.write(`  loop rules, ${name.padEnd(10)} TOTAL ${total.toFixed(3)} ms/call\n`)
     process.stderr.write(`    ${each.join('  ')}\n`)
   }
+
+  // P2-C PROGRAM 3: what the loop workflow costs. The Loop Manager's data
+  // preparation IS `loopViews(ix)` — it computes nothing of its own — so
+  // measuring that measures the panel.
+  bench('loopViews, no loops declared', 50, () => { loopViews(buildIndex(doc)) })
+  bench('loopViews, 125 loops (cold index)', 50, () => { loopViews(buildIndex(looped)) })
+  bench('loopViews, 125 loops (memo hit)', 200, () => { loopViews(lix) })
+  bench('planLoopAdoption, 125 derived', 20, () => { planLoopAdoption(lix) })
+  const renamed = { ...looped, loops: (looped.loops ?? []).map((l, i) => (i % 2 ? { ...l, number: `${l.number}b` } : l)) }
+  bench('diffLoops via compareDocs, 125 loops', 20, () => { compareDocs(looped, renamed) })
 
   const rix = buildIndex(doc)
   const costs = ALL_RULES.map((r) => {

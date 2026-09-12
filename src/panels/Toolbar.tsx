@@ -13,6 +13,7 @@ import AccountMenu from './AccountMenu'
 import FileMenu from './FileMenu'
 import FluidsDialog from './FluidsDialog'
 import AreasDialog from './AreasDialog'
+import LoopsDialog from './LoopsDialog'
 import { BudgetChip } from './BudgetDialog'
 import { hint } from '../shortcuts/registry'
 import { activeSheet } from '../store/store'
@@ -73,6 +74,7 @@ export default function Toolbar() {
   const name = useStore((s) => s.doc.meta.name)
   const [fluidsOpen, setFluidsOpen] = useState(false)
   const [areasOpen, setAreasOpen] = useState(false)
+  const [loopsOpen, setLoopsOpen] = useState(false)
 
   useEffect(() => {
     const onSave = () => void saveNow()
@@ -122,6 +124,11 @@ export default function Toolbar() {
           Areas
         </button>
         {areasOpen && <AreasDialog onClose={() => setAreasOpen(false)} />}
+        <button data-testid="tb-loops" onClick={() => setLoopsOpen(true)}
+          title="Declare control loops — assign an object to one in its Engineering tab">
+          Loops
+        </button>
+        {loopsOpen && <LoopsDialog onClose={() => setLoopsOpen(false)} />}
         <BudgetChip />
         <span className="tb-sep" />
         <ZoomCluster />

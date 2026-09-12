@@ -1677,3 +1677,36 @@ button.used-row:hover { background: var(--c-accent-soft); color: var(--c-accent)
 .std-policy { width: 100%; border-collapse: collapse; font-size: 12px; margin: 6px 0; }
 .std-policy th, .std-policy td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--c-line); }
 .std-policy-sev label { margin-right: 8px; white-space: nowrap; }
+
+/* ── Loop Manager ────────────────────────────────────────────────────────
+   Built on the Areas dialog's shapes: a list of rows you type into, with the
+   derived-loop preview held apart underneath so a read-only observation can
+   never be mistaken for a declared engineering entity. */
+.loops { display: flex; flex-direction: column; gap: 10px; }
+.loops-empty, .loops-error { font-size: 12px; line-height: 1.5; margin: 0; }
+.loops-error { color: var(--c-bad); font-weight: 600; }
+.loops-row { border: 1px solid var(--c-line); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.loops-main { display: flex; gap: 6px; align-items: center; }
+.loops-number { width: 90px; }
+.loops-name { flex: 1; min-width: 80px; }
+.loops-type, .loops-status { max-width: 150px; }
+.loops-meta { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; font-size: 11px; opacity: 0.85; }
+.loops-basis { flex-basis: 100%; opacity: 0.75; }
+.loops-state { font-weight: 600; padding: 1px 6px; border-radius: 9px; }
+.loops-state-complete { background: var(--c-accent-soft); color: var(--c-accent); }
+.loops-state-incomplete { background: #fbf2e2; color: var(--c-warn); }
+.loops-state-broken { background: #fdecea; color: var(--c-bad); }
+.loops-state-unknown, .loops-state-not-applicable { background: var(--c-chrome-2); color: var(--c-ink-2); }
+.loops-members { display: flex; flex-wrap: wrap; gap: 6px; }
+.loops-member { display: inline-flex; align-items: center; border: 1px solid var(--c-line); border-radius: 10px; overflow: hidden; }
+.loops-member-gone { border-color: var(--c-bad); }
+.loops-member-go, .loops-member-x { border: 0; background: none; font-size: 11px; padding: 2px 6px; cursor: pointer; }
+.loops-derived { border-top: 1px solid var(--c-line); padding-top: 10px; }
+.loops-plan { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 11px; }
+.loops-plan li { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; padding: 4px 6px; border-radius: 4px; background: var(--c-chrome); }
+.loops-plan-verdict { font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; }
+.loops-plan-adopt .loops-plan-verdict { color: var(--c-accent); }
+.loops-plan-attention .loops-plan-verdict { color: var(--c-warn); }
+.loops-plan-skip .loops-plan-verdict { opacity: 0.6; }
+.loops-plan-reason { flex-basis: 100%; opacity: 0.8; }
+.eng-loop-broken { color: var(--c-bad); }
