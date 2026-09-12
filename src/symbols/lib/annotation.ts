@@ -70,6 +70,14 @@ export const annotations: SymbolDef[] = [
 const text4 = (x: number, y: number, t: string, size = 8) =>
   `<text x="${x}" y="${y}" font-size="${size}" font-family="sans-serif" text-anchor="middle" fill="currentColor" stroke="none">${t}</text>`
 
+/**
+ * A path drawn at an explicit line weight, for the symbols whose meaning IS
+ * the weight — `path` above fixes every stroke at 1.5, which is right for
+ * outlines and wrong wherever thin-against-heavy is the thing being said.
+ */
+const atWidth = (d: string, w: number) =>
+  `<path d="${d}" fill="none" stroke="currentColor" stroke-width="${w}"/>`
+
 export const annotations2: SymbolDef[] = [
   {
     id: 'ann.insulation',
@@ -93,13 +101,49 @@ export const annotations2: SymbolDef[] = [
   },
   {
     id: 'ann.tiein',
-    name: 'Tie-In Flag',
+    /**
+     * A tie-in is the point where new pipe joins existing pipe, so it is
+     * drawn as what it is — the STEP IN LINE WEIGHT at the joint, with a
+     * heavy bar on the joint itself. It used to be a triangle flag hanging
+     * off the run, which said "something is here" and left the reader to
+     * find out what from the tag.
+     *
+     * The weights are the ones the line classes already use, so the symbol
+     * and the lines either side of it read as one convention: 0.75 is
+     * `pipe.existing`, 2.5 is `process.major` — thin is what was there,
+     * heavy is what is being added. Draw the run in as `pipe.existing` and
+     * out as a process class and the step carries straight through the node.
+     *
+     * Nothing is carried by colour. That matters twice over: the colours in
+     * this editor are already spoken for by media/process service, and a
+     * tie-in has to survive a black-and-white plot and a red-is-new /
+     * black-is-existing markup without either of them being available to it.
+     * Weight and geometry are all that is used, so all three read the same.
+     *
+     * Rotate the node 180 degrees where the existing side is to the east.
+     * The run sits on the box centre line so that turn pivots about the pipe
+     * — put it anywhere else and flipping which side is new would step the
+     * whole line sideways, since a node rotates about its box, not its port.
+     */
+    name: 'Tie-In Point',
     category: 'annotation',
-    gridSize: { w: 3, h: 3 },
-    render: () => path('M0 16 L8 0 L16 16 Z') + text4(8, 13, 'T'),
-    ports: [{ id: 's', x: 8, y: 16, kind: 'both' }],
+    gridSize: { w: 4, h: 4 },
+    render: () =>
+      atWidth('M0 16 H16', 0.75) +
+      atWidth('M16 16 H32', 2.5) +
+      atWidth('M16 8 V24', 3) +
+      text4(16, 6, 'TP'),
+    ports: [
+      { id: 'w', x: 0, y: 16, kind: 'both', name: 'Existing' },
+      { id: 'e', x: 32, y: 16, kind: 'both', name: 'New' },
+      // The flag's original single port, kept at the foot of the bar. Port
+      // ids are addresses written into every saved document (see
+      // symbols/types.ts), so this one keeps its id and its side: a drawing
+      // made against the triangle still holds the line it had.
+      { id: 's', x: 16, y: 24, kind: 'both' },
+    ],
     tagRule: 'none',
-    keywords: ['tie-in', 'tp', 'connection point'],
+    keywords: ['tie-in', 'tp', 'connection point', 'existing', 'new work', 'hot tap'],
   },
   {
     id: 'ann.bl-flag',
