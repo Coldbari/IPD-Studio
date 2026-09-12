@@ -116,7 +116,7 @@ function docWith(record: EngineeringRecord, extra: Partial<ProjectDoc> = {}): Pr
 describe('every top-level record property is accounted for in the diff', () => {
   it('the ledger covers exactly EngineeringRecord', () => {
     const declared = Object.keys(RECORD_FIELD_COVERAGE).sort()
-    const actual = Object.keys(rec({ status: 'draft', owner: 'PN', unitId: 'u', rev: 'A', updated: 'x' })).sort()
+    const actual = Object.keys(rec({ status: 'draft', owner: 'PN', unitId: 'u', loopId: 'l', rev: 'A', updated: 'x' })).sort()
     expect(declared).toEqual(actual)
   })
 

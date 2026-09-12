@@ -218,6 +218,33 @@ export function classifyIo(node: PlantNode, ix: ProjectIndex): IoClassification 
  * second index, and no per-cell topology walk.
  */
 export function deriveIoList(ix: ProjectIndex): IoRow[] {
+  const hit = IO_ROWS.get(ix)
+  if (hit) return hit
+  const rows = computeIoList(ix)
+  IO_ROWS.set(ix, rows)
+  return rows
+}
+
+/**
+ * One list per index.
+ *
+ * A `ProjectIndex` is built fresh per document and never mutated, so the rows
+ * derived from one can only ever have one value — which is what makes caching
+ * on its identity safe rather than a staleness bug waiting to happen. The
+ * WeakMap means an index that falls out of scope takes its rows with it.
+ *
+ * What it is worth TODAY is modest: `ioListReport` derives the rows and then
+ * counts the exclusions off the same index, and the QA engine's
+ * `io-type-unclassified` derives them again on the index `qaFor` already
+ * holds. What it is worth NEXT is the reason it is here — the loop rules in
+ * Program 2 consume I/O verdicts, and without this each of them would pay for
+ * the whole list again on an index that had already computed it.
+ *
+ * The returned array is shared. Treat it as read-only, like `qaFor`'s report.
+ */
+const IO_ROWS = new WeakMap<ProjectIndex, IoRow[]>()
+
+function computeIoList(ix: ProjectIndex): IoRow[] {
   const rows: IoRow[] = []
   const loopSize = new Map<string, number>()
   for (const loop of ix.loops) loopSize.set(`${loop.family}-${loop.loop}`, loop.members.length)

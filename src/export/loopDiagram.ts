@@ -5,30 +5,20 @@
 import type { ProjectDoc, Tag } from '../model/types'
 import { deriveLoops } from '../store/selectors'
 import { formatTag } from '../isa/tag'
-import { expandLetters, validateLetters } from '../isa/tag'
+import { expandLetters } from '../isa/tag'
+import { classifyMember, type MemberRole } from '../model/loop'
 import { getSymbol } from '../symbols/registry'
 
 /**
  * ISA-5.4-style loop diagram: a generated A4-landscape sheet showing the
  * loop's members in FIELD / MARSHALLING / CONTROL ROOM columns with numbered
  * terminal pairs. Pure function of the model; rendered for print on demand.
+ *
+ * `classifyMember` used to live HERE, which made an export module the owner of
+ * the product's only role classifier — and the assistant imported it from here
+ * to reason about loops. It is model/loop.ts's now; this file consumes it like
+ * every other consumer.
  */
-
-export type MemberRole = 'element' | 'transmitter' | 'controller' | 'final' | 'switch' | 'relay' | 'indicator' | 'other'
-
-export function classifyMember(letters: string): MemberRole {
-  const last = letters[letters.length - 1]
-  if (last === 'V' || last === 'Z') return 'final'
-  if (last === 'E' || last === 'W') return 'element'
-  if (letters.includes('C')) return 'controller'
-  if (letters.includes('T')) return 'transmitter'
-  const v = validateLetters(letters)
-  const funcs = v.parts.filter((p) => p.role === 'function').map((p) => p.letter)
-  if (funcs.includes('S')) return 'switch'
-  if (funcs.includes('Y')) return 'relay'
-  if (funcs.includes('I') || funcs.includes('R') || funcs.includes('G')) return 'indicator'
-  return 'other'
-}
 
 const W = 1123 // A4 landscape @ 96dpi-ish px
 const H = 794

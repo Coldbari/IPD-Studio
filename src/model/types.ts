@@ -8,6 +8,7 @@ import type { HmiScreen } from '../hmi/model'
 import type { QaEvidence, StandardProvenance } from './provenance'
 import type { ConformanceRecord } from './conformance'
 import type { Area, Unit } from './hierarchy'
+import type { Loop } from './loop'
 import type { Registry } from './registry'
 import type { StandardProfile } from './standard'
 
@@ -283,6 +284,21 @@ export interface ProjectDoc {
    *  keep them, and reordering one is not an engineering change. */
   areas?: Area[]
   units?: Unit[]
+  /** Persistent control loops (v0.21.0+).
+   *
+   *  Optional and ADDITIVE, exactly as `areas`/`units` are, and for the same
+   *  reason: a document that never declared loops has none, which is every
+   *  document written before this existed. Nothing is rewritten on load, so a
+   *  file saved by this build still opens in the one before it, which simply
+   *  ignores a field it does not know.
+   *
+   *  MEMBERSHIP IS NOT HERE. A Loop does not list its members; each
+   *  `EngineeringRecord` names its loop by id (see model/loop.ts for why that
+   *  direction, and what it saves the rename machinery).
+   *
+   *  Ordering carries no meaning. Identity is `id`; the array is a place to
+   *  keep them, and reordering one is not an engineering change. */
+  loops?: Loop[]
   /** QA state. `ignored` is keyed by RuleFinding.key — rule + engineering key,
    *  never a node id — so an accepted finding stays accepted across a redraw. */
   qa?: { ignored: Record<string, IgnoredFinding> }

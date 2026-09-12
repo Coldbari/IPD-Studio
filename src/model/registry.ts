@@ -51,6 +51,23 @@ export interface EngineeringRecord {
    * answers to one question.
    */
   unitId?: string
+  /**
+   * The control Loop this object belongs to, by stable id (model/loop.ts).
+   *
+   * On the RECORD for the three reasons this whole file exists, the same ones
+   * that put `unitId` here — and for one more that is specific to loops: a
+   * rename moves the record wholesale through `retagRegistry` below, so
+   * membership follows a renamed object for free and introduces NO new
+   * machine-written tag reference for model/references.ts to carry.
+   *
+   * SINGULAR, not a list. An instrument belongs to one loop; a device that
+   * genuinely serves two is drawn or tagged twice, which is how the P&ID
+   * already says so.
+   *
+   * A loop id that names no loop is a broken reference, not a malformed
+   * document: it loads, and `danglingLoopMembers()` reports it.
+   */
+  loopId?: string
   /** Revision in which this record last changed (populated from v0.19). */
   rev?: string
   updated?: string

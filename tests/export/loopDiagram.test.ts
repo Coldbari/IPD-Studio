@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { XMLValidator } from 'fast-xml-parser'
 import '../../src/symbols/lib/index'
-import { classifyMember, loopDiagramSvg } from '../../src/export/loopDiagram'
+import { loopDiagramSvg } from '../../src/export/loopDiagram'
+import { classifyMember } from '../../src/model/loop'
 import { createEmptyDoc } from '../../src/model/doc'
 import type { Tag } from '../../src/model/types'
 

@@ -6,7 +6,8 @@ import type { PlantEdge, PlantNode, ProjectDoc, Sheet } from './types'
 import { isPortEnd } from './types'
 import type { EngineeringRecord, EntityKind } from './registry'
 import { keyOfEdge, keyOfNode, kindOfNode } from './registry'
-import { deriveLoops, type Loop } from '../store/selectors'
+import { deriveLoops, type Loop as DerivedLoop } from '../store/selectors'
+import type { Loop } from './loop'
 import { standardOf, type StandardProfile } from './standard'
 import { buildHierarchy, type Hierarchy } from './hierarchy'
 import { getSymbol } from '../symbols/registry'
@@ -52,7 +53,33 @@ export interface ProjectIndex {
   edgesByKey: Map<string, IndexedEdge[]>
   /** Node id -> the node ids it is directly connected to. */
   neighbours: Map<string, string[]>
-  loops: Loop[]
+  /**
+   * DERIVED loops: tagged nodes grouped on (first ISA letter, loop number).
+   *
+   * Unchanged, and still what every existing consumer reads. P2-C is an
+   * adoption path, not a replacement — the persistent loops below sit beside
+   * this until a project opts in.
+   */
+  loops: DerivedLoop[]
+  /** PERSISTENT loops, by stable id (model/loop.ts). Empty for every document
+   *  that has not declared any, which is every document written before they
+   *  existed. */
+  loopsById: Map<string, Loop>
+  /**
+   * Loop id -> the registry keys assigned to it, sorted.
+   *
+   * Built by INVERTING `record.loopId`, because the record owns membership and
+   * the Loop must not hold a second copy of it. A loop with no members has no
+   * entry — the same convention as `unitsByArea` and `edgesByNode`, so callers
+   * read it with `?? []`.
+   *
+   * A `loopId` naming a loop that is not in the project is left out of both
+   * maps rather than half-resolved; `danglingLoopMembers()` is what reports
+   * those, and Program 2's rule is what will surface them.
+   */
+  loopMembers: Map<string, string[]>
+  /** Registry key -> the loop it belongs to. O(1) "which loop is this in?". */
+  loopOfKey: Map<string, string>
   /** Every key currently drawn — a record outside this set is an orphan. */
   liveKeys: Set<string>
   records: Record<string, EngineeringRecord>
@@ -128,6 +155,31 @@ export function buildIndex(doc: ProjectDoc): ProjectIndex {
     }
   }
 
+  // Persistent loops: one pass over the loops, one over the records already
+  // held. O(loops + records), the same shape as `buildHierarchy`'s
+  // `unitsByArea` — never a scan per member, and never a second walk of the
+  // sheets, which this index exists to have done once.
+  const loopsById = new Map<string, Loop>()
+  for (const loop of doc.loops ?? []) if (!loopsById.has(loop.id)) loopsById.set(loop.id, loop)
+  const loopMembers = new Map<string, string[]>()
+  const loopOfKey = new Map<string, string>()
+  if (loopsById.size > 0) {
+    // `for...in` rather than Object.entries: the registry is the biggest map in
+    // the document, and entries() allocates a [key, value] pair array for all
+    // of it before the first assignment is read. Measured at 500 records, that
+    // allocation was most of the loop layer's cost.
+    const registry = doc.registry
+    if (registry) {
+      for (const key in registry) {
+        const id = registry[key]?.loopId
+        if (!id || !loopsById.has(id)) continue
+        loopOfKey.set(key, id)
+        push(loopMembers, id, key)
+      }
+    }
+    for (const keys of loopMembers.values()) keys.sort()
+  }
+
   return {
     doc,
     nodes,
@@ -139,6 +191,9 @@ export function buildIndex(doc: ProjectDoc): ProjectIndex {
     edgesByKey,
     neighbours,
     loops: deriveLoops(doc),
+    loopsById,
+    loopMembers,
+    loopOfKey,
     liveKeys,
     records: doc.registry ?? {},
     standard: standardOf(doc),

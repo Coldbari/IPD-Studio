@@ -7,6 +7,7 @@ import type { PlantEdge, PlantNode, ProjectDoc, Sheet, SheetSize } from './types
 import type { Registry } from './registry'
 import { keyOfNode, kindOfNode } from './registry'
 import { checkWidgetProps } from '../hmi/model'
+import { checkLoops } from './loop'
 import { DEFAULT_ISSUE_STATUSES, standardFromLegacySettings } from './standard'
 import { INITIAL_REVISION_CODE, legacyRevisionId, newRevision } from './revision'
 
@@ -205,6 +206,14 @@ export function loadDoc(raw: unknown): ProjectDoc {
       throw new DocError('registry is malformed')
     }
     checkHierarchy(doc)
+    // Loops, checked the same way and drawing the same line: a malformed SHAPE
+    // refuses the file, a broken REFERENCE loads. There is deliberately no
+    // loop migration — a document that predates persistent loops has none, and
+    // manufacturing them from the derived grouping would be inventing
+    // engineering entities nobody declared. Adoption is explicit, and it is a
+    // later program's job.
+    const loopProblem = checkLoops(doc)
+    if (loopProblem) throw new DocError(loopProblem)
     // The tag conventions used to live in `settings`. They fold into the
     // standard so ONE place answers "how are tags formatted here" — but the old
     // fields are left in place and still read, so a v5 file written by this

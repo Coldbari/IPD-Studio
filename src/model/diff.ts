@@ -858,6 +858,7 @@ export const DOC_FIELD_COVERAGE: Record<keyof ProjectDoc, 'compared' | string> =
   qa: 'compared',
   areas: 'compared',
   units: 'compared',
+  loops: 'Excluded: P2-C Program 1 adds the entity and its membership reference only — nothing here compares them yet. Loop added / removed / renumbered / retyped is Program 3, where diffLoops and the loop EntityType land together. Until then a loop edit produces no change, which is the intended Program 1 behaviour rather than an omission.',
   schemaVersion: 'Excluded: a migration artefact, identical for two snapshots of one project.',
   // The controlled-document identity fields. META_FIELD_COVERAGE above is the
   // second ledger, saying which of them are compared and which are timestamps.
@@ -880,6 +881,7 @@ export const RECORD_FIELD_COVERAGE: Record<keyof EngineeringRecord, 'compared' |
   status: 'compared',
   owner: 'compared',
   unitId: 'compared — by stable id, displayed as AREA/UNIT codes',
+  loopId: 'Excluded: the membership reference exists from P2-C Program 1, and nothing compares it yet. Program 3 reports a member joining or leaving a loop — by stable id, displayed as the loop NUMBER, so renumbering a loop stays one change on the loop rather than one per member.',
   key: 'Excluded: it IS the identity the comparison is keyed on; a changed key is a rename, reported on the node.',
   kind: 'Excluded: derived from the object that wears the tag, and a change there is already reported as the node changing kind.',
   rev: 'Excluded: stamped BY issuing, so comparing it across two issues reports the act of comparing.',

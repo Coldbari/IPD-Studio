@@ -31,6 +31,9 @@ import { evaluateConformance, issueBlockers } from '../../src/model/conformance'
 import { conformanceCsv } from '../../src/export/csv'
 import { standardOf } from '../../src/model/standard'
 import { qaFor, resetQaCache } from '../../src/validate/engine'
+import { runRules } from '../../src/validate/engine'
+import { ALL_RULES } from '../../src/validate/rules/index'
+import { newLoop } from '../../src/model/loop'
 import { serializeDoc } from '../../src/persist/file'
 import { ENGINEERING_SPEC } from '../../src/export/csv'
 import { MAX_EVIDENCE_BYTES, MAX_EVIDENCE_FINDINGS } from '../../src/model/provenance'
@@ -75,6 +78,17 @@ function project(instruments: number): ProjectDoc {
   return { ...doc, registry, areas, units }
 }
 
+/** The same project with persistent loops declared and every record assigned,
+ *  `per` members to a loop. Program 1 adds no way to CREATE these in the app —
+ *  this builds them directly, which is all a model-layer benchmark needs. */
+function withLoops(doc: ProjectDoc, per: number): ProjectDoc {
+  const keys = Object.keys(doc.registry ?? {})
+  const loops = Array.from({ length: Math.ceil(keys.length / per) }, (_, i) => newLoop(String(100 + i)))
+  const registry: Registry = { ...doc.registry }
+  keys.forEach((k, i) => { registry[k] = { ...registry[k]!, loopId: loops[Math.floor(i / per)]!.id } })
+  return { ...doc, loops, registry }
+}
+
 function bench(label: string, iters: number, fn: () => void): number {
   fn(); fn()
   const t0 = performance.now()
@@ -117,6 +131,86 @@ test.skipIf(!process.env.PERF)('P1 hot paths', () => {
 
   bench('buildIndex', 20, () => { buildIndex(doc) })
   bench('buildHierarchy', 200, () => { buildHierarchy(doc) })
+
+  /*
+   * THE P2-C PROGRAM 1 PERFORMANCE CRITERION.
+   *
+   * NOT an absolute threshold. The criterion is NO REGRESSION against the
+   * measured pre-Program-1 baseline on THIS fixture, and the history is worth
+   * keeping because the first attempt got it wrong:
+   *
+   *   An absolute 1.2 ms gate was proposed from the P2-C audit, which had
+   *   measured `tests/perf/hotpaths.test.ts` gen(500) — 500 NODES, no
+   *   registry, no hierarchy, roughly one tagged instrument in nine. That
+   *   fixture costs ~1.07 ms and passes. A real 500-INSTRUMENT project, which
+   *   is what project(500) below builds, costs ~9 ms and always did. The gate
+   *   was measuring a different thing from the one it named.
+   *
+   * MEASURED on project(500) — 501 nodes, 625 edges, 500 records, 40 units.
+   * Baseline and current taken minutes apart on one warm machine, the baseline
+   * from a worktree at the pre-Program-1 commit, because numbers taken an hour
+   * apart on a machine that has been running suites are not comparable.
+   *
+   *                                    BASELINE (median)   PROGRAM 1 (median)
+   *   runRules, index reused              6.52 ms             6.13 ms   FASTER
+   *   buildIndex, no loops declared       0.62 ms             0.64 ms   equal
+   *   buildIndex + runRules, fresh index  8.79 ms             9.11 ms   +0.32
+   *   deriveIoList, index reused          0.585 ms            0.000 ms  memo
+   *   buildIndex, 125 loops / 500 members     n/a             0.88 ms   +0.27
+   *
+   * READ THE FIRST ROW, NOT THE THIRD. `qaFor` memoises one report per
+   * document, so what a user pays on an edit is one index build and one rule
+   * pass over an index that is then RETAINED. That is row one, and Program 1
+   * is ~0.4 ms faster there: the deriveIoList memo hands `io-type-unclassified`
+   * its rows for free on every pass after the first.
+   *
+   * Row three rebuilds the index on every iteration, which no interaction
+   * does. It keeps 20+ live indexes, and the memo holds a 500-row array
+   * against each, so the +0.32 ms there is GC pressure the application never
+   * generates — at most one or two indexes are reachable at a time in the real
+   * app. It is kept in the fixture because it is the pair the original gate
+   * named, and dropping a number because it is inconvenient is how a benchmark
+   * stops being trusted.
+   *
+   * A project with NO persistent loops pays nothing; 125 loops over 500
+   * assigned records cost about +0.27 ms on the index build.
+   *
+   * THE DOMINANT COST IS NOT THE LOOP LAYER. `no-receiver` alone is ~4.5 ms of
+   * the ~8.1 ms rule pass: it runs `ix.allNodes.some(...)` inside a loop over
+   * `ix.allNodes`, so 500 x 501 on this fixture. It is pre-existing, it is
+   * deliberately untouched by P2-C, and it is answerable in O(N) off `ix.loops`
+   * whenever someone scopes that as its own task. The per-rule attribution
+   * below is what makes that claim checkable rather than a hunch.
+   */
+  bench('buildIndex + runRules (per edit)', 20, () => { runRules(buildIndex(doc), {}) })
+  // The SAME pass on a reused index — the shape `qaFor` actually has, since it
+  // memoises one report per document. The line above rebuilds the index every
+  // iteration, which no user interaction does.
+  const rix0 = buildIndex(doc)
+  bench('runRules only (index reused)', 20, () => { runRules(rix0, {}) })
+
+  // Per-rule attribution. Without it "QA is slow" is a feeling; with it the
+  // two rules that actually cost anything are named, and an optimisation can
+  // be aimed rather than sprayed.
+  // P2-C Program 1: what the persistent-loop layer costs when a project
+  // actually HAS loops. The plain fixture declares none, so `buildIndex` above
+  // short-circuits past the record walk — measuring only that would be
+  // measuring the absence of the feature.
+  const looped = withLoops(doc, 4)
+  process.stderr.write(`  (loop fixture: ${looped.loops!.length} loops over ${Object.keys(looped.registry!).length} records)\n`)
+  bench('buildIndex, no loops declared', 20, () => { buildIndex(doc) })
+  bench('buildIndex, 125 loops assigned', 20, () => { buildIndex(looped) })
+
+  const rix = buildIndex(doc)
+  const costs = ALL_RULES.map((r) => {
+    r.run(rix); r.run(rix)
+    const t0 = performance.now()
+    for (let i = 0; i < 10; i++) r.run(rix)
+    return { id: r.id, ms: (performance.now() - t0) / 10 }
+  }).sort((a, b) => b.ms - a.ms)
+  process.stderr.write(`  --- per rule (top 6 of ${costs.length}) ---\n`)
+  for (const c of costs.slice(0, 6)) process.stderr.write(`  ${c.id.padEnd(38)} ${c.ms.toFixed(3)} ms/call\n`)
+  process.stderr.write(`  ${'ALL OTHER RULES'.padEnd(38)} ${costs.slice(6).reduce((n, c) => n + c.ms, 0).toFixed(3)} ms/call\n`)
 
   const ix = buildIndex(doc)
   bench('deriveIoList (index reused)', 50, () => { deriveIoList(ix) })
