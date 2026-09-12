@@ -263,7 +263,12 @@ export function unanswerable(topic: 'psv-sizing' | 'revision' | 'interlock' | 'h
         'valve.size',
       )
     case 'revision':
-      return gap('There is no revision history to compare.', 'Revisions are not stored yet — sheet.revision is only a label.')
+      // Revisions ARE recorded now (schema 6), but comparing two of them is
+      // not built. Say the true thing rather than the old one.
+      return gap(
+        'I cannot compare two revisions yet.',
+        'Issued revisions are recorded on the sheet with their date, status and the state of the checks at issue — see Revisions in the sheet panel. Comparing one against another is not built.',
+      )
     case 'interlock':
       return gap('Trip logic is not captured in the model.', 'Cause-and-effect relationships have no home in the document yet.')
     case 'hazard':

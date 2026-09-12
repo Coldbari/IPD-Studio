@@ -23,7 +23,7 @@ describe('hmi model + current schema', () => {
 
   it('new docs carry the current schema with hmiScreens', () => {
     const doc = createEmptyDoc()
-    expect(doc.schemaVersion).toBe(5)
+    expect(doc.schemaVersion).toBe(6)
     expect(doc.hmiScreens).toEqual([])
   })
 
@@ -31,7 +31,7 @@ describe('hmi model + current schema', () => {
     const v3 = { ...createEmptyDoc(), schemaVersion: 3 } as unknown as Record<string, unknown>
     delete v3.hmiScreens
     const doc = loadDoc(v3)
-    expect(doc.schemaVersion).toBe(5)
+    expect(doc.schemaVersion).toBe(6)
     expect(doc.hmiScreens).toEqual([])
   })
 

@@ -10,7 +10,7 @@ import {
   CURRENCIES, FX_DATE, bestScale, currencyOf, money, moneyShort,
   scaleUnits, toDisplay, toUsd, trimNum,
 } from '../model/currency'
-import { download } from '../export/csv'
+import { csvCell, download } from '../export/csv'
 
 const FACTORS: [number, string][] = [
   [1, '1× — hardware only'],
@@ -80,7 +80,9 @@ export default function BudgetDialog({ onClose }: { onClose(): void }) {
   const unit = units.find((u) => u.label === unitLabel) ?? units[0]!
 
   const exportCsv = () => {
-    const esc = (s: string) => (/[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s)
+    // The product's one CSV escaper — quoting AND formula neutralisation.
+    // A cost estimate carries user-named custom symbols like every other export.
+    const esc = csvCell
     const rows = [
       ['Item', 'Qty', `Unit (${cur.code})`, `Subtotal (${cur.code})`, 'Unit (USD)', 'Basis', 'Evidence'],
       ...report.lines.map((l) => {

@@ -70,7 +70,13 @@ export function finding(
   rule: Pick<Rule, 'id'>,
   entityKey: string,
   message: string,
-  extra: { targetId?: string; sheetId?: string; fix?: Fix } = {},
+  extra: { targetId?: string; sheetId?: string; fix?: Fix; key?: string } = {},
 ): RuleFinding {
-  return { ruleId: rule.id, key: `${rule.id}:${entityKey}`, entityKey, message, ...extra }
+  const { key, ...rest } = extra
+  // `key` is an escape hatch for the rare rule that reports several findings
+  // about ONE engineering key and must let them be accepted separately — an
+  // orphaned HMI binding, for instance, where the same missing tag can be read
+  // by four different widgets and silencing one must not silence the rest.
+  // Everything else takes the default and stays keyed by rule + entity.
+  return { ruleId: rule.id, key: key ?? `${rule.id}:${entityKey}`, entityKey, message, ...rest }
 }

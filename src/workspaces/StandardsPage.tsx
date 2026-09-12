@@ -9,18 +9,38 @@ import {
   DEFAULT_STANDARD,
   LINE_NUMBER_PARTS,
   LINE_PART_LABELS,
+  issueStatusesOf,
+  recommendedIssuePolicy,
   standardOf,
+  type IssueGate,
   type LineNumberPart,
   type RuleSeverityOverride,
   type StandardProfile,
 } from '../model/standard'
 import { FIELD_CATALOG, labelForField } from '../model/fields'
+import { UNIT_FIELD } from '../model/hierarchy'
+import { fingerprintStandard } from '../model/provenance'
 import type { EntityKind } from '../model/registry'
+import type { Severity } from '../validate/rules'
 import { ALL_RULES } from '../validate/rules/index'
 import { previewStandard } from '../validate/impact'
 import { downloadStandard, parseStandardFile } from '../persist/standard'
 import type { ProfileProblem } from '../model/standard'
 import './standards.css'
+
+/**
+ * The keys a standard may mark required, per kind.
+ *
+ * The catalogue fields, plus the reserved Unit reference. A Unit is not a text
+ * field so it is not in `FIELD_CATALOG`, but "an object must belong to a unit
+ * before its record is usable" is exactly what this list expresses — and
+ * putting it anywhere else would be the second standards mechanism this
+ * deliberately does not have.
+ */
+const requirableFields = (kind: EntityKind): { key: string; label: string }[] => [
+  ...FIELD_CATALOG[kind].flatMap((section) => section.fields),
+  { key: UNIT_FIELD, label: labelForField(UNIT_FIELD) },
+]
 
 const KINDS: { id: EntityKind; label: string }[] = [
   { id: 'instrument', label: 'Instruments' },
@@ -124,6 +144,37 @@ export default function StandardsPage() {
     })
   }
 
+  /**
+   * Edit the gate for one status.
+   *
+   * A gate with nothing set is DELETED rather than stored empty. An empty gate
+   * and no gate mean the same thing to the evaluator, but they are different
+   * standards to the fingerprint, and leaving `{ }` behind after someone
+   * unticks their last box would make the standard look changed when it is not.
+   */
+  function patchGate(status: string, p: Partial<IssueGate>) {
+    setDraft((d) => {
+      const policy = { ...(d.issuePolicy ?? {}) }
+      const gate: IssueGate = { ...(policy[status] ?? {}), ...p }
+      for (const k of Object.keys(gate) as (keyof IssueGate)[]) {
+        const v = gate[k]
+        if (v === undefined || v === false || (Array.isArray(v) && v.length === 0)) delete gate[k]
+      }
+      if (Object.keys(gate).length) policy[status] = gate
+      else delete policy[status]
+      const next = { ...d }
+      if (Object.keys(policy).length) next.issuePolicy = policy
+      else delete next.issuePolicy
+      return next
+    })
+  }
+
+  function toggleBlocked(status: string, sev: Severity) {
+    const current = draft.issuePolicy?.[status]?.blockSeverities ?? []
+    const next = current.includes(sev) ? current.filter((x) => x !== sev) : [...current, sev]
+    patchGate(status, { blockSeverities: next })
+  }
+
   async function onImport(file: File) {
     const result = parseStandardFile(await file.text())
     if (result.ok) {
@@ -197,6 +248,25 @@ export default function StandardsPage() {
               placeholder="Acme Engineering — Rev 3"
             />
           </label>
+          {/* The house's own label for this configuration. Typed, never
+              derived: only a company knows whether a change is a new version.
+              What the software derives on its own is the fingerprint below,
+              which is content-based and cannot be wrong. */}
+          <label className="std-row">
+            <span>Version</span>
+            <input
+              data-testid="std-version"
+              value={draft.version ?? ''}
+              placeholder="e.g. 2.1 — optional"
+              maxLength={40}
+              onChange={(e) => patch({ version: e.target.value || undefined })}
+            />
+          </label>
+          <p className="std-note" data-testid="std-fingerprint">
+            Fingerprint <code>{fingerprintStandard(draft)}</code> — derived from this standard's content.
+            Every revision issued records it, so an issued drawing can always say which rules it was
+            judged by.
+          </p>
         </section>
 
         <section className="std-card">
@@ -285,7 +355,7 @@ export default function StandardsPage() {
             <div key={id} className="std-kind">
               <h3>{label}</h3>
               <div className="std-fields">
-                {FIELD_CATALOG[id].flatMap((section) => section.fields).map((f) => {
+                {requirableFields(id).map((f) => {
                   const on = (draft.required[id] ?? []).includes(f.key)
                   return (
                     <label key={f.key} className={`std-field${on ? ' on' : ''}`}>
@@ -315,6 +385,93 @@ export default function StandardsPage() {
             <span>Default signal</span>
             <input value={draft.conventions.defaultSignal} onChange={(e) => patchConv({ defaultSignal: e.target.value })} />
           </label>
+        </section>
+
+        <section className="std-card" data-testid="std-issue-policy">
+          <h2>Issue policy</h2>
+          <p className="std-note">
+            What must be true before a drawing may be issued at each status. Leave a status alone and it
+            is <b>ungated</b> — which is how every project behaves until someone configures this, and how
+            it will keep behaving if nobody does. Findings are always reported either way; a gate decides
+            whether they stop the issue.
+          </p>
+          <p className="std-note" data-testid="std-policy-print">
+            Issue policy is part of the standard, so changing it changes the fingerprint above — an
+            issued revision records what it was permitted to be issued under, not just what it was
+            checked against.
+          </p>
+          <table className="std-policy" data-testid="std-policy-table">
+            <thead>
+              <tr>
+                <th>Status</th><th>Blocks</th><th>Accepted findings</th>
+                <th>Checker</th><th>Approver</th><th>QA</th>
+              </tr>
+            </thead>
+            <tbody>
+              {issueStatusesOf(draft).map((status) => {
+                const gate = draft.issuePolicy?.[status]
+                const blocked = gate?.blockSeverities ?? []
+                return (
+                  <tr key={status} data-testid={`std-policy-${status}`}>
+                    <td>{status}</td>
+                    <td className="std-policy-sev">
+                      {(['critical', 'warning', 'info'] as const).map((sev) => (
+                        <label key={sev} title={`Block issue when an open ${sev} finding is present`}>
+                          <input
+                            type="checkbox"
+                            data-testid={`std-policy-${status}-block-${sev}`}
+                            checked={blocked.includes(sev)}
+                            onChange={() => toggleBlocked(status, sev)}
+                          />
+                          {sev}
+                        </label>
+                      ))}
+                    </td>
+                    <td>
+                      <select
+                        data-testid={`std-policy-${status}-accepted`}
+                        value={gate?.allowAcceptedFindings === false ? 'block' : 'allow'}
+                        onChange={(e) => patchGate(status, { allowAcceptedFindings: e.target.value === 'allow' })}
+                      >
+                        <option value="allow">Accepted findings do not block</option>
+                        <option value="block">Accepted findings still block</option>
+                      </select>
+                    </td>
+                    <td>
+                      <input type="checkbox" data-testid={`std-policy-${status}-checker`}
+                        checked={Boolean(gate?.requireChecker)}
+                        onChange={(e) => patchGate(status, { requireChecker: e.target.checked })} />
+                    </td>
+                    <td>
+                      <input type="checkbox" data-testid={`std-policy-${status}-approver`}
+                        checked={Boolean(gate?.requireApprover)}
+                        onChange={(e) => patchGate(status, { requireApprover: e.target.checked })} />
+                    </td>
+                    <td>
+                      <input type="checkbox" data-testid={`std-policy-${status}-qa`}
+                        checked={Boolean(gate?.requireQaEvaluation)}
+                        onChange={(e) => patchGate(status, { requireQaEvaluation: e.target.checked })} />
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          <div className="std-row">
+            {/* OFFERED, never applied on its own. A gating policy that
+                installed itself would start blocking issues in projects whose
+                owners never agreed to it. */}
+            <button
+              data-testid="std-policy-recommended"
+              onClick={() => patch({ issuePolicy: recommendedIssuePolicy(issueStatusesOf(draft)) })}
+            >
+              Use the recommended policy
+            </button>
+            <span className="std-note">
+              Blocks open critical findings on the final construction status and requires a checker;
+              accepted findings are allowed. Nothing is applied until you press this and then save.
+            </span>
+          </div>
         </section>
 
         <section className="std-card">

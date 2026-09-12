@@ -6,12 +6,25 @@ import { ulid } from 'ulid'
 import { SYMBOLS } from '../symbols/registry'
 import { validateLetters } from '../isa/tag'
 import { buildTypical, TYPICALS } from './typicals'
+import { parseSignalRef } from '../hmi/model'
 
 /** A repair the QA report can apply for the user. Lives here, with the code
  *  that performs it, rather than with the rules that offer it. */
 export type FixSpec =
   | { kind: 'insert-ip'; sheetId: string; edgeId: string }
   | { kind: 'purge-record'; key: string }
+  /** Clear ONE orphaned HMI binding. `tag` is the value the finding described:
+   *  the applier re-checks it before clearing, so a binding edited since the
+   *  report was produced is left alone rather than silently wiped. */
+  | {
+      kind: 'clear-binding'
+      screenId: string
+      widgetId: string
+      where: 'hmi-widget' | 'hmi-pen' | 'hmi-signal' | 'hmi-bind'
+      tag: string
+      field?: string
+      penIndex?: number
+    }
   | { kind: 'assign-tag'; nodeId: string; sheetId: string; letters: string }
   | { kind: 'delete-duplicate-line'; sheetId: string; edgeId: string }
   // Additions the assistant may PROPOSE. Note what is absent: no coordinates
@@ -42,6 +55,19 @@ export function describeFix(spec: FixSpec, doc: ProjectDoc): { title: string; bl
         title: 'Insert an I/P converter',
         blastRadius: `Splits one line on ${sheet?.name ?? 'the sheet'} into two and adds a tagged converter between them.`,
         affectedIds: [spec.edgeId],
+      }
+    }
+    case 'clear-binding': {
+      const screen = doc.hmiScreens.find((sc) => sc.id === spec.screenId)
+      const widget = screen?.widgets.find((w) => w.id === spec.widgetId)
+      const what =
+        spec.where === 'hmi-widget' ? 'its tag'
+        : spec.where === 'hmi-pen' ? `the trend pen reading ${spec.tag}`
+        : `${spec.field}`
+      return {
+        title: `Clear ${what} on ${widget?.label || widget?.type || 'the widget'}`,
+        blastRadius: `Unbinds one widget on ${screen?.name ?? 'the screen'}. Nothing else on the screen, and nothing on any sheet, changes.`,
+        affectedIds: [spec.widgetId],
       }
     }
     case 'purge-record':
@@ -109,6 +135,12 @@ const snap8 = (v: number) => Math.round(v / 8) * 8
  * (pneumatic) valve, placing and tagging the converter automatically. Every
  * branch is one undo step.
  */
+const stale = (tag: string): FixResult => ({
+  ok: false,
+  changedIds: [],
+  message: `That binding no longer reads ${tag} — nothing was changed.`,
+})
+
 export function applyFix(fix: FixSpec): FixResult {
   if (fix.kind === 'purge-record') {
     const had = Boolean(useStore.getState().doc.registry?.[fix.key])
@@ -116,6 +148,41 @@ export function applyFix(fix: FixSpec): FixResult {
     return had
       ? { ok: true, changedIds: [] }
       : { ok: false, changedIds: [], message: `No record found for ${fix.key}.` }
+  }
+  if (fix.kind === 'clear-binding') {
+    const st = useStore.getState()
+    const screen = st.doc.hmiScreens.find((sc) => sc.id === fix.screenId)
+    const widget = screen?.widgets.find((w) => w.id === fix.widgetId)
+    if (!screen || !widget) {
+      return { ok: false, changedIds: [], message: 'That HMI widget is no longer in the drawing.' }
+    }
+
+    // Re-read the binding and confirm it still names the tag the finding was
+    // about. Clearing on a stale report would destroy an edit the user made
+    // after it was produced, and no repair is worth that.
+    let next = widget
+    if (fix.where === 'hmi-widget') {
+      if (widget.tag !== fix.tag) return stale(fix.tag)
+      const { tag: _drop, ...rest } = widget
+      next = rest
+    } else if (fix.where === 'hmi-pen') {
+      const pens = widget.pens ?? []
+      const pen = fix.penIndex === undefined ? undefined : pens[fix.penIndex]
+      if (!pen || parseSignalRef(pen.ref)?.tag !== fix.tag) return stale(fix.tag)
+      next = { ...widget, pens: pens.filter((_, i) => i !== fix.penIndex) }
+    } else {
+      const field = fix.field
+      const value = field ? widget.props?.[field] : undefined
+      if (typeof value !== 'string') return stale(fix.tag)
+      const named = fix.where === 'hmi-bind' ? value : parseSignalRef(value)?.tag
+      if (named !== fix.tag) return stale(fix.tag)
+      const props = { ...widget.props }
+      delete props[field!]
+      next = { ...widget, props }
+    }
+
+    st.replaceScreen({ ...screen, widgets: screen.widgets.map((w) => (w.id === fix.widgetId ? next : w)) })
+    return { ok: true, changedIds: [fix.widgetId] }
   }
   if (fix.kind === 'place-typical' || fix.kind === 'place-symbol') {
     const st = useStore.getState()

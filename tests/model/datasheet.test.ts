@@ -6,8 +6,22 @@ import { createEmptyDoc } from '../../src/model/doc'
 
 describe('datasheet model', () => {
   it('has stable sections with keyed fields', () => {
-    expect(Object.keys(DATASHEET_SECTIONS)).toEqual(['general', 'process', 'element', 'signal'])
+    expect(Object.keys(DATASHEET_SECTIONS)).toEqual(['general', 'process', 'element', 'signal', 'alarm'])
     expect(DATASHEET_SECTIONS.process.some((f) => f.key === 'process.fluid')).toBe(true)
+  })
+
+  it('carries the signal and alarm data the registry owns from P1-A', () => {
+    const signal = DATASHEET_SECTIONS.signal.map((f) => f.key)
+    for (const k of ['signal.range', 'signal.type', 'signal.units', 'signal.setpoint', 'signal.systemTag']) {
+      expect(signal, `${k} must be an engineering field`).toContain(k)
+    }
+    expect(DATASHEET_SECTIONS.alarm.map((f) => f.key))
+      .toEqual(['alarm.LL', 'alarm.L', 'alarm.H', 'alarm.HH', 'alarm.priority'])
+  })
+
+  it('prunes alarm rows for hand switches, as it does process rows', () => {
+    expect(fieldsFor('HS').alarm).toEqual([])
+    expect(fieldsFor('LT').alarm.length).toBeGreaterThan(0)
   })
   it('prunes process rows for hand switches', () => {
     const hs = fieldsFor('HS')

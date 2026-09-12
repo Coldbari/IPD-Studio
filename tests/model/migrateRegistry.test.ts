@@ -44,7 +44,7 @@ describe('schemaVersion 4 → 5', () => {
   const doc = loadDoc(JSON.parse(JSON.stringify(V4)))
 
   it('reports the current schema', () => {
-    expect(doc.schemaVersion).toBe(5)
+    expect(doc.schemaVersion).toBe(6)
   })
 
   it('moves a tagged instrument datasheet into a tag-keyed record', () => {

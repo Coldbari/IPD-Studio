@@ -25,6 +25,23 @@ export interface QaReport {
   /** Findings the user has explicitly accepted, with their reason. */
   ignored: { finding: RuleFinding; rule: Rule; entry: IgnoredEntry }[]
   total: number
+  /**
+   * How many rules actually RAN for this report.
+   *
+   * Not `ALL_RULES.length`: a standard may switch checks off, and a report
+   * that does not say how many checks it performed cannot be read as evidence.
+   * A document with five checks disabled and a clean document were previously
+   * indistinguishable — both said "0 findings".
+   */
+  rulesEvaluated: number
+  /**
+   * Rule ids the active standard forced to `off`, sorted, so the set is
+   * deterministic between runs and between machines.
+   *
+   * These produced no findings and count towards nothing. They are listed so
+   * that "nothing was found" can be told apart from "nobody looked".
+   */
+  rulesDisabled: string[]
   index: ProjectIndex
 }
 
@@ -47,10 +64,20 @@ export function runRules(ix: ProjectIndex, ignored: Record<string, IgnoredEntry>
   // the report, the counts, the rail badge, the status bar — sees one severity
   // and cannot disagree about how serious a finding is.
   const overrides = ix.standard.severityOverrides ?? {}
+  const rulesDisabled: string[] = []
+  let rulesEvaluated = 0
 
   for (const baseRule of ALL_RULES) {
     const override = overrides[baseRule.id]
-    if (override === 'off') continue
+    if (override === 'off') {
+      // Recorded, then skipped. The rule must NOT run — an `off` check that
+      // still executed would burn time and could still throw — but the fact
+      // that it was switched off is part of the report, not a detail of the
+      // standard that a reader would have to go and look up separately.
+      rulesDisabled.push(baseRule.id)
+      continue
+    }
+    rulesEvaluated += 1
     // A shallow clone, so `group.rule.severity` is the EFFECTIVE severity and
     // no consumer has to know overrides exist.
     const rule: Rule = override ? { ...baseRule, severity: override } : baseRule
@@ -101,6 +128,8 @@ export function runRules(ix: ProjectIndex, ignored: Record<string, IgnoredEntry>
     counts,
     ignored: suppressed,
     total: counts.critical + counts.warning + counts.info,
+    rulesEvaluated,
+    rulesDisabled: rulesDisabled.sort(),
     index: ix,
   }
 }

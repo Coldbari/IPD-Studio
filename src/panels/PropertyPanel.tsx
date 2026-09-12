@@ -18,6 +18,8 @@ import { nextLineSeq } from '../isa/autonumber'
 import { DEFAULT_PRICES, priceKeyFor, unitCost } from '../model/costs'
 import { currencyOf, money, toDisplay, toUsd } from '../model/currency'
 import DatasheetEditor from './DatasheetEditor'
+import RevisionsDialog from './RevisionsDialog'
+import { currentRevisionCode, revisionsOf } from '../model/revision'
 import FluidsDialog from './FluidsDialog'
 import InspectorWhereUsed from './InspectorWhereUsed'
 import InspectorEngineering from './InspectorEngineering'
@@ -34,11 +36,21 @@ function SheetProps() {
   const setMeta = useStore((s) => s.setMeta)
   const setSettings = useStore((s) => s.setSettings)
   const setSheetMeta = useStore((s) => s.setSheetMeta)
+  const [revisionsOpen, setRevisionsOpen] = useState(false)
   return (
     <>
       <div className="prop-title">Project</div>
       <label className="prop-field">Name<input value={meta.name} onChange={(e) => { setMeta({ name: e.target.value }); pauseHistory() }} onBlur={resumeHistory} /></label>
       <label className="prop-field">Author<input value={meta.author} onChange={(e) => { setMeta({ author: e.target.value }); pauseHistory() }} onBlur={resumeHistory} /></label>
+      {/* The controlled-document fields. Every one is optional and every one
+          prints in the title block when it is filled in — an empty field
+          prints an em dash rather than anything invented. They live on the
+          PROJECT because none of them changes between sheet 2 and sheet 3. */}
+      <label className="prop-field">Client<input data-testid="meta-client" value={meta.client ?? ''} onChange={(e) => { setMeta({ client: e.target.value }); pauseHistory() }} onBlur={resumeHistory} /></label>
+      <label className="prop-field">Project №<input data-testid="meta-project-number" value={meta.projectNumber ?? ''} onChange={(e) => { setMeta({ projectNumber: e.target.value }); pauseHistory() }} onBlur={resumeHistory} /></label>
+      <label className="prop-field">Plant / facility<input data-testid="meta-plant" value={meta.plant ?? ''} onChange={(e) => { setMeta({ plant: e.target.value }); pauseHistory() }} onBlur={resumeHistory} /></label>
+      <label className="prop-field">Discipline<input data-testid="meta-discipline" value={meta.discipline ?? ''} onChange={(e) => { setMeta({ discipline: e.target.value }); pauseHistory() }} onBlur={resumeHistory} /></label>
+      <label className="prop-field">Document №<input data-testid="meta-document-number" value={meta.documentNumber ?? ''} placeholder="for the set" onChange={(e) => { setMeta({ documentNumber: e.target.value }); pauseHistory() }} onBlur={resumeHistory} /></label>
       <label className="prop-field">Tag numbering starts at
         <select
           value={String(numberStart)}
@@ -50,7 +62,21 @@ function SheetProps() {
       </label>
       <div className="prop-title">{sheet.name}</div>
       <label className="prop-field">Drawing №<input value={sheet.drawingNumber} onChange={(e) => { setSheetMeta({ drawingNumber: e.target.value }); pauseHistory() }} onBlur={resumeHistory} /></label>
-      <label className="prop-field">Revision<input value={sheet.revision} onChange={(e) => { setSheetMeta({ revision: e.target.value }); pauseHistory() }} onBlur={resumeHistory} /></label>
+      <label className="prop-field">Revision
+        {/* Once a revision TABLE exists the code is the table's to set: an
+            issue stamps it, and a box that disagrees with the history behind
+            it is worse than no box. Before that, it stays the free label every
+            pre-schema-6 drawing has always had. */}
+        {revisionsOf(sheet).length > 0 ? (
+          <input value={currentRevisionCode(sheet)} readOnly data-testid="sheet-revision-derived" />
+        ) : (
+          <input value={sheet.revision} onChange={(e) => { setSheetMeta({ revision: e.target.value }); pauseHistory() }} onBlur={resumeHistory} />
+        )}
+      </label>
+      <button className="prop-btn" data-testid="open-revisions" onClick={() => setRevisionsOpen(true)}>
+        Revisions{revisionsOf(sheet).length > 0 ? ` (${revisionsOf(sheet).length})` : ''}…
+      </button>
+      {revisionsOpen && <RevisionsDialog sheet={sheet} onClose={() => setRevisionsOpen(false)} />}
       <label className="prop-field">Sheet size
         <select value={sheet.sheetSize} onChange={(e) => setSheetMeta({ sheetSize: e.target.value as SheetSize })}>
           {SHEETS.map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}

@@ -7,6 +7,11 @@ import type { HmiWidget } from './model'
 import type { AlignMode } from './align'
 import { alignPatches, distributePatches, duplicateWidgets } from './align'
 import { SignalPicker, TagPicker } from './TagPicker'
+import { engineeringFor } from '../model/signalData'
+import { keyOfNode } from '../model/registry'
+import { navigateWorkspace } from '../routes'
+import { locateCell } from '../canvas/locate'
+import type { ProjectDoc } from '../model/types'
 
 /** One armed pick-on-canvas request: the next canvas click binds, not selects. */
 export interface ArmedPick { kind: 'tank' | 'pipe'; widgetId: string }
@@ -44,6 +49,121 @@ function NumProp({ w, k, label }: { w: HmiWidget; k: string; label: string }) {
           else props[k] = Number(e.target.value)
           updateWidget(w.id, { props })
         })} />
+    </Row>
+  )
+}
+
+/**
+ * ALARM LIMITS — the engineering record owns these.
+ *
+ * LL / L / H / HH and the alarm priority are ISA-18.2 engineering decisions.
+ * They live in `doc.registry`, and `sim/tags.ts` reads them from there in
+ * preference to anything a widget carries. Until now this panel still offered
+ * them as ordinary editable widget properties, so an engineer could type
+ * `H = 80`, watch it save, and have the run keep using the record's 95 — the
+ * value accepted, stored, and silently inert.
+ *
+ * So: where the record states a value, the field shows THAT value, read-only,
+ * says where it came from, and offers the way to change it. Where the record
+ * says nothing, the legacy widget property is still editable and still works
+ * exactly as it did — which is what keeps every drawing made before the
+ * registry owned this running unchanged.
+ *
+ * Nothing is migrated. A widget's own value is left in `props` untouched; it
+ * simply stops being the answer while the record has one.
+ */
+function OverriddenProp({ label, value, testId }: { label: string; value: number | string; testId: string }) {
+  return (
+    <Row label={label}>
+      <span
+        data-testid={testId}
+        title="Set on the engineering record, which is what the run and every deliverable use"
+        style={{
+          width: 70, textAlign: 'right', fontSize: 12, color: '#5a6270',
+          background: '#eef1f5', border: '1px solid #d7dbe2', borderRadius: 3, padding: '2px 5px',
+        }}
+      >
+        {value}
+      </span>
+    </Row>
+  )
+}
+
+/** Jump to the instrument on the drawing, where its record is edited. */
+function openRecord(doc: ProjectDoc, tag: string): void {
+  for (const sheet of doc.sheets) {
+    for (const node of sheet.nodes) {
+      if (keyOfNode(node) !== tag) continue
+      navigateWorkspace('draw')
+      locateCell(node.id, sheet.id)
+      return
+    }
+  }
+  // Bound to a tag nothing on any sheet carries. `orphaned-binding` already
+  // reports that; the Checks page is where it is resolved.
+  navigateWorkspace('checks')
+}
+
+function AlarmLimits({ w }: { w: HmiWidget }) {
+  const doc = useStore((s) => s.doc)
+  const eng = engineeringFor(doc.registry, w.tag)
+  const owned = [eng.limits.LL, eng.limits.L, eng.limits.H, eng.limits.HH].some((v) => v !== undefined) ||
+    eng.priority !== undefined
+  const limitRow = (k: 'LL' | 'L' | 'H' | 'HH') => {
+    const fromRecord = eng.limits[k]
+    return fromRecord === undefined
+      ? <NumProp key={k} w={w} k={k} label={k} />
+      : <OverriddenProp key={k} label={k} value={fromRecord} testId={`prop-${k}-owned`} />
+  }
+  return (
+    <>
+      <h5 style={{ margin: '10px 0 2px' }}>Alarm limits</h5>
+      {owned && (
+        <p data-testid="alarm-owned-note" style={{ margin: '0 0 6px', fontSize: 11, color: '#5a6270', lineHeight: 1.45 }}>
+          Set on the engineering record for <b>{w.tag}</b> — that is what the run, the I/O list and every
+          export use. {w.tag && (
+            <button
+              data-testid="alarm-open-record"
+              onClick={() => w.tag && openRecord(doc, w.tag)}
+              style={{ ...btnStyle, flex: 'none', marginTop: 4, display: 'block' }}
+            >
+              Edit the engineering record…
+            </button>
+          )}
+        </p>
+      )}
+      {(['LL', 'L', 'H', 'HH'] as const).map(limitRow)}
+      {/* Deadband and on-delay stay HMI-owned for now: they are annunciation
+          behaviour, the registry has no field for them, and inventing one here
+          would be P1-A's scope creeping into a hardening pass. */}
+      <NumProp w={w} k="deadband" label="Deadband" />
+      <NumProp w={w} k="alarmDelay" label="On-delay s" />
+      {eng.priority !== undefined ? (
+        <OverriddenProp label="Priority" value={eng.priority} testId="prop-priority-owned" />
+      ) : (
+        <PriorityProp w={w} />
+      )}
+    </>
+  )
+}
+
+function PriorityProp({ w }: { w: HmiWidget }) {
+  const updateWidget = useStore((s) => s.updateWidget)
+  return (
+    <Row label="Priority">
+      <select data-testid="prop-priority"
+        value={typeof w.props?.priority === 'string' ? String(w.props.priority) : ''}
+        onChange={(e) => {
+          const props = { ...w.props }
+          if (e.target.value === '') delete props.priority
+          else props.priority = e.target.value
+          updateWidget(w.id, { props })
+        }}>
+        <option value="">default</option>
+        <option value="low">low</option>
+        <option value="medium">medium</option>
+        <option value="high">high</option>
+      </select>
     </Row>
   )
 }
@@ -243,28 +363,7 @@ export default function HmiPropertyPanel({ selection, onSelect, armedPick, onArm
       )}
       {w.type === 'tank' && (<><NumProp w={w} k="capacity" label="Capacity" /><NumProp w={w} k="level0" label="Start level %" /></>)}
       {(w.type === 'tank' || w.type === 'display' || w.type === 'gauge' || w.type === 'bar' || w.type === 'trend') && (
-        <>
-          <h5 style={{ margin: '10px 0 2px' }}>Alarm limits</h5>
-          <NumProp w={w} k="LL" label="LL" /><NumProp w={w} k="L" label="L" />
-          <NumProp w={w} k="H" label="H" /><NumProp w={w} k="HH" label="HH" />
-          <NumProp w={w} k="deadband" label="Deadband" />
-          <NumProp w={w} k="alarmDelay" label="On-delay s" />
-          <Row label="Priority">
-            <select data-testid="prop-priority"
-              value={typeof w.props?.priority === 'string' ? String(w.props.priority) : ''}
-              onChange={(e) => {
-                const props = { ...w.props }
-                if (e.target.value === '') delete props.priority
-                else props.priority = e.target.value
-                updateWidget(w.id, { props })
-              }}>
-              <option value="">default</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-            </select>
-          </Row>
-        </>
+        <AlarmLimits w={w} />
       )}
       {w.type === 'display' && (
         <Row label="Sparkline">

@@ -12,6 +12,7 @@ import ExportMenu from './ExportMenu'
 import AccountMenu from './AccountMenu'
 import FileMenu from './FileMenu'
 import FluidsDialog from './FluidsDialog'
+import AreasDialog from './AreasDialog'
 import { BudgetChip } from './BudgetDialog'
 import { hint } from '../shortcuts/registry'
 import { activeSheet } from '../store/store'
@@ -71,6 +72,7 @@ export default function Toolbar() {
   const setActiveLineClass = useStore((s) => s.setActiveLineClass)
   const name = useStore((s) => s.doc.meta.name)
   const [fluidsOpen, setFluidsOpen] = useState(false)
+  const [areasOpen, setAreasOpen] = useState(false)
 
   useEffect(() => {
     const onSave = () => void saveNow()
@@ -115,6 +117,11 @@ export default function Toolbar() {
           Fluids
         </button>
         {fluidsOpen && <FluidsDialog onClose={() => setFluidsOpen(false)} />}
+        <button data-testid="tb-areas" onClick={() => setAreasOpen(true)}
+          title="Define the plant hierarchy (Area → Unit) — assign objects to a unit in the object's Engineering tab">
+          Areas
+        </button>
+        {areasOpen && <AreasDialog onClose={() => setAreasOpen(false)} />}
         <BudgetChip />
         <span className="tb-sep" />
         <ZoomCluster />

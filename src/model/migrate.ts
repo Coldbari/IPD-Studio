@@ -7,7 +7,8 @@ import type { PlantEdge, PlantNode, ProjectDoc, Sheet, SheetSize } from './types
 import type { Registry } from './registry'
 import { keyOfNode, kindOfNode } from './registry'
 import { checkWidgetProps } from '../hmi/model'
-import { standardFromLegacySettings } from './standard'
+import { DEFAULT_ISSUE_STATUSES, standardFromLegacySettings } from './standard'
+import { INITIAL_REVISION_CODE, legacyRevisionId, newRevision } from './revision'
 
 export class DocError extends Error {}
 
@@ -38,10 +39,12 @@ function migrateV1(v1: V1Doc): ProjectDoc {
     edges: v1.edges,
   }
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     meta: { name: v1.meta.name, author: v1.meta.author, created: v1.meta.created, modified: v1.meta.modified },
     settings: v1.settings,
-    sheets: [sheet],
+    // The v1 revision string goes through the same synthesis as every other
+    // legacy sheet, so one rule decides what a bare code becomes.
+    sheets: [withRevisionTable(sheet)],
     hmiScreens: [],
   }
 }
@@ -87,6 +90,69 @@ function buildRegistry(doc: ProjectDoc): Registry | undefined {
   return registry
 }
 
+
+/**
+ * schemaVersion 5 → 6: the revision STRING gains a revision TABLE.
+ *
+ * The string stays exactly where it was and keeps driving the title block, so
+ * every export is byte-identical after a migration.
+ *
+ * What the migration will NOT do is invent history. A document records that
+ * someone typed "A" into a box; it does not record when, by whom, why, or
+ * whether it was ever issued. So the synthesised row carries the code and
+ * nothing else — no date, no name, and NOT issued, because being issued is a
+ * fact we do not have. A sheet still on the default '0' gets no row at all:
+ * that is an untouched default, not a revision.
+ *
+ * Deterministic (the id derives from the sheet id) and idempotent (a sheet that
+ * already has a table is returned untouched), so re-running it cannot
+ * duplicate a row.
+ */
+function withRevisionTable(sheet: Sheet): Sheet {
+  if (Array.isArray(sheet.revisions)) return sheet
+  const code = (sheet.revision ?? '').trim()
+  if (!code || code === INITIAL_REVISION_CODE) return { ...sheet, revisions: [] }
+  return {
+    ...sheet,
+    revisions: [
+      newRevision(legacyRevisionId(sheet.id), { code, status: DEFAULT_ISSUE_STATUSES[0] }),
+    ],
+  }
+}
+
+/**
+ * Areas and Units, checked the way the rest of the document is: STRUCTURALLY.
+ *
+ * The line drawn here matters. A malformed shape — an area with no id, a unit
+ * list that is not a list — means the file is not what it claims to be, and
+ * loading it half-read would put a project into a state nothing downstream
+ * could reason about. A BROKEN REFERENCE is a different thing entirely: a unit
+ * whose area was deleted is a real engineering situation, the document is
+ * perfectly readable, and refusing to open it would strand the user with a
+ * file they cannot repair. Those load, and `unit-orphan-area` reports them.
+ *
+ * Nothing is dropped, rewritten or renumbered on the way in. There is no
+ * hierarchy migration on load at all: a pre-P1-D document has no Areas to
+ * derive one from, and inventing them from free text is precisely what
+ * `planLegacyMapping` refuses to do (model/hierarchy.ts).
+ */
+function checkHierarchy(doc: Partial<ProjectDoc>): void {
+  if (doc.areas !== undefined) {
+    if (!Array.isArray(doc.areas)) throw new DocError('areas is malformed')
+    for (const a of doc.areas) {
+      if (typeof a?.id !== 'string' || !a.id || typeof a.code !== 'string') throw new DocError('areas is malformed')
+    }
+  }
+  if (doc.units !== undefined) {
+    if (!Array.isArray(doc.units)) throw new DocError('units is malformed')
+    for (const u of doc.units) {
+      if (typeof u?.id !== 'string' || !u.id || typeof u.code !== 'string' || typeof u.areaId !== 'string') {
+        throw new DocError('units is malformed')
+      }
+    }
+  }
+}
+
 /** Parse + validate + migrate a raw JSON payload into the current schema. */
 export function loadDoc(raw: unknown): ProjectDoc {
   if (typeof raw !== 'object' || raw === null) {
@@ -102,7 +168,7 @@ export function loadDoc(raw: unknown): ProjectDoc {
     if (typeof v1.settings !== 'object' || v1.settings === null) throw new DocError('Document is missing settings')
     return migrateV1(v1 as V1Doc)
   }
-  if (version === 2 || version === 3 || version === 4 || version === 5) {
+  if (version === 2 || version === 3 || version === 4 || version === 5 || version === 6) {
     const doc = raw as Partial<ProjectDoc>
     if (!Array.isArray(doc.sheets) || doc.sheets.length === 0) throw new DocError('Document has no sheets')
     for (const sheet of doc.sheets) {
@@ -138,6 +204,7 @@ export function loadDoc(raw: unknown): ProjectDoc {
     if (doc.registry !== undefined && (typeof doc.registry !== 'object' || doc.registry === null || Array.isArray(doc.registry))) {
       throw new DocError('registry is malformed')
     }
+    checkHierarchy(doc)
     // The tag conventions used to live in `settings`. They fold into the
     // standard so ONE place answers "how are tags formatted here" — but the old
     // fields are left in place and still read, so a v5 file written by this
@@ -145,8 +212,9 @@ export function loadDoc(raw: unknown): ProjectDoc {
     const standard = doc.standard ?? standardFromLegacySettings(doc.settings ?? {})
     const migrated = {
       ...doc,
-      schemaVersion: 5,
+      schemaVersion: 6,
       hmiScreens: doc.hmiScreens ?? [],
+      sheets: doc.sheets.map(withRevisionTable),
       ...(standard ? { standard } : {}),
     } as ProjectDoc
     const registry = buildRegistry(migrated)

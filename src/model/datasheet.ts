@@ -8,10 +8,18 @@ export interface DatasheetField {
 }
 
 /** ISA-20-style datasheet field catalog, grouped in form sections. */
-export const DATASHEET_SECTIONS: Record<'general' | 'process' | 'element' | 'signal', DatasheetField[]> = {
+export const DATASHEET_SECTIONS: Record<'general' | 'process' | 'element' | 'signal' | 'alarm', DatasheetField[]> = {
   general: [
     { key: 'general.service', label: 'Service' },
-    { key: 'general.area', label: 'Area / Unit' },
+    // LEGACY, and labelled as such since v0.21. This was one free-text box
+    // called "Area / Unit" — a name that admits it conflated two things. The
+    // plant hierarchy is now Area -> Unit -> EngineeringRecord.unitId
+    // (model/hierarchy.ts), which is structured, filterable and stable across
+    // renames. The field stays, keeps every value ever typed into it, and is
+    // still printed and exported; it is simply no longer the place to put new
+    // information. `legacy-area-unmapped` surfaces what is still in here once
+    // a project has declared an Area to map it to.
+    { key: 'general.area', label: 'Area (legacy text)' },
     { key: 'general.line', label: 'Line / Equipment' },
     { key: 'general.pid', label: 'P&ID No.' },
     { key: 'general.manufacturer', label: 'Manufacturer' },
@@ -37,9 +45,35 @@ export const DATASHEET_SECTIONS: Record<'general' | 'process' | 'element' | 'sig
   signal: [
     { key: 'signal.output', label: 'Output signal' },
     { key: 'signal.range', label: 'Calibrated range' },
+    // The range stays ONE field. It is what a datasheet prints and what the
+    // standard already requires; adding a second numeric min/max pair beside
+    // it would be two answers to "what does this instrument measure", and the
+    // whole point of this work is that engineering values have one owner.
+    // `model/signalData.ts` reads numbers out of it for anything that needs
+    // them, and says so honestly when it cannot.
+    { key: 'signal.type', label: 'I/O type (AI/AO/DI/DO)' },
+    { key: 'signal.units', label: 'Engineering unit' },
+    { key: 'signal.setpoint', label: 'Setpoint' },
+    { key: 'signal.systemTag', label: 'Control system tag' },
     { key: 'signal.power', label: 'Power supply' },
     { key: 'signal.fail', label: 'Fail action' },
     { key: 'signal.ex', label: 'Hazardous area rating' },
+  ],
+
+  /**
+   * ISA-18.2 alarm setpoints.
+   *
+   * Engineering data, and until now it lived only in HMI widget props — which
+   * meant two widgets showing one tag could disagree, and a widget with
+   * nothing set still produced 5/10/90/95 from the simulator's fallbacks. Those
+   * numbers were never anybody's engineering decision. They live here now.
+   */
+  alarm: [
+    { key: 'alarm.LL', label: 'Low low (LL)' },
+    { key: 'alarm.L', label: 'Low (L)' },
+    { key: 'alarm.H', label: 'High (H)' },
+    { key: 'alarm.HH', label: 'High high (HH)' },
+    { key: 'alarm.priority', label: 'Alarm priority (high/medium/low)' },
   ],
 }
 
@@ -51,5 +85,8 @@ export function fieldsFor(letters: string): typeof DATASHEET_SECTIONS {
     process: noProcess ? [] : DATASHEET_SECTIONS.process,
     element: DATASHEET_SECTIONS.element,
     signal: DATASHEET_SECTIONS.signal,
+    // A hand device has no alarms to set either — the same reason process
+    // conditions are pruned for it.
+    alarm: noProcess ? [] : DATASHEET_SECTIONS.alarm,
   }
 }

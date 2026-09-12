@@ -2,10 +2,12 @@
 // Copyright © 2026 Praharsh Nagpure — IPD Studio. Noncommercial use only;
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
-import type { Rule } from '../rules'
+import type { Rule, RuleFinding } from '../rules'
 import { finding } from '../rules'
 import { labelForField } from '../../model/fields'
 import { requiredFor } from '../../model/standard'
+import { collectHmiBindings } from '../../model/references'
+import { recordFieldValue } from '../../model/hierarchy'
 
 export const orphanRecord: Rule = {
   id: 'orphan-record',
@@ -35,6 +37,62 @@ export const orphanRecord: Rule = {
   },
 }
 
+/**
+ * The HMI twin of `orphanRecord`, and the check that closes the rename defect.
+ *
+ * A widget bound to a tag nothing on any sheet carries still renders — it just
+ * reads nothing, for ever, and says so nowhere. That is how a deleted or
+ * cleared instrument leaves a dead faceplate on an operator screen.
+ *
+ * Checked against `liveKeys` — the tags actually DRAWN — and deliberately not
+ * against the registry. An engineering record is optional: most drawings carry
+ * bindings to perfectly valid tags that nobody has written a datasheet for yet.
+ * Testing the registry would report all 12 bindings of the bundled HMI demo,
+ * which has no records at all, and a check that fires on the sample project is
+ * a check that gets switched off.
+ *
+ * One finding per BINDING, not per tag: the same missing tag read by four
+ * widgets is four separate repairs, and accepting one must not silence the
+ * other three. Hence the explicit `key`.
+ */
+export const orphanedBinding: Rule = {
+  id: 'orphaned-binding',
+  title: 'HMI widgets bound to tags that are not on any sheet',
+  severity: 'warning',
+  discipline: 'data',
+  why: 'The widget still draws, reads nothing, and never says so. This is what a deleted or renamed instrument leaves behind on an operator screen.',
+  run(ix) {
+    const out: RuleFinding[] = []
+    for (const b of collectHmiBindings(ix.doc)) {
+      // liveKeys is a Set — one O(1) test per binding, no registry rescan.
+      if (ix.liveKeys.has(b.tag)) continue
+      const slot = b.where === 'hmi-pen' ? `pen${b.path.penIndex}` : b.path.field ?? 'tag'
+      out.push(
+        finding(orphanedBinding, b.tag, `${b.label} reads ${b.tag}, which nothing on any sheet carries`, {
+          // Per-binding identity, so each is accepted or repaired on its own.
+          // Widget ids are stable for the life of a screen; a re-import
+          // rebuilds the bindings anyway, so an acceptance has nothing to
+          // survive.
+          key: `${orphanedBinding.id}:${b.tag}@${b.path.screenId}/${b.path.widgetId}/${slot}`,
+          fix: {
+            label: 'Clear the binding',
+            spec: {
+              kind: 'clear-binding',
+              screenId: b.path.screenId,
+              widgetId: b.path.widgetId,
+              where: b.where,
+              tag: b.tag,
+              ...(b.path.field ? { field: b.path.field } : {}),
+              ...(b.path.penIndex !== undefined ? { penIndex: b.path.penIndex } : {}),
+            },
+          },
+        }),
+      )
+    }
+    return out
+  },
+}
+
 export const requiredFieldEmpty: Rule = {
   id: 'required-field-empty',
   title: 'Incomplete engineering records',
@@ -55,10 +113,13 @@ export const requiredFieldEmpty: Rule = {
       // samples — and an object nobody has begun specifying is not yet an
       // omission. Overall completeness is the dashboard's job, not the QA
       // report's.
-      const started = record && Object.values(record.fields).some((v) => v.trim() !== '')
+      const started = record && (record.unitId !== undefined || Object.values(record.fields).some((v) => v.trim() !== ''))
       if (!started) continue
       const missing = required.filter((f) => {
-        const value = record?.fields[f] ?? first.node.datasheet?.[f] ?? ''
+        // Through the one accessor that knows a Unit assignment is a reference
+        // on the record rather than a string in `fields` — so a standard that
+        // requires a Unit is checked by this rule and no second one.
+        const value = recordFieldValue(record, f) || first.node.datasheet?.[f] || ''
         return value.trim() === ''
       })
       if (!missing.length) continue
@@ -95,4 +156,4 @@ export const equipmentNoRecord: Rule = {
   },
 }
 
-export const DATA_RULES: Rule[] = [orphanRecord, requiredFieldEmpty, equipmentNoRecord]
+export const DATA_RULES: Rule[] = [orphanRecord, orphanedBinding, requiredFieldEmpty, equipmentNoRecord]

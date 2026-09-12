@@ -2,6 +2,7 @@
 // Copyright © 2026 Praharsh Nagpure — IPD Studio. Noncommercial use only;
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
+import type { Severity } from '../validate/rules'
 import type { EntityKind } from './registry'
 import type { SheetSize } from './types'
 
@@ -51,10 +52,57 @@ export const LINE_PART_LABELS: Record<LineNumberPart, string> = {
   seq: 'Sequence',
 }
 
+/**
+ * What a house requires before a drawing may be ISSUED at one status.
+ *
+ * Every field is optional, and an absent gate means NO gating — that is the
+ * load-bearing default. Issue gating is a controlled-document policy, not a
+ * software opinion: a project that never configured one must issue exactly as
+ * it did before this existed, or the feature is a regression disguised as
+ * rigour.
+ *
+ * Nothing here hard-codes a meaning for IFC, IFR or AS-BUILT. The statuses
+ * themselves are already house-configurable (`issueStatuses`), so attaching
+ * built-in semantics to a name the house chose would be guessing about their
+ * workflow.
+ */
+export interface IssueGate {
+  /** Severities that BLOCK the issue when an open finding carries one.
+   *  Absent or empty: findings are reported, never blocking. */
+  blockSeverities?: Severity[]
+  /**
+   * Whether an explicitly accepted (ignored) finding stops blocking.
+   *
+   * Default TRUE — accepting a finding with a written reason is the normal
+   * engineering escape, and the reason travels in the QA evidence. A house
+   * that requires blocked findings to be genuinely fixed, not waived, sets
+   * this false; then an accepted finding at a blocked severity still blocks.
+   */
+  allowAcceptedFindings?: boolean
+  /** The revision row must name a checker. */
+  requireChecker?: boolean
+  /** The revision row must name an approver. */
+  requireApprover?: boolean
+  /** A QA evaluation must exist for the document being issued. Note this is
+   *  "the checks ran", NOT "the checks found nothing" — a clean drawing is
+   *  evaluated. */
+  requireQaEvaluation?: boolean
+}
+
 export interface StandardProfile {
   id: string
   /** Shown wherever the project reports what it was checked against. */
   name: string
+  /**
+   * The house's own version label — "2.1", "Rev C", "2026-Q1".
+   *
+   * TYPED BY A PERSON, never fabricated. A standard changes when a company
+   * decides it has, and only the company knows whether tightening one rule is
+   * a new version or a correction to this one. What the software derives on
+   * its own is the FINGERPRINT (model/provenance.ts), which is content-based
+   * and cannot be wrong; this is the name humans use for it in a transmittal.
+   */
+  version?: string
   tagFormat: {
     pattern: TagPattern
     separator: '-' | ''
@@ -83,6 +131,47 @@ export interface StandardProfile {
   /** Rule id -> forced severity, or `off`. The escape hatch for a house that
    *  genuinely does not care about a check the engine ships. */
   severityOverrides?: Record<string, RuleSeverityOverride>
+  /** The issue states a drawing moves through here. Optional so a profile
+   *  written before revisions existed still loads; `issueStatusesOf` resolves
+   *  the absence to the default list. Configurable because houses genuinely
+   *  disagree — AFC is "Approved for Construction" in some and "As-Built" in
+   *  others — and picking one would be wrong for the other. */
+  issueStatuses?: string[]
+  /**
+   * Issue status -> what must be true before a drawing may be issued at it.
+   *
+   * Keyed by the status string, so it follows `issueStatuses` wherever a house
+   * renames or reorders them. A status with no entry is ungated; an absent
+   * `issuePolicy` altogether means the project has no gating at all.
+   */
+  issuePolicy?: Record<string, IssueGate>
+}
+
+/** The gate for one status, or undefined when that status is ungated. */
+export function issueGateFor(std: StandardProfile | undefined, status: string): IssueGate | undefined {
+  return std?.issuePolicy?.[status]
+}
+
+/**
+ * The gating a house is likely to want, offered and never applied.
+ *
+ * Explicitly ADOPTED from the Standards page; nothing installs it silently.
+ * It blocks open criticals on the final construction status and allows
+ * accepted findings, which is the mildest policy that is still a policy.
+ */
+export function recommendedIssuePolicy(statuses: string[]): Record<string, IssueGate> {
+  const target = statuses.includes('IFC') ? 'IFC' : statuses[statuses.length - 1]
+  if (!target) return {}
+  return { [target]: { blockSeverities: ['critical'], allowAcceptedFindings: true, requireChecker: true } }
+}
+
+/** What a drawing goes through when nobody has said otherwise. */
+export const DEFAULT_ISSUE_STATUSES = ['WIP', 'IFR', 'IFA', 'IFC', 'AS-BUILT'] as const
+
+/** The one place that answers "what states can this project issue at". */
+export function issueStatusesOf(standard: StandardProfile | undefined): string[] {
+  const list = standard?.issueStatuses
+  return list && list.length > 0 ? list : [...DEFAULT_ISSUE_STATUSES]
 }
 
 /**
@@ -110,6 +199,7 @@ export const DEFAULT_STANDARD: StandardProfile = {
     defaultLocation: 'field',
     sheetSize: 'A3',
   },
+  issueStatuses: [...DEFAULT_ISSUE_STATUSES],
 }
 
 /** The profile a document is checked against. Never null: a document without
@@ -202,6 +292,34 @@ export interface ProfileProblem {
 }
 
 /**
+ * The profile COVERAGE LEDGER.
+ *
+ * `serializeStandard` is `JSON.stringify` — total. `validateProfile` below
+ * rebuilds the object field by field — an allowlist. That asymmetry is how
+ * `issueStatuses` was silently dropped on every import for a release: it wrote
+ * to the file correctly and vanished on the way back.
+ *
+ * Typed over `keyof StandardProfile`, so adding a field to the profile will
+ * not compile until someone states whether the parser carries it. The same
+ * device as `DOC_FIELD_COVERAGE` in model/diff.ts, pointed at the other place
+ * a hand-written allowlist can lose data.
+ */
+export const PROFILE_FIELD_COVERAGE: Record<keyof StandardProfile, 'parsed'> = {
+  id: 'parsed',
+  name: 'parsed',
+  version: 'parsed',
+  tagFormat: 'parsed',
+  lineNumber: 'parsed',
+  required: 'parsed',
+  conventions: 'parsed',
+  severityOverrides: 'parsed',
+  issueStatuses: 'parsed',
+  issuePolicy: 'parsed',
+}
+
+const SEVERITIES: Severity[] = ['critical', 'warning', 'info']
+
+/**
  * Validate a profile parsed from a file.
  *
  * An `.ipdstd.json` is a file a user can hand-edit and a colleague can email,
@@ -221,6 +339,9 @@ export function validateProfile(raw: unknown): { ok: true; profile: StandardProf
   if (typeof p.name !== 'string' || p.name.trim() === '') add('name', 'A standard needs a name')
   if (p.name !== undefined && typeof p.name === 'string' && p.name.length > 120) {
     add('name', 'Name is longer than 120 characters')
+  }
+  if (p.version !== undefined && (typeof p.version !== 'string' || p.version.length > 40)) {
+    add('version', 'Version must be a short label')
   }
 
   const tf = p.tagFormat
@@ -276,6 +397,38 @@ export function validateProfile(raw: unknown): { ok: true; profile: StandardProf
     }
   }
 
+  if (p.issueStatuses !== undefined) {
+    if (!Array.isArray(p.issueStatuses) || p.issueStatuses.some((v) => typeof v !== 'string' || !v.trim())) {
+      add('issueStatuses', 'Issue statuses must be a list of non-empty names')
+    } else if (p.issueStatuses.length === 0) {
+      add('issueStatuses', 'A profile with an empty issue-status list could never issue a drawing')
+    }
+  }
+
+  if (p.issuePolicy !== undefined) {
+    if (typeof p.issuePolicy !== 'object' || p.issuePolicy === null || Array.isArray(p.issuePolicy)) {
+      add('issuePolicy', 'Issue policy must be a map of issue status to its gate')
+    } else {
+      for (const [status, gate] of Object.entries(p.issuePolicy)) {
+        const at = `issuePolicy.${status}`
+        if (typeof gate !== 'object' || gate === null || Array.isArray(gate)) {
+          add(at, 'Each issue status maps to a gate object')
+          continue
+        }
+        const g = gate as IssueGate
+        if (g.blockSeverities !== undefined) {
+          if (!Array.isArray(g.blockSeverities)) add(`${at}.blockSeverities`, 'Blocking severities must be a list')
+          else for (const sev of g.blockSeverities) {
+            if (!SEVERITIES.includes(sev)) add(`${at}.blockSeverities`, `"${String(sev)}" is not a severity`)
+          }
+        }
+        for (const flag of ['allowAcceptedFindings', 'requireChecker', 'requireApprover', 'requireQaEvaluation'] as const) {
+          if (g[flag] !== undefined && typeof g[flag] !== 'boolean') add(`${at}.${flag}`, 'Must be true or false')
+        }
+      }
+    }
+  }
+
   if (problems.length) return { ok: false, problems }
 
   // Fill from the default rather than trusting the file to be complete: a
@@ -284,11 +437,17 @@ export function validateProfile(raw: unknown): { ok: true; profile: StandardProf
   const profile: StandardProfile = {
     id: typeof p.id === 'string' && p.id ? p.id : DEFAULT_STANDARD.id,
     name: (p.name as string).trim(),
+    ...(typeof p.version === 'string' && p.version.trim() ? { version: p.version.trim() } : {}),
     tagFormat: { ...DEFAULT_STANDARD.tagFormat, ...p.tagFormat },
     lineNumber: { ...DEFAULT_STANDARD.lineNumber, ...p.lineNumber },
     required: { ...DEFAULT_STANDARD.required, ...p.required },
     conventions: { ...DEFAULT_STANDARD.conventions, ...p.conventions },
     ...(p.severityOverrides ? { severityOverrides: p.severityOverrides } : {}),
+    ...(Array.isArray(p.issueStatuses) ? { issueStatuses: [...(p.issueStatuses as string[])] } : {}),
+    // Carried through verbatim when present, and ABSENT when absent — an
+    // empty `{}` substituted for a missing policy would change the standard's
+    // fingerprint for every file written before gating existed.
+    ...(p.issuePolicy ? { issuePolicy: p.issuePolicy } : {}),
   }
   return { ok: true, profile }
 }

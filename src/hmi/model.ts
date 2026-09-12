@@ -65,6 +65,41 @@ export const WIDGET_SCHEMA: Record<WidgetType, Record<string, PropKind>> = {
   nav: { screen: 'screenRef' },
 }
 
+/**
+ * Split a `TAG.SIGNAL` reference into its parts.
+ *
+ * Lives here, beside the widget types it serves, rather than in `tagIndex.ts`:
+ * the document layer has to read widget references during a rename, and
+ * `tagIndex` pulls in `sim/tags`, which would drag the simulator into the
+ * eager bundle. `tagIndex` re-exports it, so every existing import still works.
+ */
+export function parseSignalRef(ref: string): { tag: string; signal: string } | null {
+  const i = ref.lastIndexOf('.')
+  if (i <= 0 || i === ref.length - 1) return null
+  return { tag: ref.slice(0, i), signal: ref.slice(i + 1) }
+}
+
+/**
+ * Which `PropKind`s hold an engineering TAG, and how the tag is stored.
+ *
+ *  - `signal` — the value is `TAG.SIGNAL` (lamp/button/switch `signal`).
+ *  - `bare`   — the value is the tag itself. `tankRef` is one of these: a
+ *    `bindTank` prop holds a tag, not a widget id, and the engine resolves it
+ *    through the tag map (`sim/engine.ts` `tags[d.bindTank]`).
+ *
+ * `pipeRef`, `screenRef` and `symbolRef` are deliberately absent — they hold
+ * pipe, screen and symbol ids, which a tag rename must not touch.
+ *
+ * Registered here so a new tag-bearing prop cannot be introduced without the
+ * reference collector in `model/references.ts` seeing it; the ledger test in
+ * `tests/model/references.test.ts` fails if this map and `PropKind` drift.
+ */
+export const TAG_PROP_KINDS: Partial<Record<PropKind, 'signal' | 'bare'>> = {
+  signalRef: 'signal',
+  tagRef: 'bare',
+  tankRef: 'bare',
+}
+
 /** Prop keys this widget carries that its type's schema doesn't know. */
 export function checkWidgetProps(w: HmiWidget): string[] {
   const schema = (WIDGET_SCHEMA[w.type] ?? {}) as Record<string, PropKind>

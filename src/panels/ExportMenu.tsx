@@ -10,7 +10,14 @@ import { printAllSheets } from '../export/printAll'
 import { exportPng } from '../export/png'
 import { downloadDexpi } from '../export/dexpi'
 import { downloadDxf } from '../export/dxf'
-import { downloadDatasheetMatrix, downloadInstrumentIndex, downloadLineList } from '../export/csv'
+import {
+  downloadDatasheetMatrix,
+  downloadEquipmentList,
+  downloadInstrumentIndex,
+  downloadIoList,
+  downloadLineList,
+  downloadValveList,
+} from '../export/csv'
 import { notify } from '../feedback/notices'
 
 interface Item {
@@ -40,7 +47,10 @@ const SECTIONS: { title: string; items: Item[] }[] = [
     title: 'Reports (CSV)',
     items: [
       { label: 'Instrument index', run: () => downloadInstrumentIndex() },
+      { label: 'I/O list', run: () => downloadIoList() },
       { label: 'Line list', run: () => downloadLineList() },
+      { label: 'Equipment list', run: () => downloadEquipmentList() },
+      { label: 'Valve list', run: () => downloadValveList() },
       { label: 'Datasheet matrix', run: () => downloadDatasheetMatrix() },
     ],
   },

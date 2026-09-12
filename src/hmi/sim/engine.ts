@@ -5,6 +5,7 @@
 import type { HmiScreen } from '../model'
 import type { TagDef } from './tags'
 import { buildTagDefs } from './tags'
+import type { Registry } from '../../model/registry'
 import type { FlowNetwork } from './network'
 import { buildNetwork, solveFlows } from './network'
 
@@ -34,9 +35,9 @@ const DEV_LIMIT = 10
  *  simulating while the operator navigates between pages. Tag defs merge
  *  globally; flow networks stay per-screen (pipe coordinates are page-local),
  *  branch ids are re-namespaced so concatenation cannot collide. */
-export function buildSimModel(screens: HmiScreen | HmiScreen[]): SimModel {
+export function buildSimModel(screens: HmiScreen | HmiScreen[], registry?: Registry): SimModel {
   const list = Array.isArray(screens) ? screens : [screens]
-  const defs = buildTagDefs(list)
+  const defs = buildTagDefs(list, registry)
   const branches = list.flatMap((sc, i) =>
     buildNetwork(sc).branches.map((b) => ({ ...b, id: `S${i}:${b.id}` })),
   )

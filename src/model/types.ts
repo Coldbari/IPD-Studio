@@ -5,6 +5,9 @@
 /** Core document types — the single source of truth for a P&ID drawing. */
 
 import type { HmiScreen } from '../hmi/model'
+import type { QaEvidence, StandardProvenance } from './provenance'
+import type { ConformanceRecord } from './conformance'
+import type { Area, Unit } from './hierarchy'
 import type { Registry } from './registry'
 import type { StandardProfile } from './standard'
 
@@ -115,18 +118,109 @@ export interface Fluid {
   color: string
 }
 
+/**
+ * What the document IS, as a controlled deliverable.
+ *
+ * `name`, `author`, `created` and `modified` are the original four. The rest
+ * arrived with P2-A because a title block has to print them, and every one is
+ * optional: a project that never fills them in prints blanks rather than
+ * invented values, and a document written before they existed loads unchanged.
+ *
+ * These are PROJECT-level. They are deliberately not copied onto Sheet — the
+ * client does not change between sheet 2 and sheet 3, and two copies of one
+ * fact is how a title block starts contradicting itself. Sheet keeps what is
+ * genuinely per-sheet: its name, its drawing number and its revision table.
+ */
 export interface ProjectMeta {
   name: string
   author: string
   created: string
   modified: string
+  /** Who the drawing is for. */
+  client?: string
+  /** The house's project/job number. */
+  projectNumber?: string
+  /** Plant, site or facility. */
+  plant?: string
+  /** Discipline — "Process", "Instrumentation", "Piping". */
+  discipline?: string
+  /** Document number for the SET, where a house numbers the set as well as
+   *  each sheet. Sheet.drawingNumber remains the per-sheet number. */
+  documentNumber?: string
+}
+
+/**
+ * One row of a drawing's revision table.
+ *
+ * A revision exists as soon as it is created (a WIP row an engineer is working
+ * towards) and becomes ISSUED when `issuedAt` is stamped. Only an issued
+ * revision carries a snapshot and a QA record, because only an issue is a
+ * moment worth being able to return to.
+ *
+ * `status` is a free string checked against `StandardProfile.issueStatuses`,
+ * not an enum: houses differ on whether AFC means Approved or As-Built, and
+ * hard-coding one reading would be wrong for half the market.
+ */
+export interface Revision {
+  id: string
+  /** As printed in the revision table: '0', 'A', '1'. Houses differ. */
+  code: string
+  /** ISO date the revision is dated. Empty when never stated. */
+  date: string
+  /** Reason for revision. */
+  description: string
+  preparedBy: string
+  checkedBy?: string
+  approvedBy?: string
+  status: string
+  /** ISO timestamp. Absent means drafted but not issued. */
+  issuedAt?: string
+  /** Key into the revision snapshot store. Absent = no snapshot kept. */
+  snapshotId?: string
+  /** The QA report AS IT STOOD at issue. A copy, never a live pointer.
+   *  Counts only; `qaEvidence` carries what they were counts OF. */
+  qaAtIssue?: { critical: number; warning: number; info: number; total: number }
+  /**
+   * The standard this revision was checked against, frozen at issue.
+   *
+   * Absent on every revision issued before P2-A, and on migrated legacy rows.
+   * Absent means NOT RECORDED — never "the current standard". Reconstructing
+   * it from today's `doc.standard` would be inventing provenance, which is
+   * worse than admitting there is none.
+   */
+  standard?: StandardProvenance
+  /**
+   * The findings as they stood at issue, with their accepted reasons.
+   *
+   * Lives on the revision row and therefore inside `ProjectDoc`, so it travels
+   * in the `.pnid` — unlike the full snapshot, which stays on the machine that
+   * issued it. This is the portable half of the provenance.
+   */
+  qaEvidence?: QaEvidence
+  /**
+   * The conformance verdict, frozen at issue.
+   *
+   * The VERDICT and what it was computed from — never the findings, which stay
+   * in `qaEvidence` so there is one list and it cannot disagree with itself.
+   *
+   * Absent on everything issued before P2-B. Absent means NOT RECORDED, and is
+   * displayed as such: recomputing it from today's standard would describe
+   * this afternoon's rules rather than the ones the drawing was issued under.
+   */
+  conformance?: ConformanceRecord
 }
 
 export interface Sheet {
   id: string
   name: string
   drawingNumber: string
+  /** The CURRENT revision code, as printed in the title block. Kept as a
+   *  plain string so every existing consumer — the title block, DXF, print —
+   *  is untouched; `revisions` is the record behind it and issuing updates
+   *  this to match. */
   revision: string
+  /** The revision table. Absent on documents written before schema 6. */
+  revisions?: Revision[]
   sheetSize: SheetSize
   nodes: PlantNode[]
   edges: PlantEdge[]
@@ -152,7 +246,7 @@ export interface CustomSymbolDef {
 }
 
 export interface ProjectDoc {
-  schemaVersion: 5
+  schemaVersion: 6
   meta: ProjectMeta
   settings: {
     gridPx: number
@@ -177,6 +271,18 @@ export interface ProjectDoc {
    *  checked against before standards existed — so an old document's QA report
    *  does not change when it is opened by a build that has this feature. */
   standard?: StandardProfile
+  /** The plant hierarchy: Areas, and the Units inside them (v0.21.0+).
+   *
+   *  Both optional and both ADDITIVE — a document that never declared a
+   *  hierarchy has neither, which is every document written before this
+   *  existed. That is also why the schema version did not move: nothing is
+   *  rewritten on load, so a file saved by this build still opens in the one
+   *  before it, which simply ignores two fields it does not know.
+   *
+   *  Ordering carries no meaning. Identity is `id`; the arrays are a place to
+   *  keep them, and reordering one is not an engineering change. */
+  areas?: Area[]
+  units?: Unit[]
   /** QA state. `ignored` is keyed by RuleFinding.key — rule + engineering key,
    *  never a node id — so an accepted finding stays accepted across a redraw. */
   qa?: { ignored: Record<string, IgnoredFinding> }

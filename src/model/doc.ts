@@ -31,6 +31,7 @@ export function createSheet(number: number, sheetSize: SheetSize = 'A3'): Sheet 
     name: `Sheet ${number}`,
     drawingNumber: '',
     revision: '0',
+    revisions: [],
     sheetSize,
     nodes: [],
     edges: [],
@@ -50,7 +51,7 @@ export const DEFAULT_FLUIDS = [
 export function createEmptyDoc(name = 'Untitled P&ID'): ProjectDoc {
   const now = new Date().toISOString()
   return {
-    schemaVersion: 5,
+    schemaVersion: 6,
     meta: { name, author: '', created: now, modified: now },
     settings: { gridPx: 8, tagSeparator: '-', numberStart: 100 },
     sheets: [createSheet(1)],

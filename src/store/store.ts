@@ -5,11 +5,71 @@
 import { create } from 'zustand'
 import { temporal } from 'zundo'
 import { ulid } from 'ulid'
-import type { BudgetSettings, CustomSymbolDef, Fluid, PlantEdge, PlantNode, ProjectDoc, Sheet, Tag } from '../model/types'
+import type { BudgetSettings, CustomSymbolDef, Fluid, PlantEdge, PlantNode, ProjectDoc, Revision, Sheet, Tag } from '../model/types'
+import { newRevision } from '../model/revision'
+
+/**
+ * Revision control is not engineering state.
+ *
+ * An issue is a record of something that happened. Ctrl+Z is for the drawing —
+ * for the valve you just moved and the tag you just mistyped — and reaching
+ * back through it to un-issue a controlled document is not an undo, it is a
+ * falsification. So the revision table sits OUTSIDE ordinary undo in both
+ * directions: revision mutations record no step, and an undo of some later
+ * engineering edit carries the table across unchanged.
+ *
+ * The table is still edited, just through the revision UI that owns it —
+ * Discard removes a work-in-progress row, and an issued row is immutable by
+ * `updateRevision`/`deleteRevision`.
+ */
+function carryRevisions(from: ProjectDoc, onto: ProjectDoc): ProjectDoc {
+  const keep = new Map(from.sheets.map((sh) => [sh.id, { revisions: sh.revisions, revision: sh.revision }]))
+  let changed = false
+  const sheets = onto.sheets.map((sh) => {
+    const k = keep.get(sh.id)
+    // A sheet the undo removed takes its table with it; a sheet the undo
+    // restored keeps whatever that past state held.
+    if (!k || (k.revisions === sh.revisions && k.revision === sh.revision)) return sh
+    changed = true
+    return { ...sh, revisions: k.revisions, revision: k.revision }
+  })
+  return changed ? { ...onto, sheets } : onto
+}
+
+/** Re-apply the live revision tables after the temporal store has restored a
+ *  past document, without recording that graft as a step of its own. */
+function carryRevisionsAcross(
+  before: ProjectDoc,
+  set: (partial: { doc: ProjectDoc }) => void,
+  get: () => { doc: ProjectDoc },
+): void {
+  const restored = get().doc
+  const carried = carryRevisions(before, restored)
+  if (carried !== restored) withoutHistory(() => set({ doc: carried }))
+}
+
+/** Run a mutation without recording an undo step, leaving the tracking flag
+ *  exactly as found — a typing burst may already have paused it. */
+function withoutHistory(fn: () => void): void {
+  const wasTracking = useStore.temporal.getState().isTracking
+  if (wasTracking) useStore.temporal.getState().pause()
+  try {
+    fn()
+  } finally {
+    if (wasTracking) useStore.temporal.getState().resume()
+  }
+}
 import type { StandardProfile } from '../model/standard'
 import { propagateFluid } from '../model/fluidFlow'
-import type { EngineeringRecord, EntityKind, RecordStatus } from '../model/registry'
-import { keyOfEdge, keyOfNode, liveKeys, retagRegistry } from '../model/registry'
+import type { EngineeringRecord, EntityKind, RecordStatus, Registry } from '../model/registry'
+import { keyOfEdge, keyOfNode } from '../model/registry'
+import type { Area, LegacyRow, Unit } from '../model/hierarchy'
+import type { QaEvidence, StandardProvenance } from '../model/provenance'
+import { issueGateFor } from '../model/standard'
+import { evaluateConformance, issueBlockers } from '../model/conformance'
+import { qaFor } from '../validate/engine'
+import { newArea, newUnit } from '../model/hierarchy'
+import { applyRename } from '../model/references'
 import { registerCustomSymbols } from '../symbols/custom'
 import { isPortEnd } from '../model/types'
 import { createEmptyDoc, createSheet } from '../model/doc'
@@ -68,6 +128,9 @@ export interface StoreState {
   /** Engineering records (doc.registry), keyed by tag / line number. All
    *  undoable, and all a single undo step. */
   setRecordField(key: string, kind: EntityKind, fieldKey: string, value: string): void
+  /** Apply many engineering edits as ONE undo step — a CSV import, a paste.
+   *  Every change lands or none does. */
+  applyRecordEdits(edits: { key: string; kind: EntityKind; field: string; value: string; unitId?: string }[]): void
   setRecordStatus(key: string, status: RecordStatus | undefined): void
   setRecordOwner(key: string, owner: string): void
   /** Delete a record outright. Only ever called for an orphan the user has
@@ -85,6 +148,25 @@ export interface StoreState {
   /** Add a prebuilt group of nodes/edges (and optionally drop edges) as ONE undo step. */
   addBatch(nodes: PlantNode[], edges: PlantEdge[], deleteEdgeIds?: string[]): void
   setSheetMeta(patch: Partial<Pick<Sheet, 'name' | 'drawingNumber' | 'revision' | 'sheetSize'>>): void
+  /** Add an unissued row to a sheet's revision table. Returns its id. */
+  addRevision(sheetId: string, fields: Pick<Revision, 'code' | 'status'> & Partial<Revision>): string
+  /** Edit an unissued row. An ISSUED row is refused: history is not editable. */
+  updateRevision(sheetId: string, revisionId: string, patch: Partial<Omit<Revision, 'id'>>): { ok: boolean }
+  /** Stamp a row as issued, with the snapshot and the QA state captured for it.
+   *  Called by persist/revisions issueRevision(), never directly by UI. */
+  markIssued(
+    sheetId: string,
+    revisionId: string,
+    stamp: {
+      issuedAt: string
+      snapshotId?: string
+      qaAtIssue: Revision['qaAtIssue']
+      /** Frozen at issue. Copied in, never referenced. */
+      standard?: StandardProvenance
+      qaEvidence?: QaEvidence
+    },
+  ): { ok: boolean; blockers: string[] }
+  deleteRevision(sheetId: string, revisionId: string): { ok: boolean }
   addSheet(): string
   renameSheet(id: string, name: string): void
   deleteSheet(id: string): void
@@ -104,6 +186,23 @@ export interface StoreState {
   setBudget(patch: Partial<BudgetSettings>): void
   setPriceOverride(key: string, price: number | undefined): void
   setNodeCost(id: string, cost: number | undefined): void
+  /** Areas and Units (doc.areas / doc.units) — all undoable, and none of it
+   *  routed through the tag reference graph: an Area code is a label, not an
+   *  engineering identity, so changing it breaks nothing. */
+  addArea(code: string, name?: string): string
+  updateArea(id: string, patch: Partial<Omit<Area, 'id'>>): void
+  /** Delete an Area, the Units inside it, and every assignment to those units.
+   *  ONE undo step. Reports what it cleared so the UI can say so first. */
+  removeArea(id: string): { units: number; cleared: number }
+  addUnit(areaId: string, code: string, name?: string): string
+  updateUnit(id: string, patch: Partial<Omit<Unit, 'id'>>): void
+  removeUnit(id: string): { cleared: number }
+  /** Assign one engineering record to a Unit, or clear it with ''/undefined. */
+  assignUnit(key: string, kind: EntityKind, unitId: string | undefined): void
+  /** Apply a legacy Area/Unit mapping plan as ONE undo step. Only rows the
+   *  plan marked `mapped` carry a unit; nothing else is touched, and the
+   *  legacy `general.area` text is left exactly where it is. */
+  applyLegacyMapping(rows: LegacyRow[]): number
   addFluid(name: string, color: string): string
   updateFluid(id: string, patch: Partial<Omit<Fluid, 'id'>>): void
   /** Delete a service and clear it from every line on every sheet. */
@@ -333,7 +432,8 @@ export const useStore = create<StoreState>()(
          * Renaming an object carries its engineering record with it. Without
          * this, editing FT-101 to FT-102 would strand an approved datasheet
          * under the old tag and hand the user an empty form under the new one.
-         * See retagRegistry for the move / copy / collide rules.
+         * See model/references.ts for the full reference graph, and
+         * retagRegistry for the move / copy / collide rules it preserves.
          */
         setTag(id, tag) {
           let collision = false
@@ -346,12 +446,22 @@ export const useStore = create<StoreState>()(
             const sheets = s.doc.sheets.map((sh) =>
               sh.id === sheet.id ? { ...sh, nodes: sh.nodes.map((n) => (n.id === id ? { ...n, tag } : n)) } : sh,
             )
-            // Another symbol may still wear the old tag (a valve shown twice,
-            // an off-page continuation) — then the record is copied, not moved.
-            const stillUsed = oldKey !== null && liveKeys(sheets).has(oldKey)
-            const r = retagRegistry(s.doc.registry, oldKey, newKey, { oldKeyStillUsed: stillUsed })
-            collision = r.collision
-            return { doc: touched({ ...s.doc, sheets, registry: r.registry }), dirty: true }
+            // applyRename takes the document with the new name already on the
+            // sheet and carries everything that pointed at the old one with it:
+            // the engineering record (still copied, not moved, when another
+            // symbol wears the old tag), HMI widget bindings, trend pens and
+            // accepted findings. One store update, so undo restores the whole
+            // rename in a single step.
+            const r = applyRename({ ...s.doc, sheets }, oldKey, newKey)
+            collision = r.broken.length > 0
+            // A collision refuses the WHOLE operation, the new tag included.
+            // Renaming onto a key that already has an engineering record would
+            // otherwise leave the drawing carrying the destination tag while
+            // every reference — record, HMI bindings, accepted findings —
+            // stayed on the old one: a half-done rename, which is worse than
+            // none. Returning `s` unchanged also means zundo records no step.
+            if (collision) return s
+            return { doc: touched(r.doc), dirty: true }
           })
           return { collision }
         },
@@ -402,6 +512,30 @@ export const useStore = create<StoreState>()(
             ...sh,
             nodes: sh.nodes.map((n) => (n.id === id ? { ...n, datasheet: { ...n.datasheet, ...patch } } : n)),
           }))
+        },
+
+        applyRecordEdits(edits) {
+          if (!edits.length) return
+          set((s) => {
+            // ONE `set`, so zundo records ONE past state: a hundred cells out
+            // of a spreadsheet undo together, which is how the user thinks of
+            // them. Batching with pauseHistory would not work here — zundo's
+            // pause DROPS changes rather than merging them, so the import
+            // would become un-undoable instead of undoable in one step.
+            const registry: Registry = { ...s.doc.registry }
+            for (const e of edits) {
+              const prev = registry[e.key] ?? { key: e.key, kind: e.kind, fields: {} }
+              // A Unit assignment is a REFERENCE, so it lands on the record
+              // rather than in `fields`, and the value that arrives here is
+              // already a resolved stable id — never the code the CSV printed.
+              // Resolution happens once, in the change set, where an unknown
+              // code can still refuse the whole import.
+              registry[e.key] = e.unitId === undefined
+                ? { ...prev, fields: { ...prev.fields, [e.field]: e.value } }
+                : { ...prev, unitId: e.unitId || undefined }
+            }
+            return { doc: touched({ ...s.doc, registry }), dirty: true }
+          })
         },
 
         setRecordField(key, kind, fieldKey, value) {
@@ -495,6 +629,156 @@ export const useStore = create<StoreState>()(
           patchSheet((sh) => ({ ...sh, ...patch }))
         },
 
+        addRevision(sheetId, fields) {
+          const id = ulid()
+          withoutHistory(() => set((s) => ({
+            doc: touched({
+              ...s.doc,
+              sheets: s.doc.sheets.map((sh) =>
+                sh.id === sheetId
+                  ? { ...sh, revisions: [...(sh.revisions ?? []), newRevision(id, fields)] }
+                  : sh,
+              ),
+            }),
+            dirty: true,
+          })))
+          return id
+        },
+
+        updateRevision(sheetId, revisionId, patch) {
+          let ok = false
+          withoutHistory(() => set((s) => {
+            const sheet = s.doc.sheets.find((sh) => sh.id === sheetId)
+            const row = sheet?.revisions?.find((r) => r.id === revisionId)
+            // An issued revision is a record of something that happened. It is
+            // not a form, and editing it would make the history a fiction.
+            if (!row || row.issuedAt) return s
+            ok = true
+            return {
+              doc: touched({
+                ...s.doc,
+                sheets: s.doc.sheets.map((sh) =>
+                  sh.id !== sheetId
+                    ? sh
+                    : { ...sh, revisions: (sh.revisions ?? []).map((r) => (r.id === revisionId ? { ...r, ...patch, id: r.id } : r)) },
+                ),
+              }),
+              dirty: true,
+            }
+          }))
+          return { ok }
+        },
+
+        /**
+         * Stamp a revision as issued — and REFUSE when the house's issue
+         * policy says it may not be.
+         *
+         * The gate lives here, in the mutation, not in the dialog. A disabled
+         * button is a courtesy to the user; it is not a control. Anything that
+         * can reach the store — a command, a future automation, a console —
+         * must hit the same gate, so the gate is evaluated against `s.doc` at
+         * the moment of the write rather than against anything the caller
+         * hands in. A caller cannot supply its own verdict: the verdict is
+         * computed here from the document being issued.
+         */
+        markIssued(sheetId, revisionId, stamp) {
+          let ok = false
+          let blockers: string[] = []
+          withoutHistory(() => set((s) => {
+            const sheet = s.doc.sheets.find((sh) => sh.id === sheetId)
+            const row = sheet?.revisions?.find((r) => r.id === revisionId)
+            if (!row) {
+              blockers = ['That revision no longer exists.']
+              return s
+            }
+            if (row.issuedAt) {
+              blockers = ['That revision has already been issued.']
+              return s
+            }
+
+            const gate = issueGateFor(s.doc.standard, row.status)
+            // The cached report for this exact document — the same object the
+            // Revisions dialog read, so the reason shown and the reason
+            // enforced cannot differ.
+            const report = qaFor(s.doc)
+            const conformance = evaluateConformance(report, gate)
+            blockers = issueBlockers(row, gate, report, conformance)
+            // Nothing written. `s` is returned by identity, so the document,
+            // the revision row and the dirty flag are all untouched.
+            if (blockers.length) return s
+
+            ok = true
+            return {
+              doc: touched({
+                ...s.doc,
+                sheets: s.doc.sheets.map((sh) =>
+                  sh.id !== sheetId
+                    ? sh
+                    : {
+                        ...sh,
+                        // The stored string follows the issue, so the title
+                        // block, the DXF writer and print need no change.
+                        revision: row.code,
+                        revisions: (sh.revisions ?? []).map((r) =>
+                          r.id === revisionId
+                            ? {
+                                ...r,
+                                issuedAt: stamp.issuedAt,
+                                ...(stamp.snapshotId ? { snapshotId: stamp.snapshotId } : {}),
+                                ...(stamp.qaAtIssue ? { qaAtIssue: { ...stamp.qaAtIssue } } : {}),
+                                // Deep-copied on the way in, so nothing the
+                                // caller still holds can reach back into a row
+                                // that is now history.
+                                ...(stamp.standard ? { standard: { ...stamp.standard } } : {}),
+                                ...(stamp.qaEvidence
+                                  ? {
+                                      qaEvidence: {
+                                        ...stamp.qaEvidence,
+                                        findings: stamp.qaEvidence.findings.map((f) => ({
+                                          ...f,
+                                          ...(f.ignored ? { ignored: { ...f.ignored } } : {}),
+                                        })),
+                                      },
+                                    }
+                                  : {}),
+                                conformance: {
+                                  ...conformance,
+                                  open: { ...conformance.open },
+                                  accepted: { ...conformance.accepted },
+                                  rulesDisabled: [...conformance.rulesDisabled],
+                                },
+                              }
+                            : r,
+                        ),
+                      },
+                ),
+              }),
+              dirty: true,
+            }
+          }))
+          return { ok, blockers }
+        },
+
+        deleteRevision(sheetId, revisionId) {
+          let ok = false
+          withoutHistory(() => set((s) => {
+            const sheet = s.doc.sheets.find((sh) => sh.id === sheetId)
+            const row = sheet?.revisions?.find((r) => r.id === revisionId)
+            if (!row || row.issuedAt) return s
+            ok = true
+            return {
+              doc: touched({
+                ...s.doc,
+                sheets: s.doc.sheets.map((sh) =>
+                  sh.id !== sheetId ? sh : { ...sh, revisions: (sh.revisions ?? []).filter((r) => r.id !== revisionId) },
+                ),
+              }),
+              dirty: true,
+            }
+          }))
+          return { ok }
+        },
+
         addSheet() {
           const sheet = createSheet(get().doc.sheets.length + 1)
           set((s) => ({ doc: touched({ ...s.doc, sheets: [...s.doc.sheets, sheet] }), dirty: true }))
@@ -541,13 +825,16 @@ export const useStore = create<StoreState>()(
             const sheets = s.doc.sheets.map((sh) =>
               sh.id === sheet.id ? { ...sh, edges: sh.edges.map((e) => (e.id === id ? next : e)) } : sh,
             )
-            // A renumbered line carries its record exactly as a renamed tag does.
+            // A renumbered line carries its references exactly as a renamed tag
+            // does — same collector, same collision rule.
             const oldKey = keyOfEdge(edge)
             const newKey = keyOfEdge(next)
-            const stillUsed = oldKey !== null && liveKeys(sheets).has(oldKey)
-            const r = retagRegistry(s.doc.registry, oldKey, newKey, { oldKeyStillUsed: stillUsed })
-            collision = r.collision
-            return { doc: touched({ ...s.doc, sheets, registry: r.registry }), dirty: true }
+            const r = applyRename({ ...s.doc, sheets }, oldKey, newKey)
+            collision = r.broken.length > 0
+            // Same refusal as a tag rename: the line number does not change
+            // either, so the document is never partially renumbered.
+            if (collision) return s
+            return { doc: touched(r.doc), dirty: true }
           })
           return { collision }
         },
@@ -593,6 +880,120 @@ export const useStore = create<StoreState>()(
             const run = new Set(propagateFluid(sh, id))
             return { ...sh, edges: sh.edges.map((e) => (run.has(e.id) ? { ...e, fluidId } : e)) }
           })
+        },
+
+        addArea(code, name) {
+          const area = newArea(code, name)
+          set((s) => ({ doc: touched({ ...s.doc, areas: [...(s.doc.areas ?? []), area] }), dirty: true }))
+          return area.id
+        },
+
+        updateArea(id, patch) {
+          set((s) => ({
+            doc: touched({ ...s.doc, areas: (s.doc.areas ?? []).map((a) => (a.id === id ? { ...a, ...patch } : a)) }),
+            dirty: true,
+          }))
+        },
+
+        /**
+         * Deleting an Area takes its Units and their assignments with it.
+         *
+         * Cascading rather than leaving dangling references, and rather than
+         * refusing: a half-deleted hierarchy is a state nothing downstream can
+         * describe, and an Area nobody may delete until they have emptied it
+         * by hand is a chore, not a safeguard. It is ONE undo step and the
+         * count comes back so the dialog can say what it is about to clear
+         * before it does — the user is told, not surprised.
+         */
+        removeArea(id) {
+          const state = get()
+          const doomed = new Set((state.doc.units ?? []).filter((u) => u.areaId === id).map((u) => u.id))
+          let cleared = 0
+          set((s) => {
+            const registry: Registry = { ...s.doc.registry }
+            for (const [key, rec] of Object.entries(registry)) {
+              if (rec.unitId && doomed.has(rec.unitId)) {
+                registry[key] = { ...rec, unitId: undefined }
+                cleared += 1
+              }
+            }
+            return {
+              doc: touched({
+                ...s.doc,
+                areas: (s.doc.areas ?? []).filter((a) => a.id !== id),
+                units: (s.doc.units ?? []).filter((u) => u.areaId !== id),
+                ...(cleared ? { registry } : {}),
+              }),
+              dirty: true,
+            }
+          })
+          return { units: doomed.size, cleared }
+        },
+
+        addUnit(areaId, code, name) {
+          const unit = newUnit(areaId, code, name)
+          set((s) => ({ doc: touched({ ...s.doc, units: [...(s.doc.units ?? []), unit] }), dirty: true }))
+          return unit.id
+        },
+
+        /** Renaming a Unit's code or name changes nothing else. Assignments
+         *  point at the id, so they follow silently and correctly — which is
+         *  the entire reason the id exists. */
+        updateUnit(id, patch) {
+          set((s) => ({
+            doc: touched({ ...s.doc, units: (s.doc.units ?? []).map((u) => (u.id === id ? { ...u, ...patch } : u)) }),
+            dirty: true,
+          }))
+        },
+
+        removeUnit(id) {
+          let cleared = 0
+          set((s) => {
+            const registry: Registry = { ...s.doc.registry }
+            for (const [key, rec] of Object.entries(registry)) {
+              if (rec.unitId === id) {
+                registry[key] = { ...rec, unitId: undefined }
+                cleared += 1
+              }
+            }
+            return {
+              doc: touched({
+                ...s.doc,
+                units: (s.doc.units ?? []).filter((u) => u.id !== id),
+                ...(cleared ? { registry } : {}),
+              }),
+              dirty: true,
+            }
+          })
+          return { cleared }
+        },
+
+        assignUnit(key, kind, unitId) {
+          set((s) => {
+            const prev: EngineeringRecord = s.doc.registry?.[key] ?? { key, kind, fields: {} }
+            if ((prev.unitId ?? '') === (unitId ?? '')) return s
+            const record: EngineeringRecord = { ...prev, unitId: unitId || undefined, updated: new Date().toISOString() }
+            return { doc: touched({ ...s.doc, registry: { ...s.doc.registry, [key]: record } }), dirty: true }
+          })
+        },
+
+        applyLegacyMapping(rows) {
+          const mapped = rows.filter((r) => r.verdict === 'mapped' && r.unitId)
+          if (!mapped.length) return 0
+          set((s) => {
+            const registry: Registry = { ...s.doc.registry }
+            for (const r of mapped) {
+              const prev = registry[r.key]
+              // Only a record that still exists and is still unassigned. The
+              // plan was computed against a document that may since have moved
+              // on, and re-deciding something the user has decided is exactly
+              // what a migration must not do.
+              if (!prev || prev.unitId) continue
+              registry[r.key] = { ...prev, unitId: r.unitId }
+            }
+            return { doc: touched({ ...s.doc, registry }), dirty: true }
+          })
+          return mapped.length
         },
 
         addFluid(name, color) {
@@ -942,13 +1343,17 @@ export const useStore = create<StoreState>()(
         },
 
         undo() {
+          const before = get().doc
           useStore.temporal.getState().resume()
           useStore.temporal.getState().undo()
+          carryRevisionsAcross(before, set, get)
         },
 
         redo() {
+          const before = get().doc
           useStore.temporal.getState().resume()
           useStore.temporal.getState().redo()
+          carryRevisionsAcross(before, set, get)
         },
       }
     },

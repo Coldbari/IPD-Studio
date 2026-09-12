@@ -84,11 +84,9 @@ export function signalsFor(role: HmiRole): string[] {
 
 /** Split 'TAG.SIGNAL' at the LAST dot — the one shared parser for every
  *  signal-binding consumer (canvas, sim writes, pickers). */
-export function parseSignalRef(ref: string): { tag: string; signal: string } | null {
-  const i = ref.lastIndexOf('.')
-  if (i <= 0 || i === ref.length - 1) return null
-  return { tag: ref.slice(0, i), signal: ref.slice(i + 1) }
-}
+// Moved to hmi/model.ts so model/references.ts can parse a widget reference
+// without importing sim/tags. Re-exported here: this is where callers look.
+export { parseSignalRef } from './model'
 
 const KIND_SIGNALS: Record<TagKind, string[]> = {
   tank: ['PV'], motor: ['RUN'], valve: ['OP'], valveOnOff: ['OPEN'],
@@ -107,7 +105,7 @@ export interface SignalRef {
  *  universe so they come first; plant tags fill in what isn't placed yet. */
 export function listSignalRefs(doc: ProjectDoc): SignalRef[] {
   const out = new Map<string, SignalRef>()
-  for (const def of buildTagDefs(doc.hmiScreens)) {
+  for (const def of buildTagDefs(doc.hmiScreens, doc.registry)) {
     for (const sig of KIND_SIGNALS[def.kind]) {
       const ref = `${def.name}.${sig}`
       out.set(ref, { ref, hint: def.kind, source: 'hmi' })

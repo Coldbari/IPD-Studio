@@ -7,6 +7,7 @@ import { useEffect } from 'react'
 import type { HmiScreen } from './model'
 import type { SimModel } from './sim/engine'
 import { buildSimModel, initTags, tick } from './sim/engine'
+import type { Registry } from '../model/registry'
 import type { AlarmRecord, JournalEntry, SuppressionSets } from './sim/alarms'
 import type { Tags } from './sim/engine'
 import { ackAlarms, alarmEvents, deviceAlarms, evalAlarms } from './sim/alarms'
@@ -48,7 +49,9 @@ interface SimStoreState {
   /** Scenario-plugged pipe ids (flow × 0.25 through them). */
   plugged: string[]
   /** Pass every screen for a plant-wide run (navigation keeps simulating). */
-  enterRun(screens: HmiScreen | HmiScreen[]): void
+  /** `registry` carries the engineering signal/alarm data the run must
+   *  prefer over anything a widget holds. */
+  enterRun(screens: HmiScreen | HmiScreen[], registry?: Registry): void
   exitRun(): void
   playPause(): void
   setSpeed(s: 1 | 5): void
@@ -87,8 +90,8 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
   mode: 'edit', playing: false, speed: 1, t: 0,
   tags: {}, pipeFlows: {}, equipFlows: {}, alarms: [], journal: [], history: {}, historyT: [], shelved: {}, oos: {}, plugged: [],
 
-  enterRun: (screens) => {
-    model = buildSimModel(screens)
+  enterRun: (screens, registry) => {
+    model = buildSimModel(screens, registry)
     rng = makeRng(SEED)
     set({ mode: 'run', playing: true, t: 0, tags: initTags(model), pipeFlows: {}, equipFlows: {}, alarms: [], journal: [], history: {}, historyT: [], shelved: {}, oos: {}, plugged: [] })
   },

@@ -23,7 +23,7 @@ describe('bundled example documents', () => {
     const raw = JSON.parse(readFileSync(join(dir, file), 'utf8'))
     const doc = loadDoc(raw)
 
-    expect(doc.schemaVersion).toBe(5)
+    expect(doc.schemaVersion).toBe(6)
     expect(doc.sheets.length).toBeGreaterThan(0)
     expect(typeof doc.meta.name).toBe('string')
     // migration must never drop the drawing itself

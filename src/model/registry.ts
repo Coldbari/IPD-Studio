@@ -37,6 +37,20 @@ export interface EngineeringRecord {
   fields: Record<string, string>
   status?: RecordStatus
   owner?: string
+  /**
+   * The Unit this object belongs to, by stable id (see model/hierarchy.ts).
+   *
+   * On the RECORD rather than on the drawn node, for the reason this whole
+   * file exists: a node is one placement of a tag, and delete-and-redraw is
+   * normal drafting. An assignment stored on the symbol would not survive it,
+   * two placements of one tag could disagree, and a line — which is an edge,
+   * not a node — could not be assigned at all.
+   *
+   * There is deliberately no `areaId` beside it. The Unit names its Area, so
+   * asking a record for its area is one hop; storing it twice would be two
+   * answers to one question.
+   */
+  unitId?: string
   /** Revision in which this record last changed (populated from v0.19). */
   rev?: string
   updated?: string
@@ -133,4 +147,20 @@ export function fieldValue(registry: Registry | undefined, node: PlantNode, fiel
   const key = keyOfNode(node)
   const fromRecord = key ? registry?.[key]?.fields[fieldKey] : undefined
   return fromRecord ?? node.datasheet?.[fieldKey] ?? ''
+}
+
+/**
+ * Read one engineering value for a line — the edge twin of `fieldValue()`.
+ *
+ * There is no legacy fallback here, and there never was anything to fall back
+ * to: an edge has no `datasheet`. Line data has only ever lived in
+ * `edge.lineNumber`, which is the line's IDENTITY rather than its
+ * specification, and (since schemaVersion 5) in the record this reads.
+ *
+ * An unnumbered line has no key, so it has no record and reads as empty —
+ * the same rule as an untagged node, applied to the same helper.
+ */
+export function edgeFieldValue(registry: Registry | undefined, edge: PlantEdge, fieldKey: string): string {
+  const key = keyOfEdge(edge)
+  return (key ? registry?.[key]?.fields[fieldKey] : undefined) ?? ''
 }

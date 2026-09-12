@@ -8,6 +8,34 @@ import { useCloudStatus } from '../cloud/autosave'
 import { VersionChip } from './VersionNote'
 import { FeedbackChip } from './FeedbackDialog'
 import { notify, useStatusMessage } from '../feedback/notices'
+import { headroomAdvice, headroomLabel, useHeadroom } from '../cloud/headroom'
+
+/**
+ * How full the cloud copy of this drawing is.
+ *
+ * Quiet while there is room — a percentage nobody needs is noise — and it
+ * takes on colour and words as the ceiling approaches. It never blocks an
+ * edit: the drawing is the user's, and a big drawing is a fact about their
+ * plant, not a mistake. What it prevents is meeting the server's size refusal
+ * for the first time with the work already done.
+ */
+function HeadroomChip() {
+  const h = useHeadroom()
+  const pct = Math.round(h.fraction * 100)
+  return (
+    <span
+      data-testid="headroom"
+      data-state={h.state}
+      className={`status-headroom he-${h.state}`}
+      title={headroomAdvice(h)}
+    >
+      <span className="he-bar" aria-hidden="true">
+        <span style={{ width: `${Math.min(100, pct)}%` }} />
+      </span>
+      {h.state === 'healthy' ? `${pct}%` : `${headroomLabel(h.state)} · ${pct}%`}
+    </span>
+  )
+}
 
 // PWA update prompting lives in panels/UpdateToast.tsx (both workspaces).
 // The budget chip moved to the toolbar (panels/BudgetDialog.tsx) — the running
@@ -69,6 +97,7 @@ export default function StatusBar() {
           which stays pinned right, where people already track it. */}
       <FeedbackChip />
       <VersionChip />
+      <HeadroomChip />
       <span className={qa.counts.critical ? 'status-warn' : ''}>
         {qa.counts.critical
           ? `⚠ ${qa.counts.critical} critical`

@@ -4,6 +4,7 @@
 
 import type { EntityKind } from './registry'
 import { DATASHEET_SECTIONS } from './datasheet'
+import { HIERARCHY_FIELD_LABELS } from './hierarchy'
 
 export interface FieldDef {
   key: string
@@ -33,6 +34,7 @@ export const FIELD_CATALOG: Record<EntityKind, FieldSection[]> = {
     { id: 'process', title: 'Process Conditions', fields: DATASHEET_SECTIONS.process },
     { id: 'element', title: 'Element / Body', fields: DATASHEET_SECTIONS.element },
     { id: 'signal', title: 'Signal & Electrical', fields: DATASHEET_SECTIONS.signal },
+    { id: 'alarm', title: 'Alarm Setpoints', fields: DATASHEET_SECTIONS.alarm },
   ],
   valve: [
     {
@@ -40,7 +42,7 @@ export const FIELD_CATALOG: Record<EntityKind, FieldSection[]> = {
       title: 'Identity & Service',
       fields: [
         { key: 'general.service', label: 'Service' },
-        { key: 'general.area', label: 'Area / Unit' },
+        { key: 'general.area', label: 'Area (legacy text)' },
         { key: 'general.line', label: 'Line' },
         { key: 'general.pid', label: 'P&ID No.' },
         { key: 'general.manufacturer', label: 'Manufacturer' },
@@ -78,7 +80,7 @@ export const FIELD_CATALOG: Record<EntityKind, FieldSection[]> = {
       title: 'Identity & Service',
       fields: [
         { key: 'general.service', label: 'Service' },
-        { key: 'general.area', label: 'Area / Unit' },
+        { key: 'general.area', label: 'Area (legacy text)' },
         { key: 'general.type', label: 'Equipment type' },
         { key: 'general.pid', label: 'P&ID No.' },
         { key: 'general.manufacturer', label: 'Manufacturer' },
@@ -151,11 +153,24 @@ export function fieldKeysFor(kind: EntityKind): string[] {
   return FIELD_CATALOG[kind].flatMap((s) => s.fields.map((f) => f.key))
 }
 
-const LABELS: Record<string, string> = Object.fromEntries(
-  Object.values(FIELD_CATALOG).flatMap((sections) =>
-    sections.flatMap((s) => s.fields.map((f) => [f.key, f.label] as const)),
+/**
+ * Field key -> label, for every catalogue field plus the reserved structured
+ * ones.
+ *
+ * A Unit is not in `FIELD_CATALOG` because it is not a text field: it is a
+ * reference, picked from the declared hierarchy and stored as a stable id. But
+ * it IS nameable in a company standard's required list, and anything that can
+ * be required has to be printable in the message that says it is missing — so
+ * its label lives here rather than in a second lookup somewhere else.
+ */
+const LABELS: Record<string, string> = {
+  ...Object.fromEntries(
+    Object.values(FIELD_CATALOG).flatMap((sections) =>
+      sections.flatMap((s) => s.fields.map((f) => [f.key, f.label] as const)),
+    ),
   ),
-)
+  ...HIERARCHY_FIELD_LABELS,
+}
 
 export function labelForField(key: string): string {
   return LABELS[key] ?? key

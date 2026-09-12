@@ -19,7 +19,7 @@ interface Entry {
  */
 const ENTRIES: Record<Workspace, Entry> = {
   draw: { icon: '✎', label: 'Draw', hint: 'The P&ID sheet' },
-  data: { icon: '▦', label: 'Data', hint: 'Instrument index and line list, generated from the drawing' },
+  data: { icon: '▦', label: 'Data', hint: 'Instrument index, line list, equipment and valve lists — generated from the drawing' },
   checks: { icon: '✓', label: 'Checks', hint: 'Every validation finding and suggestion, full screen' },
   standards: { icon: '§', label: 'Standards', hint: 'The company rules this project is checked against' },
   hmi: { icon: '⊞', label: 'HMI', hint: 'HMI Studio — operator screens and simulation' },

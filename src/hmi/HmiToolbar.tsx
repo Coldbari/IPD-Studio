@@ -99,7 +99,9 @@ export default function HmiToolbar({ onExit, tool, setTool, onImport, onUndo, on
     if (mode === 'run') return sim().exitRun()
     // plant-wide: every screen compiles into one model, so navigating
     // between pages while running keeps the same live plant
-    sim().enterRun(doc.hmiScreens)
+    // The run reads engineering values from the registry; widget props are
+    // only a fallback for screens authored before it owned them.
+    sim().enterRun(doc.hmiScreens, doc.registry)
     // an operator station comes up on its home page
     const home = doc.hmiScreens.find((sc) => sc.home)
     if (home) useStore.getState().setActiveScreen(home.id)
