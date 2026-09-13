@@ -2,27 +2,20 @@
 // Copyright © 2026 Praharsh Nagpure — IPD Studio. Noncommercial use only;
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
-import type { PlantNode, SheetContent } from './types'
+import type { SheetContent } from './types'
 import { isPortEnd } from './types'
 import { isProcessClass } from '../canvas/lineStyle'
-import { getSymbol } from '../symbols/registry'
+import { connectedRun } from './run'
 
-/** Symbol categories a fluid flows straight through: the medium on one side
- *  is the medium on the other. Vessels, columns, exchangers, and process
- *  units transform or mix — the service "starts over" there. */
-const PASS_CATEGORIES = new Set([
-  'valves', 'control-valves', 'safety', 'flow-elements', 'accessories', 'inline', 'rotating', 'custom',
-])
-
-function passesThrough(node: PlantNode): boolean {
-  if (node.kind === 'valve' || node.kind === 'fitting') return true
-  if (node.kind !== 'equipment') return false
-  try {
-    return PASS_CATEGORIES.has(getSymbol(node.symbolId).category)
-  } catch {
-    return true // unknown/custom symbols: assume inline hardware
-  }
-}
+/**
+ * `passesThrough` and the walk itself now live in `model/run.ts`, which derives
+ * piping runs from the same two rules. They were moved rather than copied: a
+ * second, subtly different idea of "the medium carries on through this" would
+ * mean a fluid assignment and a line list disagreeing about where one pipe
+ * ends, and they would disagree quietly.
+ *
+ * What this function does is unchanged, including the order of its result.
+ */
 
 /** The connected run of process edges a fluid assignment covers: walk from
  *  the start edge in BOTH directions through pass-through hardware (valves,
@@ -40,23 +33,5 @@ export function propagateFluid(content: SheetContent, startEdgeId: string): stri
       edgesAt.set(end.nodeId, [...(edgesAt.get(end.nodeId) ?? []), e])
     }
   }
-  const out = new Set<string>([start.id])
-  let frontier = [start]
-  while (frontier.length > 0) {
-    const next: typeof frontier = []
-    for (const e of frontier) {
-      for (const end of [e.source, e.target]) {
-        if (!isPortEnd(end)) continue
-        const n = nodesById.get(end.nodeId)
-        if (!n || !passesThrough(n)) continue
-        for (const other of edgesAt.get(end.nodeId) ?? []) {
-          if (out.has(other.id)) continue
-          out.add(other.id)
-          next.push(other)
-        }
-      }
-    }
-    frontier = next
-  }
-  return [...out]
+  return connectedRun(start, edgesAt, (id) => nodesById.get(id)).map((e) => e.id)
 }

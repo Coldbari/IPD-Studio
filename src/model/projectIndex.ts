@@ -10,6 +10,7 @@ import { deriveLoops, type Loop as DerivedLoop } from '../store/selectors'
 import type { Loop } from './loop'
 import { standardOf, type StandardProfile } from './standard'
 import { buildHierarchy, type Hierarchy } from './hierarchy'
+import { deriveRuns, runOfEdgeMap, type Run } from './run'
 import { getSymbol } from '../symbols/registry'
 import type { PortKind } from '../symbols/types'
 
@@ -80,6 +81,17 @@ export interface ProjectIndex {
   loopMembers: Map<string, string[]>
   /** Registry key -> the loop it belongs to. O(1) "which loop is this in?". */
   loopOfKey: Map<string, string>
+  /**
+   * DERIVED piping runs: connected components of process edges (model/run.ts).
+   *
+   * The process-side twin of `loops` above, and derived for the same reason —
+   * the fact exists in the drawing and nothing was computing it. No consumer
+   * reads this yet; Programs 2-4 are what will.
+   */
+  runs: Run[]
+  /** Edge id -> the run it belongs to. Process edges only: a signal line is in
+   *  no run and has no entry here. */
+  runOfEdge: Map<string, string>
   /** Every key currently drawn — a record outside this set is an orphan. */
   liveKeys: Set<string>
   records: Record<string, EngineeringRecord>
@@ -180,6 +192,10 @@ export function buildIndex(doc: ProjectDoc): ProjectIndex {
     for (const keys of loopMembers.values()) keys.sort()
   }
 
+  // Runs come off `allEdges` and `nodes`, both of which the walk above has
+  // already built — this never touches `doc.sheets` a second time.
+  const runs = deriveRuns({ nodes, allEdges })
+
   return {
     doc,
     nodes,
@@ -191,6 +207,8 @@ export function buildIndex(doc: ProjectDoc): ProjectIndex {
     edgesByKey,
     neighbours,
     loops: deriveLoops(doc),
+    runs,
+    runOfEdge: runOfEdgeMap(runs),
     loopsById,
     loopMembers,
     loopOfKey,

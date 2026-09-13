@@ -35,6 +35,7 @@ import { runRules } from '../../src/validate/engine'
 import { ALL_RULES } from '../../src/validate/rules/index'
 import { noReceiver } from '../../src/validate/rules/instrumentation'
 import { newLoop } from '../../src/model/loop'
+import { deriveRuns, runOfEdgeMap } from '../../src/model/run'
 import { loopViews } from '../../src/model/loopIndex'
 import { planLoopAdoption } from '../../src/model/loopAdoption'
 import { compareDocs } from '../../src/model/diff'
@@ -176,6 +177,28 @@ test.skipIf(!process.env.PERF)('P1 hot paths', () => {
 
   bench('buildIndex', 20, () => { buildIndex(doc) })
   bench('buildHierarchy', 200, () => { buildHierarchy(doc) })
+
+  /*
+   * P3 PROGRAM 1 — what deriving piping runs costs inside `buildIndex`.
+   *
+   * The gate was `buildIndex` + 0.3 ms. Measured PAIRED against d0b0da4, three
+   * runs each, minutes apart on one warm machine:
+   *
+   *   buildIndex, before   0.984 / 0.990 / 0.942 ms   median 0.984
+   *   buildIndex, after    1.225 / 1.303 / 1.266 ms   median 1.266
+   *   delta                                           +0.282 ms
+   *
+   * The two lines below are what that delta IS, so a later regression can be
+   * attributed rather than guessed at. Note the shape of this fixture: its 125
+   * process edges join instrument to instrument, and an instrument is not
+   * pass-through, so every run is a single edge. That is the WORST case per
+   * edge — 125 separate walks, each allocating its own working set — and a
+   * drawing whose pipes actually connect gets more edges per walk for less.
+   */
+  const ixRuns = buildIndex(doc)
+  bench('deriveRuns (index reused)', 50, () => { deriveRuns(ixRuns) })
+  bench('runOfEdgeMap (index reused)', 200, () => { runOfEdgeMap(ixRuns.runs) })
+  process.stderr.write(`  (runs: ${ixRuns.runs.length} over ${ixRuns.runOfEdge.size} process edges)\n`)
 
   /*
    * THE P2-C PROGRAM 1 PERFORMANCE CRITERION.
