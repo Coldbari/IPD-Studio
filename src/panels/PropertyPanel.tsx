@@ -2,7 +2,7 @@
 // Copyright © 2026 Praharsh Nagpure — IPD Studio. Noncommercial use only;
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { getSymbol } from '../symbols/registry'
 import { portLabels } from '../symbols/portLabels'
 import { activeSheet, pauseHistory, resumeHistory, useStore } from '../store/store'
@@ -26,6 +26,10 @@ import InspectorEngineering from './InspectorEngineering'
 import { locateCell } from '../canvas/locate'
 import { focusCanvas } from '../canvas/keyboardNav'
 import { hint } from '../shortcuts/registry'
+import { buildIndex } from '../model/projectIndex'
+import { runConflicts, runEnds } from '../model/run'
+import { formatTag } from '../isa/tag'
+import { showStatus } from '../feedback/notices'
 
 const SHEETS: SheetSize[] = ['A4', 'A3', 'A2', 'A1', 'ANSI_B', 'ANSI_D']
 
@@ -357,6 +361,107 @@ function NodeProps({ node }: { node: PlantNode }) {
   )
 }
 
+/**
+ * RUN CONTEXT for the selected line.
+ *
+ * Everything here is DERIVED from `ProjectIndex` — the same runs the line list
+ * prints and the same ones `duplicate-line-number` checks. Nothing about run
+ * membership is stored on the edge, on the node or in the registry: a run is a
+ * grouping, not an owner, and `runOfEdge` is how you look one up.
+ *
+ * It states no direction. `runEnds` returns extremities as a list because a
+ * branched run has three, and nothing in the model says which way anything
+ * flows — so the panel says "Ends", never "From / To".
+ */
+function RunSection({ edge }: { edge: PlantEdge }) {
+  const doc = useStore((s) => s.doc)
+  const applyToRun = useStore((s) => s.applyLineNumberToRun)
+  // Memoised on the document, like the hierarchy in InspectorEngineering:
+  // this panel re-renders on every keystroke in the fields below it.
+  const ix = useMemo(() => buildIndex(doc), [doc])
+
+  const runId = ix.runOfEdge.get(edge.id)
+  const run = runId ? ix.runs.find((r) => r.id === runId) : undefined
+  if (!run) {
+    return (
+      <div className="prop-group" data-testid="run-section">
+        <div className="prop-title">Run</div>
+        <p className="prop-hint">Only process and pipe lines belong to a run. A signal line is wired, not piped.</p>
+      </div>
+    )
+  }
+
+  const ends = runEnds(ix, run)
+  const conflicts = runConflicts(ix, run)
+  const sheet = ix.edges.get(run.edgeIds[0]!)?.sheet
+  const nameOfEnd = (nodeId: string | undefined) => {
+    const node = nodeId ? ix.nodes.get(nodeId)?.node : undefined
+    if (!node) return 'free end'
+    return node.tag ? formatTag(node.tag, '-') : node.label || getSymbol(node.symbolId).name
+  }
+  const unnumberedHere = run.edgeIds.filter((id) => !ix.edges.get(id)?.key).length
+  const canSpread = Boolean(edge.lineNumber && ix.edges.get(edge.id)?.key) && unnumberedHere > 0
+
+  return (
+    <div className="prop-group" data-testid="run-section">
+      <div className="prop-title">Run</div>
+      <div className="run-fact" data-testid="run-number">
+        <b>
+          {run.number
+            ? run.number
+            : run.unnumbered
+              ? 'Unnumbered'
+              : `${run.numbers.length} line numbers`}
+        </b>
+        <span>
+          {run.number
+            ? 'one line number on this run'
+            : run.unnumbered
+              ? 'no segment of this pipe carries a number'
+              : run.numbers.join('  ·  ')}
+        </span>
+      </div>
+      <div className="run-fact" data-testid="run-segments">
+        <b>{run.edgeIds.length} {run.edgeIds.length === 1 ? 'segment' : 'segments'}</b>
+        <span>{sheet?.name ?? ''} — physically connected piping</span>
+      </div>
+      <div className="run-fact" data-testid="run-ends">
+        <b>{ends.length === 0 ? 'No open ends' : `${ends.length} ${ends.length === 1 ? 'end' : 'ends'}`}</b>
+        {/* Listed, never paired into From/To: the model states no direction. */}
+        <span>{ends.map((e) => nameOfEnd(e.nodeId)).join('  ·  ')}</span>
+      </div>
+      {conflicts.length > 0 && (
+        <div className="run-fact warn" data-testid="run-conflicts">
+          <b>Also reported by QA</b>
+          <span>
+            {conflicts.map((c) =>
+              c.kind === 'multiple-numbers'
+                ? `this run carries ${c.numbers.length} line numbers`
+                : `${c.number} is also on ${c.runIds.length - 1} other run${c.runIds.length === 2 ? '' : 's'}`,
+            ).join('; ')}
+          </span>
+        </div>
+      )}
+      {canSpread && (
+        <button
+          data-testid="run-apply-number"
+          title="Put this line number on the segments of this run that have none. Segments already numbered are left alone."
+          onClick={() => {
+            const { applied, skipped } = applyToRun(edge.id)
+            showStatus(
+              applied === 0
+                ? 'Every other segment already carries a number'
+                : `Numbered ${applied} more ${applied === 1 ? 'segment' : 'segments'}${skipped ? `, left ${skipped} already numbered` : ''}`,
+            )
+          }}
+        >
+          Number the whole run
+        </button>
+      )}
+    </div>
+  )
+}
+
 function EdgeProps({ edge }: { edge: PlantEdge }) {
   const setEdge = useStore((s) => s.setEdge)
   const setEdgeFluid = useStore((s) => s.setEdgeFluid)
@@ -419,6 +524,7 @@ function EdgeProps({ edge }: { edge: PlantEdge }) {
           </div>
         </div>
       )}
+      {isPipe && <RunSection edge={edge} />}
     </>
   )
 }

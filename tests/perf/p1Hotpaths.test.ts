@@ -425,6 +425,25 @@ test.skipIf(!process.env.PERF)('P1 hot paths', () => {
   bench('deriveIoList (index reused)', 50, () => { deriveIoList(ix) })
   bench('ioListRows (builds its own index)', 20, () => { ioListRows(doc) })
   bench('instrumentIndexRows', 20, () => { instrumentIndexRows(doc) })
+  /*
+   * P3 PROGRAM 3 made the line list one row per RUN, so it reads the shared
+   * `ProjectIndex` instead of the two private walks (`nodeIndex` +
+   * `buildHierarchy`) it used to make. Measured PAIRED against 14ee489:
+   *
+   *   lineListRows, before   0.663 / 0.656 / 0.656 ms   median 0.656
+   *   lineListRows, after    1.297 / 1.324 / 1.310 ms   median 1.310
+   *   all five reports, before  3.587 / 3.578 / 3.825   median 3.587
+   *   all five reports, after   4.193 / 4.389 / 4.290   median 4.290
+   *
+   * The whole +0.65 ms IS the index: `buildIndex` alone is ~1.23 ms on this
+   * fixture, so assembling the rows on top of it costs ~0.07 ms and is linear
+   * in runs — one `runEnds` per run, nothing per row and nothing quadratic.
+   *
+   * The Data workspace now builds the index THREE times per render (I/O list,
+   * loop list, line list), which is where the remaining +0.7 ms sits. A memo on
+   * document identity — the shape `qaFor` already uses — would collapse all
+   * three; it is a cross-report change and is deliberately NOT made here.
+   */
   bench('lineListRows', 20, () => { lineListRows(doc) })
   bench('all five reports (one render)', 10, () => {
     instrumentIndexRows(doc); ioListReport(doc); lineListRows(doc)

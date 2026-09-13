@@ -8,13 +8,14 @@ import { isPortEnd } from '../model/types'
 import { expandLetters, formatTag } from '../isa/tag'
 import { getSymbol } from '../symbols/registry'
 import type { EntityKind } from '../model/registry'
-import { edgeFieldValue, fieldValue, keyOfEdge, keyOfNode } from '../model/registry'
+import { edgeFieldValue, fieldValue, keyOfNode } from '../model/registry'
 import { fieldKeysFor, labelForField } from '../model/fields'
 import { areaCodeOf, buildHierarchy, unitCodeOf, type Hierarchy } from '../model/hierarchy'
 import { useStore } from '../store/store'
 import { buildIndex } from '../model/projectIndex'
 import { countNonIo, deriveIoList } from '../model/ioList'
 import { loopPlaceLabel, loopViews } from '../model/loopIndex'
+import { runEnds, type Run, type RunEnd } from '../model/run'
 import { LOOP_TYPE_LABELS, type LoopCompleteness } from '../model/loop'
 
 /**
@@ -317,47 +318,132 @@ export function instrumentIndexCsv(doc: ProjectDoc): string {
   return toCsv(INSTRUMENT_INDEX_COLUMNS, instrumentIndexRows(doc))
 }
 
+/**
+ * THE LINE LIST — one row per physical RUN, not per drawn edge.
+ *
+ * It used to iterate `sheet.edges`, so a real pipe — pump, block valve, check
+ * valve, vessel is four edges — printed four rows all wearing one number, and
+ * an unnumbered segment printed nothing at all. `ix.runs` (P3 Program 1) says
+ * which edges are one pipe, so the list now asks the pipe.
+ *
+ * EVERY RUN GETS A ROW, numbered or not. `ReportRow.recordKey` has always
+ * documented "an unnumbered line" as a row that still prints and cannot be
+ * edited, and this is that case arriving: a line list that silently omitted
+ * every un-numbered pipe was under-reporting the drawing, which is the same
+ * fault the I/O list's `excluded` count exists to prevent.
+ *
+ * WHAT IT REFUSES TO SAY:
+ *
+ *  - It never picks one of several numbers. A run carrying two prints neither
+ *    in `Line Number`; `Numbering` names both.
+ *  - It never states a flow direction. `From`/`To` are the two ENDS in a
+ *    deterministic order, which is what they have always been — the old code
+ *    printed `edge.source` and `edge.target`, and those are the order the line
+ *    happened to be drawn in. A run with any number of ends other than two has
+ *    no two-column answer, so it says how many it has and `Ends` lists them.
+ *  - It never merges two runs because their numbers match. They are two pipes;
+ *    `duplicate-line-number` is what says so.
+ *
+ * The three appended columns keep every existing column at the position it has
+ * had since the first release, including Area and Unit.
+ */
 export const LINE_LIST_SPEC: ReportColumn[] = [
   ...derived('Line Number', 'Class', 'Size', 'Spec', 'Service', 'Seq', 'Sheet', 'From', 'To'),
   ...editable(LINE_LIST_FIELDS),
   ...HIERARCHY_COLUMNS,
+  ...derived('Segments', 'Ends', 'Numbering'),
 ]
 export const LINE_LIST_COLUMNS = LINE_LIST_SPEC.map((c) => c.label)
 
+/**
+ * What terminates one end of a run, in the words the other reports use.
+ *
+ * The `dead-end` reason is deliberately NOT printed as a qualifier. It means
+ * "pass-through hardware with no process line continuing", and that is the
+ * same evidence for a half-drawn valve and for a pump whose discharge is the
+ * only pipe on it — the line legitimately starts at the pump. Writing "(open
+ * end)" beside P-101 would tell a reader the drawing is unfinished when the
+ * model cannot know that. The reason stays available on `runEnds` and the
+ * Inspector shows it, where it reads as topology rather than as a verdict.
+ */
+function runEndName(ix: ReturnType<typeof buildIndex>, end: RunEnd): string {
+  if (end.reason === 'free' || !end.nodeId) return 'free end'
+  const node = ix.nodes.get(end.nodeId)?.node
+  if (!node) return '?'
+  return node.tag ? formatTag(node.tag, '-') : node.label || symbolName(node.symbolId)
+}
+
+/** `Numbering`: blank when there is one number and nothing to explain. */
+function numberingCell(run: Run): string {
+  if (run.unnumbered) return 'unnumbered'
+  if (run.numbers.length > 1) return `${run.numbers.length} numbers: ${run.numbers.join('; ')}`
+  return ''
+}
+
 export function lineListRows(doc: ProjectDoc): ReportRow[] {
-  const rows: ReportRow[] = []
-  const nodes = nodeIndex(doc)
-  const h = buildHierarchy(doc)
-  for (const sheet of doc.sheets) {
-    for (const edge of sheet.edges) {
-      const ln = edge.lineNumber
-      if (!ln || !(ln.size || ln.spec || ln.service || ln.seq)) continue
-      rows.push({
-        id: edge.id,
-        sheetId: sheet.id,
-        recordKey: keyOfEdge(edge),
-        recordKind: 'line',
-        cells: [
-          [ln.size, ln.spec, ln.service, ln.seq].filter(Boolean).join('-'),
-          edge.lineClass,
-          ln.size,
-          ln.spec,
-          ln.service,
-          ln.seq,
-          sheet.name,
-          endName(nodes, edge.source),
-          endName(nodes, edge.target),
-          ...LINE_LIST_FIELDS.map((k) => edgeFieldValue(doc.registry, edge, k)),
-          // A line's unit is whatever an engineer ASSIGNED, never inferred from
-          // what it happens to be drawn between. A header can run the length of
-          // a plant, and guessing its unit from one end of it would be a
-          // fabricated engineering fact printed in a deliverable.
-          ...hierarchyCells(h, doc, keyOfEdge(edge)),
-        ],
-      })
+  // ONE index for the whole report. It replaces the private `nodeIndex` and
+  // `buildHierarchy` walks this function used to make, and it is where the
+  // runs come from, so the table and the QA rules read one topology.
+  const ix = buildIndex(doc)
+
+  return ix.runs.map((run) => {
+    const first = ix.edges.get(run.edgeIds[0]!)
+
+    // A run may be drawn in more than one line class — a jacketed section in
+    // the middle of a process line. Say all of them rather than the first.
+    const classes = new Set<string>()
+    for (const id of run.edgeIds) {
+      const indexed = ix.edges.get(id)
+      if (indexed) classes.add(indexed.edge.lineClass)
     }
-  }
-  return rows
+
+    // The number's PARTS come from an edge actually wearing it, never re-split
+    // out of the joined key — the separator is the standard's, not ours. Blank
+    // unless the run carries exactly one number, because parts of two
+    // different numbers in one cell would mean nothing.
+    const numbered = run.number
+      ? run.edgeIds.map((id) => ix.edges.get(id)).find((e) => e?.key === run.number)
+      : undefined
+    const parts = numbered?.edge.lineNumber ?? { size: '', spec: '', service: '', seq: '' }
+
+    const ends = runEnds(ix, run)
+    const twoEnded = ends.length === 2
+    const endsCell = ends.length === 0 ? '(no open ends)' : ends.map((e) => runEndName(ix, e)).join('; ')
+    const sideCell = (i: number) =>
+      twoEnded ? runEndName(ix, ends[i]!) : ends.length === 0 ? '' : `${ends.length} ends`
+
+    const key = run.number ?? null
+    return {
+      // The first edge by id: deterministic, and something `locateCell` can
+      // jump to. Never an array index.
+      id: run.edgeIds[0]!,
+      sheetId: run.sheetId,
+      // Null for an unnumbered run and for one carrying several, because there
+      // is no single record for either to be edited through.
+      recordKey: key,
+      recordKind: 'line',
+      cells: [
+        run.number ?? '',
+        [...classes].sort().join(', '),
+        parts.size,
+        parts.spec,
+        parts.service,
+        parts.seq,
+        first?.sheet.name ?? '',
+        sideCell(0),
+        sideCell(1),
+        ...LINE_LIST_FIELDS.map((k) => (numbered ? edgeFieldValue(doc.registry, numbered.edge, k) : '')),
+        // A line's unit is whatever an engineer ASSIGNED, never inferred from
+        // what it happens to be drawn between. A header can run the length of
+        // a plant, and guessing its unit from one end of it would be a
+        // fabricated engineering fact printed in a deliverable.
+        ...hierarchyCells(ix.hierarchy, doc, key),
+        String(run.edgeIds.length),
+        endsCell,
+        numberingCell(run),
+      ],
+    }
+  })
 }
 
 export function lineListCsv(doc: ProjectDoc): string {

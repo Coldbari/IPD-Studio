@@ -19,7 +19,7 @@ import { compareDocs } from '../../src/model/diff'
 import { buildChangeSet, buildPasteChangeSet, parseCsv } from '../../src/model/bulkEdit'
 import {
   ENGINEERING_COLUMNS, ENGINEERING_SPEC, IO_LIST_COLUMNS, INSTRUMENT_INDEX_SPEC,
-  engineeringCsv, engineeringRows, instrumentIndexRows, ioListRows, lineListRows,
+  engineeringCsv, engineeringRows, instrumentIndexRows, ioListRows, lineListRows, LINE_LIST_COLUMNS,
 } from '../../src/export/csv'
 import { UNIT_FIELD, buildHierarchy } from '../../src/model/hierarchy'
 import { issueRevision, getSnapshot, __resetSnapshots } from '../../src/persist/revisions'
@@ -120,12 +120,20 @@ describe('every report', () => {
   })
 
   it('a line carries an assignment when one is made, and never an inferred one', () => {
+    // Read by COLUMN NAME, not by position: P3 Program 3 appends Segments,
+    // Ends and Numbering after the hierarchy pair, so the last two cells of a
+    // line-list row are no longer Area and Unit. Every other report still
+    // ends with them, which the test above pins.
+    const at = (label: string) => {
+      const i = LINE_LIST_COLUMNS.indexOf(label)
+      return lineListRows(doc())[0]!.cells[i]
+    }
     const lineKey = lineListRows(doc())[0]!.recordKey!
     // Drawn between two assigned-adjacent objects, and still blank: a header
     // can run the length of a plant, so nothing guesses.
-    expect(lineListRows(doc())[0]!.cells.slice(-2)).toEqual(['', ''])
+    expect([at('Area'), at('Unit')]).toEqual(['', ''])
     st().assignUnit(lineKey, 'line', unitId)
-    expect(lineListRows(doc())[0]!.cells.slice(-2)).toEqual(['100', 'U-101'])
+    expect([at('Area'), at('Unit')]).toEqual(['100', 'U-101'])
   })
 })
 

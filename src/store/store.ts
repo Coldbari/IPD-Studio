@@ -61,6 +61,7 @@ function withoutHistory(fn: () => void): void {
 }
 import type { StandardProfile } from '../model/standard'
 import { propagateFluid } from '../model/fluidFlow'
+import { buildIndex } from '../model/projectIndex'
 import type { EngineeringRecord, EntityKind, RecordStatus, Registry } from '../model/registry'
 import { keyOfEdge, keyOfNode } from '../model/registry'
 import type { Area, LegacyRow, Unit } from '../model/hierarchy'
@@ -205,6 +206,16 @@ export interface StoreState {
   /** Assign a service to a line; auto-spreads along the connected run
    *  (through valves/pumps/fittings, stopping at vessels). One undo step. */
   setEdgeFluid(id: string, fluidId: string | undefined): void
+  /**
+   * Put this line's number on every UNNUMBERED edge of its physical run.
+   *
+   * Explicit, never automatic, and additive only: an edge already wearing a
+   * number is left exactly as it is and counted in `skipped`. Overwriting one
+   * would orphan whatever engineering record that number carries, and a
+   * migration that silently discards a record is the thing this store exists
+   * not to do. One undo step; nothing outside the run is touched.
+   */
+  applyLineNumberToRun(edgeId: string): { applied: number; skipped: number }
   /** Adopt a company standard, or drop back to the built-in default. Goes
    *  through the same set() as every other edit, so it is undoable. */
   setStandard(standard: StandardProfile | undefined): void
@@ -927,6 +938,53 @@ export const useStore = create<StoreState>()(
             const run = new Set(propagateFluid(sh, id))
             return { ...sh, edges: sh.edges.map((e) => (run.has(e.id) ? { ...e, fluidId } : e)) }
           })
+        },
+
+        applyLineNumberToRun(edgeId) {
+          let applied = 0
+          let skipped = 0
+          set((s) => {
+            const ix = buildIndex(s.doc)
+            const source = ix.edges.get(edgeId)
+            const number = source?.edge.lineNumber
+            // Nothing to spread: the source must itself carry a number that
+            // `keyOfEdge` accepts, or there is no line to put anywhere.
+            if (!source || !number || !source.key) return s
+            const runId = ix.runOfEdge.get(edgeId)
+            const run = runId ? ix.runs.find((r) => r.id === runId) : undefined
+            if (!run) return s
+
+            const targets = new Set<string>()
+            for (const id of run.edgeIds) {
+              if (id === edgeId) continue
+              const indexed = ix.edges.get(id)
+              if (!indexed) continue
+              // Already numbered — including already numbered THE SAME. Both
+              // are left alone; there is nothing to write either way.
+              if (indexed.key) skipped += 1
+              else targets.add(id)
+            }
+            if (targets.size === 0) return s
+            applied = targets.size
+
+            // No `applyRename` and none needed: every target is unnumbered, so
+            // it has no old key, no record and no reference anywhere to carry.
+            // It simply joins the record the number already has — which is
+            // what `edgesByKey` has always allowed and what the run model now
+            // makes visible.
+            return {
+              doc: touched({
+                ...s.doc,
+                sheets: s.doc.sheets.map((sh) =>
+                  sh.id === run.sheetId
+                    ? { ...sh, edges: sh.edges.map((e) => (targets.has(e.id) ? { ...e, lineNumber: { ...number } } : e)) }
+                    : sh,
+                ),
+              }),
+              dirty: true,
+            }
+          })
+          return { applied, skipped }
         },
 
         addArea(code, name) {

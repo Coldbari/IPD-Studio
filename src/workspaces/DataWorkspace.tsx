@@ -145,7 +145,7 @@ export default function DataWorkspace() {
         columns: LINE_LIST_SPEC,
         rows: lineListRows(doc),
         download: downloadLineList,
-        empty: 'No numbered lines yet. Give a process line a line number and it appears here.',
+        empty: 'No process piping drawn yet. Every connected run of pipe appears here once one is drawn — numbered or not.',
       },
       equipment: {
         label: 'Equipment list',
