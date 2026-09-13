@@ -21,6 +21,7 @@ import PropertyPanel from '../../src/panels/PropertyPanel'
 import { useStore } from '../../src/store/store'
 import { createEmptyDoc } from '../../src/model/doc'
 import { buildIndex } from '../../src/model/projectIndex'
+import { getSymbol } from '../../src/symbols/registry'
 import type { LineNumber, PlantEdge, PlantNode, ProjectDoc } from '../../src/model/types'
 
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
@@ -233,5 +234,57 @@ describe('numbering the whole run', () => {
     const runId = buildIndex(doc()).runs[0]!.id
     // Run identity is derived. Nothing may persist it.
     expect(JSON.stringify(doc())).not.toContain(runId)
+  })
+})
+
+/* ------------------------------- P3 audit P1-2: unregistered symbol guard */
+
+/**
+ * `getSymbol` THROWS on an id that is not in the catalogue, and a throw during
+ * render blanks the property panel. A node can legitimately wear an
+ * unregistered id — a custom symbol removed while nodes still reference it, or
+ * a document rendered before `registerCustomSymbols` has run, which is the
+ * same window `symbolName` guards against in export/csv.ts.
+ */
+describe('a run ending at an unregistered symbol still renders', () => {
+  const GHOST = 'not.a.real.symbol'
+
+  it('does not throw, and shows the raw symbol id', async () => {
+    // No tag and no label, so the name has to come from the catalogue — which
+    // does not have this one.
+    load([tank('a', 'Feed drum'), node('ghost', 'equipment', GHOST)],
+      [edge('e1', 'a', 'ghost', { lineNumber: ln('001') })])
+    expect(() => getSymbol(GHOST)).toThrow()
+
+    await show('e1')
+    expect(q('run-section')).not.toBeNull()
+    expect(text('run-ends')).toContain(GHOST)
+    expect(text('run-ends')).toContain('Feed drum')
+  })
+
+  it('leaves the rest of the panel renderable', async () => {
+    load([tank('a'), node('ghost', 'equipment', GHOST)],
+      [edge('e1', 'a', 'ghost', { lineNumber: ln('001') })])
+    await show('e1')
+    // The line-number editor above the run section is still there.
+    expect(host.textContent).toContain('Line Number')
+    expect(text('run-number')).toContain('6"-CS150-CW-001')
+    expect(text('run-segments')).toContain('1 segment')
+  })
+
+  it('still prefers a tag, then a label, over the catalogue', async () => {
+    load([node('tagged', 'equipment', GHOST, { tag: { letters: 'TK', loop: '1' } }),
+      node('labelled', 'equipment', GHOST, { label: 'Day tank' })],
+      [edge('e1', 'tagged', 'labelled', { lineNumber: ln('001') })])
+    await show('e1')
+    expect(text('run-ends')).toContain('TK-1')
+    expect(text('run-ends')).toContain('Day tank')
+    expect(text('run-ends')).not.toContain(GHOST)
+  })
+
+  it('a REGISTERED symbol still renders its catalogue name, exactly as before', async () => {
+    load([tank('a'), tank('b')], [edge('e1', 'a', 'b', { lineNumber: ln('001') })])
+    await show('e1')
+    expect(text('run-ends')).toContain('Storage Tank')
   })
 })

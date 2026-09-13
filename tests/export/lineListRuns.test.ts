@@ -19,6 +19,8 @@ import '../../src/symbols/lib/index'
 import { LINE_LIST_COLUMNS, LINE_LIST_SPEC, lineListCsv, lineListRows } from '../../src/export/csv'
 import { buildIndex } from '../../src/model/projectIndex'
 import { createEmptyDoc, createSheet } from '../../src/model/doc'
+import { newArea, newUnit } from '../../src/model/hierarchy'
+import type { EngineeringRecord } from '../../src/model/registry'
 import type { LineNumber, PlantEdge, PlantNode, ProjectDoc, Sheet } from '../../src/model/types'
 
 /* ------------------------------------------------------------- fixtures */
@@ -422,5 +424,230 @@ describe('every line-list column has a ruling', () => {
     // Nothing was dropped. If a future column cannot be stated for a run, it
     // belongs in a different report rather than printed as a guess.
     expect(Object.values(FIELD_COVERAGE)).not.toContain('invalid')
+  })
+})
+
+/* ------------------------------------- P3 audit P1-1: multi-number records */
+
+/**
+ * A run carrying two numbers used to print BLANK registry and hierarchy cells,
+ * because the row resolved its record through `run.number` — which is
+ * undefined the moment there is more than one. Both records existed and were
+ * filled in; the deliverable simply stopped showing them, and since a line
+ * record is editable only through this table, they became unreachable too.
+ *
+ * They are aggregated now, by the same rule the `Class` column already used:
+ * distinct non-empty values, sorted, joined. Where two records disagree, BOTH
+ * are printed. Nothing is merged, reinterpreted or chosen.
+ */
+describe('a multi-number run keeps every record behind it', () => {
+  const AREA = newArea('100')
+  const UNIT_A = newUnit(AREA.id, 'U-101')
+  const UNIT_B = newUnit(AREA.id, 'U-202')
+
+  const rec = (key: string, fields: Record<string, string>, unitId?: string): EngineeringRecord =>
+    ({ key, kind: 'line', fields, ...(unitId ? { unitId } : {}) })
+
+  /** A 12" header and its 2" branch: one connected run, two numbers, two
+   *  records that legitimately disagree about material and size. */
+  function header(): ProjectDoc {
+    const big = { size: '12"', spec: 'CS150', service: 'CW', seq: '001' }
+    const small = { size: '2"', spec: 'CS300', service: 'CW', seq: '010' }
+    const base = docOf(sheetOf('s1', [tank('a', { label: 'Feed drum' }), tee('t'), tank('b', { label: 'Product tank' })], [
+      edge('e1', 'a', 't', { lineNumber: big }),
+      edge('e2', 't', 'b', { lineNumber: small }),
+    ]))
+    return {
+      ...base,
+      areas: [AREA],
+      units: [UNIT_A, UNIT_B],
+      registry: {
+        '12"-CS150-CW-001': rec('12"-CS150-CW-001', {
+          'general.fluid': 'Cooling water',
+          'spec.size': 'DN300',
+          'spec.class': 'CS150',
+          'spec.material': 'Carbon Steel',
+          'design.pressure': '16 barg',
+        }, UNIT_A.id),
+        '2"-CS300-CW-010': rec('2"-CS300-CW-010', {
+          'general.fluid': 'Cooling water',
+          'spec.size': 'DN50',
+          'spec.class': 'CS300',
+          'spec.material': 'Stainless Steel',
+          'design.pressure': '16 barg',
+        }, UNIT_B.id),
+      },
+    }
+  }
+
+  it('is still exactly one row for one physical run', () => {
+    const doc = header()
+    expect(buildIndex(doc).runs).toHaveLength(1)
+    expect(lineListRows(doc)).toHaveLength(1)
+    expect(at(doc, 0, 'Segments')).toBe('2')
+  })
+
+  it('still names both numbers and still picks neither', () => {
+    const doc = header()
+    expect(at(doc, 0, 'Line Number')).toBe('')
+    expect(at(doc, 0, 'Numbering')).toBe('2 numbers: 12"-CS150-CW-001; 2"-CS300-CW-010')
+    expect(lineListRows(doc)[0]!.recordKey).toBeNull()
+  })
+
+  it('prints BOTH values where the two records disagree', () => {
+    const doc = header()
+    expect(at(doc, 0, 'Material')).toBe('Carbon Steel; Stainless Steel')
+    expect(at(doc, 0, 'Pipe class / rating')).toBe('CS150; CS300')
+    expect(at(doc, 0, 'Nominal size')).toBe('DN300; DN50')
+  })
+
+  it('prints one value where the two records agree', () => {
+    const doc = header()
+    expect(at(doc, 0, 'Fluid')).toBe('Cooling water')
+    expect(at(doc, 0, 'Design pressure')).toBe('16 barg')
+  })
+
+  it('discards nothing: every populated value reaches the row', () => {
+    const doc = header()
+    const printed = lineListRows(doc)[0]!.cells.join('\u0000')
+    for (const record of Object.values(doc.registry!)) {
+      for (const value of Object.values(record.fields)) {
+        expect(printed, `${record.key} -> ${value}`).toContain(value)
+      }
+    }
+  })
+
+  it('aggregates the hierarchy the same way, and never infers one', () => {
+    const doc = header()
+    // Both records sit in area 100, in two different units. One area, two units.
+    expect(at(doc, 0, 'Area')).toBe('100')
+    expect(at(doc, 0, 'Unit')).toBe('U-101; U-202')
+  })
+
+  it('leaves an unassigned record out rather than blanking the assigned one', () => {
+    const doc = header()
+    const reg = { ...doc.registry! }
+    reg['2"-CS300-CW-010'] = { ...reg['2"-CS300-CW-010']!, unitId: undefined }
+    const one = { ...doc, registry: reg }
+    expect(at(one, 0, 'Unit')).toBe('U-101')
+    expect(at(one, 0, 'Area')).toBe('100')
+  })
+
+  it('stays read-only, because there is no one record to edit', () => {
+    const doc = header()
+    expect(lineListRows(doc)[0]!.recordKey).toBeNull()
+    expect(lineListRows(doc)[0]!.recordKind).toBe('line')
+  })
+
+  it('serialises the aggregate as one field — the separator is not a delimiter', () => {
+    const doc = header()
+    const lines = lineListCsv(doc).trim().split('\n')
+    // Two numbers, still one row.
+    expect(lines).toHaveLength(2)
+    // `; ` needs no quoting precisely because it is not a comma, so it is
+    // emitted bare and the field count is unchanged.
+    expect(lines[1]!).toContain('Carbon Steel; Stainless Steel')
+    expect(lines[1]!).toContain('U-101; U-202')
+  })
+
+  it('still escapes an aggregated value that IS dangerous', () => {
+    const doc = header()
+    const reg = { ...doc.registry! }
+    reg['12"-CS150-CW-001'] = {
+      ...reg['12"-CS150-CW-001']!,
+      fields: { ...reg['12"-CS150-CW-001']!.fields, 'spec.material': '=cmd|calc' },
+    }
+    reg['2"-CS300-CW-010'] = {
+      ...reg['2"-CS300-CW-010']!,
+      fields: { ...reg['2"-CS300-CW-010']!.fields, 'spec.material': 'A106, Gr "B"' },
+    }
+    const csv = lineListCsv({ ...doc, registry: reg })
+    // The shared `csvCell` runs over the JOINED cell, so the aggregate is
+    // guarded as one value: '=' sorts before 'A', leads the cell and picks up
+    // the apostrophe; the comma and the quotes then force the whole field to
+    // be quoted, with its own quotes doubled.
+    expect(csv).toContain(`"'=cmd|calc; A106, Gr ""B"""`)
+    // Nothing in the file starts a cell with a formula lead.
+    expect(csv).not.toMatch(/(^|,)=/m)
+    // Still one row: the comma sits inside a quoted field, not a new column.
+    expect(csv.trim().split('\n')).toHaveLength(2)
+  })
+
+  it('changes nothing about the document', () => {
+    const doc = header()
+    const before = JSON.stringify(doc)
+    lineListCsv(doc)
+    expect(JSON.stringify(doc)).toBe(before)
+  })
+})
+
+/* ------------------------------- P3 audit P1-1: single-number regression */
+
+describe('a single-number run prints exactly what it printed before', () => {
+  const AREA = newArea('200')
+  const UNIT = newUnit(AREA.id, 'U-900')
+
+  function plain(): ProjectDoc {
+    const base = docOf(sheetOf('s1', [tank('a', { label: 'Feed drum' }), valve('v'), tank('b', { label: 'Product tank' })], [
+      edge('e1', 'a', 'v', { lineNumber: ln('001') }),
+      edge('e2', 'v', 'b', { lineNumber: ln('001') }),
+    ]))
+    return {
+      ...base,
+      areas: [AREA],
+      units: [UNIT],
+      registry: {
+        [N1]: {
+          key: N1,
+          kind: 'line',
+          unitId: UNIT.id,
+          fields: {
+            'general.fluid': 'Cooling water',
+            'spec.size': 'DN150',
+            'spec.class': 'CS150',
+            'spec.material': 'A106 Gr B',
+            'spec.schedule': 'Sch 40',
+            'design.pressure': '16 barg',
+            'design.temperature': '120 C',
+            'design.operatingPressure': '8 barg',
+            'design.operatingTemperature': '45 C',
+            'design.insulation': 'PP 50mm',
+            'design.tracing': 'Electric',
+            'design.testPressure': '24 barg',
+          },
+        },
+      },
+    }
+  }
+
+  it('produces the exact cell array, column for column', () => {
+    expect(lineListRows(plain())[0]!.cells).toEqual([
+      N1, 'process.major', '6"', 'CS150', 'CW', '001', 'Sheet 1', 'Feed drum', 'Product tank',
+      'Cooling water', 'DN150', 'CS150', 'A106 Gr B', 'Sch 40',
+      '16 barg', '120 C', '8 barg', '45 C', 'PP 50mm', 'Electric', '24 barg',
+      '200', 'U-900',
+      '2', 'Feed drum; Product tank', '',
+    ])
+  })
+
+  it('keeps its record key and stays editable', () => {
+    const row = lineListRows(plain())[0]!
+    expect(row.recordKey).toBe(N1)
+    expect(row.recordKind).toBe('line')
+  })
+
+  it('still prints nothing for a field the record does not carry', () => {
+    const doc = plain()
+    const reg = { ...doc.registry! }
+    reg[N1] = { ...reg[N1]!, fields: { 'spec.material': 'A106 Gr B' } }
+    expect(at({ ...doc, registry: reg }, 0, 'Fluid')).toBe('')
+    expect(at({ ...doc, registry: reg }, 0, 'Material')).toBe('A106 Gr B')
+  })
+
+  it('still prints nothing when the number names no record at all', () => {
+    const doc = docOf(sheetOf('s1', [tank('a'), tank('b')], [edge('e1', 'a', 'b', { lineNumber: ln('001') })]))
+    expect(at(doc, 0, 'Material')).toBe('')
+    expect(at(doc, 0, 'Area')).toBe('')
+    expect(lineListRows(doc)[0]!.recordKey).toBe(N1)
   })
 })

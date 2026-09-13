@@ -8,7 +8,7 @@ import { isPortEnd } from '../model/types'
 import { expandLetters, formatTag } from '../isa/tag'
 import { getSymbol } from '../symbols/registry'
 import type { EntityKind } from '../model/registry'
-import { edgeFieldValue, fieldValue, keyOfNode } from '../model/registry'
+import { fieldValue, keyOfNode } from '../model/registry'
 import { fieldKeysFor, labelForField } from '../model/fields'
 import { areaCodeOf, buildHierarchy, unitCodeOf, type Hierarchy } from '../model/hierarchy'
 import { useStore } from '../store/store'
@@ -207,7 +207,7 @@ function toCsv(columns: string[], rows: ReportRow[]): string {
  * ENGINEERING COLUMNS
  *
  * Every report below prints engineering values out of `doc.registry`, read
- * through `fieldValue()` / `edgeFieldValue()`. Two rules hold everywhere:
+ * through `fieldValue()` / the registry directly. Two rules hold everywhere:
  *
  *  1. The field KEYS come from `FIELD_CATALOG` and the HEADERS from
  *     `labelForField()`. There is one field catalogue in the product, so the
@@ -373,6 +373,23 @@ function runEndName(ix: ReturnType<typeof buildIndex>, end: RunEnd): string {
   return node.tag ? formatTag(node.tag, '-') : node.label || symbolName(node.symbolId)
 }
 
+/**
+ * Distinct non-empty values, sorted, joined — the convention the Loop list's
+ * member tags and this row's own `Ends` column already use.
+ *
+ * A run carrying several numbers has several records behind it, and they may
+ * disagree: a 12" header and its 2" branch have different materials, and both
+ * are true. Printing BOTH is the only honest answer. Choosing one would be the
+ * report deciding which of an engineer's two answers is right; blanking the
+ * cell — which is what this did before the P3 Program 3 audit — silently drops
+ * engineering data out of a deliverable.
+ *
+ * For the ordinary one-record run this collapses to exactly what
+ * `edgeFieldValue` returned: the value, or '' when there is none.
+ */
+const joinDistinct = (values: readonly string[]): string =>
+  [...new Set(values.filter(Boolean))].sort().join('; ')
+
 /** `Numbering`: blank when there is one number and nothing to explain. */
 function numberingCell(run: Run): string {
   if (run.unnumbered) return 'unnumbered'
@@ -412,6 +429,13 @@ export function lineListRows(doc: ProjectDoc): ReportRow[] {
     const sideCell = (i: number) =>
       twoEnded ? runEndName(ix, ends[i]!) : ends.length === 0 ? '' : `${ends.length} ends`
 
+    // EVERY record this run's numbers name — one for an ordinary line, several
+    // for a header carrying its branches' numbers, none when nothing is
+    // numbered. `run.numbers` is already sorted and de-duplicated, so the
+    // lookup order is deterministic.
+    const records = run.numbers.map((n) => doc.registry?.[n])
+    const unitIds = records.map((r) => r?.unitId)
+
     const key = run.number ?? null
     return {
       // The first edge by id: deterministic, and something `locateCell` can
@@ -432,12 +456,18 @@ export function lineListRows(doc: ProjectDoc): ReportRow[] {
         first?.sheet.name ?? '',
         sideCell(0),
         sideCell(1),
-        ...LINE_LIST_FIELDS.map((k) => (numbered ? edgeFieldValue(doc.registry, numbered.edge, k) : '')),
+        // Read through the run's NUMBERS rather than through one edge, so a run
+        // carrying two of them prints both records rather than neither. The
+        // single-number case resolves to the same registry lookup
+        // `edgeFieldValue` made, because `numbered.key` IS `run.number`.
+        ...LINE_LIST_FIELDS.map((k) => joinDistinct(records.map((r) => r?.fields[k] ?? ''))),
         // A line's unit is whatever an engineer ASSIGNED, never inferred from
         // what it happens to be drawn between. A header can run the length of
         // a plant, and guessing its unit from one end of it would be a
-        // fabricated engineering fact printed in a deliverable.
-        ...hierarchyCells(ix.hierarchy, doc, key),
+        // fabricated engineering fact printed in a deliverable. Two assigned
+        // records are reported as two, by the same rule as every field above.
+        joinDistinct(unitIds.map((id) => areaCodeOf(ix.hierarchy, id))),
+        joinDistinct(unitIds.map((id) => unitCodeOf(ix.hierarchy, id))),
         String(run.edgeIds.length),
         endsCell,
         numberingCell(run),

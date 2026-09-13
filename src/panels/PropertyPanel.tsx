@@ -3,7 +3,7 @@
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { getSymbol } from '../symbols/registry'
+import { SYMBOLS, getSymbol } from '../symbols/registry'
 import { portLabels } from '../symbols/portLabels'
 import { activeSheet, pauseHistory, resumeHistory, useStore } from '../store/store'
 import type { LineClass, PlantEdge, PlantNode, SheetSize } from '../model/types'
@@ -397,7 +397,14 @@ function RunSection({ edge }: { edge: PlantEdge }) {
   const nameOfEnd = (nodeId: string | undefined) => {
     const node = nodeId ? ix.nodes.get(nodeId)?.node : undefined
     if (!node) return 'free end'
-    return node.tag ? formatTag(node.tag, '-') : node.label || getSymbol(node.symbolId).name
+    if (node.tag) return formatTag(node.tag, '-')
+    if (node.label) return node.label
+    // `getSymbol` THROWS on an id that is not in the catalogue, and a throw
+    // during render blanks the whole property panel. The same case
+    // `symbolName` guards in export/csv.ts — a custom symbol may not be
+    // registered at the moment this runs — so it degrades to the raw id here
+    // exactly as the reports do.
+    return SYMBOLS.get(node.symbolId)?.name ?? node.symbolId
   }
   const unnumberedHere = run.edgeIds.filter((id) => !ix.edges.get(id)?.key).length
   const canSpread = Boolean(edge.lineNumber && ix.edges.get(edge.id)?.key) && unnumberedHere > 0
