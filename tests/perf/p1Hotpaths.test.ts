@@ -35,7 +35,8 @@ import { runRules } from '../../src/validate/engine'
 import { ALL_RULES } from '../../src/validate/rules/index'
 import { noReceiver } from '../../src/validate/rules/instrumentation'
 import { newLoop } from '../../src/model/loop'
-import { deriveRuns, runOfEdgeMap } from '../../src/model/run'
+import { deriveRuns, runOfEdgeMap, runContinuity } from '../../src/model/run'
+import { duplicateLineNumber } from '../../src/validate/rules/topology'
 import { loopViews } from '../../src/model/loopIndex'
 import { planLoopAdoption } from '../../src/model/loopAdoption'
 import { compareDocs } from '../../src/model/diff'
@@ -188,16 +189,34 @@ test.skipIf(!process.env.PERF)('P1 hot paths', () => {
    *   buildIndex, after    1.225 / 1.303 / 1.266 ms   median 1.266
    *   delta                                           +0.282 ms
    *
-   * The two lines below are what that delta IS, so a later regression can be
+   * The lines below are what that delta IS, so a later regression can be
    * attributed rather than guessed at. Note the shape of this fixture: its 125
    * process edges join instrument to instrument, and an instrument is not
    * pass-through, so every run is a single edge. That is the WORST case per
    * edge — 125 separate walks, each allocating its own working set — and a
    * drawing whose pipes actually connect gets more edges per walk for less.
+   *
+   * P3 PROGRAM 2 made `duplicate-line-number` read the run model, so the rule
+   * pass now pays for `runContinuity`. Measured PAIRED against 609e476, three
+   * runs each, minutes apart:
+   *
+   *   runRules, before   2.273 / 2.319 / 2.285 ms   median 2.285
+   *   runRules, after    2.265 / 2.680 / 2.319 ms   median 2.319
+   *   delta                                         +0.034 ms
+   *
+   * That is inside the spread of either set — the run-aware rule costs nothing
+   * measurable here. Read the standalone `runContinuity` figure below with
+   * care: it is the first bench to touch that code, so it carries the JIT
+   * warm-up that the rule pass afterwards does not. The paired `runRules`
+   * comparison above is the number that means something.
    */
   const ixRuns = buildIndex(doc)
   bench('deriveRuns (index reused)', 50, () => { deriveRuns(ixRuns) })
   bench('runOfEdgeMap (index reused)', 200, () => { runOfEdgeMap(ixRuns.runs) })
+  // P3 Program 2: `duplicate-line-number` now asks the run model, so it pays
+  // for `runContinuity` — one `runEnds` per run plus a union-find over them.
+  bench('runContinuity (index reused)', 50, () => { runContinuity(ixRuns) })
+  bench('duplicate-line-number', 50, () => { duplicateLineNumber.run(ixRuns) })
   process.stderr.write(`  (runs: ${ixRuns.runs.length} over ${ixRuns.runOfEdge.size} process edges)\n`)
 
   /*

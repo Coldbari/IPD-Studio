@@ -7,6 +7,7 @@ import { finding } from '../rules'
 import { isPortEnd } from '../../model/types'
 import { edgesOf, signalReach } from '../../model/projectIndex'
 import { formatTag } from '../../isa/tag'
+import { classifyMember } from '../../model/loop'
 
 /** A receiver reads the measurement: Indicate, Control or Record, anywhere
  *  after the measured-variable letter. The same test the nested scan used. */
@@ -82,12 +83,28 @@ export const noFinalElement: Rule = {
   severity: 'warning',
   discipline: 'instrumentation',
   why: 'A controller with no final element cannot act on what it measures.',
+  /**
+   * WHAT COUNTS AS A CONTROLLER IS THE PARSER'S ANSWER, not the raw string.
+   *
+   * This used to ask `letters.includes('C') && !letters.endsWith('V')`, and
+   * that cannot work: C appears in BOTH tables in isa/letters.ts — "User's
+   * Choice" as a first letter, "Controller" as a succeeding one. So CT-101, a
+   * user's-choice transmitter, was told it "controls nothing — where is its
+   * valve?", and so was CI, CR, CS and every other first-letter-C tag with no
+   * succeeding C. The same defect was found and fixed in `classifyMember`
+   * during P2-C; this is the last place that still asked the string.
+   *
+   * `classifyMember` IS that fix, and it is now the only thing consulted, so
+   * the rule and the loop evaluator cannot disagree about what a controller is.
+   * Every other tag classifies exactly as before: FIC and HIC are controllers,
+   * FCV and CV end in V and are final elements, ZSC is a controller.
+   */
   run(ix) {
     const out = []
     for (const n of ix.allNodes) {
       const t = n.node.tag
       if (n.node.kind !== 'instrument' || !t?.letters || !t.loop) continue
-      if (!t.letters.includes('C') || t.letters.endsWith('V')) continue
+      if (classifyMember(t.letters) !== 'controller') continue
       const family = t.letters[0]
       const taggedFinal = ix.allNodes.some(
         (o) => o.node.kind === 'valve' && o.node.tag?.loop === t.loop && o.node.tag?.letters[0] === family,

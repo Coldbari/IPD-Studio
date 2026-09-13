@@ -361,6 +361,99 @@ export function runEnds(ix: RunIndex, run: Run): RunEnd[] {
   return out
 }
 
+/* ------------------------------------------------------------- continuity */
+
+/**
+ * Runs that are physically ONE line, grouped.
+ *
+ * A run stops at anything `passesThrough` rejects, and two of the things it
+ * rejects are not process boundaries at all:
+ *
+ *  - An INSTRUMENT in the line — an orifice plate, a magmeter, a rotameter.
+ *    It measures the medium; it does not transform it. The run stops there only
+ *    because `passesThrough` rejects every node of kind `instrument` before it
+ *    ever looks at the category (see the pinned note in tests/model/run.test.ts).
+ *    That is a limitation of the model, and treating the two sides as one line
+ *    corrects for OUR model rather than inferring anything about the plant.
+ *  - An ANNOTATION — in practice an off-page connector, which is not hardware.
+ *
+ * A vessel, an exchanger or a process unit is the opposite: what leaves is not
+ * what entered, so two runs meeting there are two lines and are left apart.
+ *
+ * Off-page continuation is followed through `PlantNode.link`, the same pointer
+ * `offpage-link` validates. The pointer is written on one connector only — the
+ * property panel sets it in one direction — so a link counts in EITHER
+ * direction. Nothing here crosses a sheet in the run derivation itself; this
+ * only records that two derived runs are the same line.
+ *
+ * Returns run id -> the id of the smallest run in its group, so the grouping is
+ * deterministic and independent of the order runs were visited in. A run joined
+ * to nothing maps to itself.
+ *
+ * WHAT IT REFUSES TO INFER: nothing else. Two runs meeting at a vessel, or
+ * merely carrying the same number, are not joined. Where the drawing does not
+ * state continuity, this does not invent it.
+ */
+export function runContinuity(ix: RunIndex): Map<string, string> {
+  const parent = new Map<string, string>()
+  for (const run of ix.runs) parent.set(run.id, run.id)
+
+  const find = (x: string): string => {
+    let root = x
+    while (parent.get(root) !== root) root = parent.get(root)!
+    let cur = x
+    while (parent.get(cur) !== root) {
+      const next = parent.get(cur)!
+      parent.set(cur, root)
+      cur = next
+    }
+    return root
+  }
+  const union = (a: string, b: string) => {
+    const ra = find(a)
+    const rb = find(b)
+    if (ra === rb) return
+    // The smaller id always wins, so the representative does not depend on
+    // which pair happened to be joined first.
+    if (ra < rb) parent.set(rb, ra)
+    else parent.set(ra, rb)
+  }
+
+  // Node id -> the runs that END there, at a node that does not transform the
+  // medium. A free or dead end joins nothing: there is no object to join at.
+  const runsAtNode = new Map<string, string[]>()
+  for (const run of ix.runs) {
+    const seen = new Set<string>()
+    for (const end of runEnds(ix, run)) {
+      if (end.reason !== 'boundary' || !end.nodeId || seen.has(end.nodeId)) continue
+      const kind = ix.nodes.get(end.nodeId)?.node.kind
+      if (kind !== 'instrument' && kind !== 'annotation') continue
+      seen.add(end.nodeId)
+      const list = runsAtNode.get(end.nodeId)
+      if (list) list.push(run.id)
+      else runsAtNode.set(end.nodeId, [run.id])
+    }
+  }
+
+  // Same node: one line with something measuring it in the middle.
+  for (const runIds of runsAtNode.values()) {
+    for (let i = 1; i < runIds.length; i++) union(runIds[0]!, runIds[i]!)
+  }
+
+  // Linked connectors: one line continued on another sheet.
+  for (const [nodeId, runIds] of runsAtNode) {
+    const link = ix.nodes.get(nodeId)?.node.link
+    if (!link) continue
+    const there = runsAtNode.get(link.nodeId)
+    if (!there) continue
+    for (const a of runIds) for (const b of there) union(a, b)
+  }
+
+  const out = new Map<string, string>()
+  for (const run of ix.runs) out.set(run.id, find(run.id))
+  return out
+}
+
 /* -------------------------------------------------------------- conflicts */
 
 /**
