@@ -75,11 +75,46 @@ describe('drawings made before ports had names', () => {
       { id: 'e1', lineClass: 'process.major', source: { nodeId: 'p1', portId: 'discharge' }, target: { x: 400, y: 200 } } as PlantEdge,
     ]
     const xml = dexpiXml(doc, sheet.id)
-    expect(xml).toContain('discharge')
-    expect(xml).not.toContain('Discharge')
+    // THE INVARIANT: what a connection is keyed by. Only the stable id ever
+    // addresses a port, so renaming a catalogue port cannot orphan a file.
+    expect(xml).toContain('FromNode="discharge"')
+    expect(xml).not.toContain('FromNode="Discharge"')
     const back = importDexpi(xml)
     const proc = back.sheet.edges[0]!
     expect('nodeId' in proc.source && proc.source.portId).toBe('discharge')
+  })
+
+  it('carries an AUTHORITATIVE port name, and only as private metadata', () => {
+    // P3-4A: a pump's discharge IS named by the catalogue, so the projection
+    // may say so. It travels in the private PIDStudio set beside an explicit
+    // flag, never in the Connection and never as a standard property.
+    const doc = createEmptyDoc('Named')
+    const sheet = doc.sheets[0]!
+    sheet.nodes = [{ id: 'p1', symbolId: 'pump.centrifugal', kind: 'equipment', x: 0, y: 0, rotation: 0 } as PlantNode]
+    sheet.edges = [
+      { id: 'e1', lineClass: 'process.major', source: { nodeId: 'p1', portId: 'discharge' }, target: { x: 9, y: 0 } } as PlantEdge,
+    ]
+    const xml = dexpiXml(doc, sheet.id)
+    expect(xml).toContain('Name="Port.discharge.Name" Value="Discharge"')
+    expect(xml).toContain('Name="Port.discharge.NameAuthoritative" Value="true"')
+  })
+
+  it('NEVER exports a positional label as a port name', () => {
+    // The rule that matters. A nozzle at the top of a vessel is not an inlet
+    // because it is at the top, and the catalogue names none of a tank's
+    // ports — so the projection says it has no authoritative name and stops.
+    const doc = createEmptyDoc('Positional')
+    const sheet = doc.sheets[0]!
+    sheet.nodes = [{ id: 'tk', symbolId: 'vessel.tank', kind: 'equipment', x: 0, y: 0, rotation: 0 } as PlantNode]
+    sheet.edges = [
+      { id: 'e1', lineClass: 'process.major', source: { nodeId: 'tk', portId: 'n' }, target: { x: 9, y: 0 } } as PlantEdge,
+    ]
+    const xml = dexpiXml(doc, sheet.id)
+    expect(xml).toContain('Name="Port.n.NameAuthoritative" Value="false"')
+    expect(xml).not.toContain('Port.n.Name"')
+    for (const positional of ['Top connection', 'Bottom connection', 'Left connection', 'Right connection', 'Connection point', 'Inlet', 'Outlet']) {
+      expect(xml, positional).not.toContain(positional)
+    }
   })
 })
 
