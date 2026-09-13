@@ -26,7 +26,7 @@
 
 import type { Rule, RuleFinding } from '../rules'
 import { finding } from '../rules'
-import { danglingLoopMembers, duplicateLoopNumbers, type Loop } from '../../model/loop'
+import { articleFor, danglingLoopMembers, duplicateLoopNumbers, type Loop } from '../../model/loop'
 import { loopViews, type LoopView } from '../../model/loopIndex'
 import { deriveIoList } from '../../model/ioList'
 import { placementOf } from '../../model/hierarchy'
@@ -262,7 +262,7 @@ export const loopIoConflict: Rule = {
         finding(
           loopIoConflict,
           loop.id,
-          `${label(loop)} is a ${verdict.type} loop with ${missing} — every member is classified, and none of them is ${inputs === 0 ? 'an input (AI/DI)' : 'an output (AO/DO)'}`,
+          `${label(loop)} is ${articleFor(verdict.type)} ${verdict.type} loop with ${missing} — every member is classified, and none of them is ${inputs === 0 ? 'an input (AI/DI)' : 'an output (AO/DO)'}`,
           { key: `${loopIoConflict.id}:${loop.id}`, ...at(view) },
         ),
       )

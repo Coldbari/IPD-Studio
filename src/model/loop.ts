@@ -58,10 +58,6 @@ import type { Registry } from './registry'
  */
 export type MemberRole = 'element' | 'transmitter' | 'controller' | 'final' | 'switch' | 'relay' | 'indicator' | 'other'
 
-export const MEMBER_ROLES: readonly MemberRole[] = [
-  'element', 'transmitter', 'controller', 'final', 'switch', 'relay', 'indicator', 'other',
-]
-
 /**
  * The FUNCTION letters of a tag, via the structured parse.
  *
@@ -137,6 +133,27 @@ export const LOOP_TYPE_LABELS: Record<LoopType, string> = {
   ratio: 'Ratio',
   manual: 'Manual',
   safety: 'Safety-related',
+}
+
+/**
+ * 'a' or 'an', whichever English wants in front of `word`.
+ *
+ * Every user-visible sentence that names a loop type has to BUILD its article,
+ * because the type is interpolated. Hard-coding 'A' produced "A indication
+ * only loop", "A on/off loop", "A alarm loop" and "A interlock loop" — in the
+ * Loop Manager, the loop diagram, the Loop List CSV's Basis column and two QA
+ * findings, all from the same three templates.
+ *
+ * This is the SPELLING rule, not the pronunciation one: it cannot know about
+ * "a unit" or "an hour". That is safe for every word this product feeds it and
+ * deliberately unsafe in general, so `tests/model/loopWording.test.ts` pins the
+ * article for all nine loop types in BOTH spellings they are printed in — the
+ * label ('on/off') and the raw key ('on-off') — and fails the day a type is
+ * added that the rule gets wrong.
+ */
+export function articleFor(word: string, capitalised = false): string {
+  const article = /^[aeiou]/i.test(word) ? 'an' : 'a'
+  return capitalised ? article.charAt(0).toUpperCase() + article.slice(1) : article
 }
 
 export interface Loop {
@@ -415,13 +432,14 @@ export function evaluateLoop(loop: Loop, members: readonly LoopMember[]): LoopEv
 
   const rule = TYPE_RULES[type]
   const missing = rule.missing(roles, fns, hand)
+  const kind = LOOP_TYPE_LABELS[type].toLowerCase()
 
   if (rule.notApplicable) {
     return {
       ...base,
       completeness: 'not-applicable',
       missing,
-      basis: `A ${LOOP_TYPE_LABELS[type].toLowerCase()} loop's structure is not checked here — voting, trip conditions and proof testing are what make one sound, and none of them are in this model.`,
+      basis: `${articleFor(kind, true)} ${kind} loop's structure is not checked here — voting, trip conditions and proof testing are what make one sound, and none of them are in this model.`,
     }
   }
 
@@ -430,7 +448,7 @@ export function evaluateLoop(loop: Loop, members: readonly LoopMember[]): LoopEv
       ...base,
       completeness: 'incomplete',
       missing,
-      basis: `A ${LOOP_TYPE_LABELS[type].toLowerCase()} loop needs ${missing.join(' and ')}.`,
+      basis: `${articleFor(kind, true)} ${kind} loop needs ${missing.join(' and ')}.`,
     }
   }
 
@@ -441,7 +459,7 @@ export function evaluateLoop(loop: Loop, members: readonly LoopMember[]): LoopEv
     // Says what was checked, deliberately. A tick that reads as "this loop is
     // correct" would be the software claiming an engineering judgement it has
     // no way to make.
-    basis: `Every part a ${LOOP_TYPE_LABELS[type].toLowerCase()} loop needs is present. This checks the structure only — not whether the scheme is right.`,
+    basis: `Every part ${articleFor(kind)} ${kind} loop needs is present. This checks the structure only — not whether the scheme is right.`,
   }
 }
 

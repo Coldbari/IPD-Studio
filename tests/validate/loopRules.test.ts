@@ -405,6 +405,26 @@ describe('loop-io-conflict', () => {
     expect(found[0]!.message).toMatch(/nothing the control system drives/i)
   })
 
+  it('names the loop type with the article English wants', () => {
+    // The message interpolates the raw type key, so 'interlock' has to pick up
+    // 'an'. Same defect, same fix as the evaluator's basis — see
+    // tests/model/loopWording.test.ts.
+    const loop = newLoop('101', { type: 'interlock' })
+    const doc = docOf({
+      loops: [loop],
+      nodes: [dcs, node({ letters: 'LT', loop: '101' }, { id: 'lt' }), node({ letters: 'PT', loop: '101' }, { id: 'pt' })],
+      edges: [wired('lt'), wired('pt')],
+      registry: {
+        'LT-101': rec('LT-101', { loopId: loop.id }),
+        'PT-101': rec('PT-101', { loopId: loop.id }),
+      },
+    })
+    const found = findingsFor(doc, 'loop-io-conflict')
+    expect(found).toHaveLength(1)
+    expect(found[0]!.message).toContain('is an interlock loop with')
+    expect(found[0]!.message).not.toContain('is a interlock')
+  })
+
   it('is a warning', () => {
     // A control loop with one wired transmitter and nothing else: classified,
     // an input, no output. It must fire — an `if (group)` here would make this

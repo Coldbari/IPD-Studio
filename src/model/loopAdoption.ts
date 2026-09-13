@@ -28,7 +28,7 @@
  */
 
 import type { ProjectIndex } from './projectIndex'
-import { classifyMember, suggestLoopType, emptyRoles, type LoopType, type MemberRole } from './loop'
+import { articleFor, rolesOf, suggestLoopType, type LoopType, type MemberRole } from './loop'
 import { loopNumberKey } from './loop'
 import { formatTag } from '../isa/tag'
 
@@ -71,14 +71,19 @@ export interface AdoptionPlan {
 }
 
 /** Members' roles, for the type suggestion. Only DRAWN members with letters —
- *  which, coming from a derived loop, is all of them. */
+ *  which, coming from a derived loop, is all of them.
+ *
+ *  The bucketing is `rolesOf`'s and is not restated here. This resolves
+ *  registry keys into the `LoopMember` shape the model already speaks, and
+ *  nothing else: the two used to run the same loop over the same `emptyRoles`
+ *  with the same `classifyMember` and the same skip-what-has-no-letters rule,
+ *  which is one copy too many of a policy that has to agree with the
+ *  evaluator's. Only the input shape ever differed, so only that is here. */
 function rolesOfKeys(ix: ProjectIndex, keys: string[]): Record<MemberRole, string[]> {
-  const roles = emptyRoles()
-  for (const key of keys) {
-    const letters = ix.nodesByKey.get(key)?.[0]?.node.tag?.letters
-    if (letters) roles[classifyMember(letters)].push(key)
-  }
-  return roles
+  return rolesOf(keys.map((key) => {
+    const node = ix.nodesByKey.get(key)?.[0]?.node
+    return { key, letters: node?.tag?.letters ?? '', drawn: node !== undefined }
+  }))
 }
 
 /**
@@ -180,7 +185,7 @@ export function planLoopAdoption(ix: ProjectIndex): AdoptionPlan {
       continue
     }
 
-    rows.push(row('adopt', `${keys.length} members${suggested ? `, looks like a ${suggested} loop` : ''}.`, { loopNumber: ref }))
+    rows.push(row('adopt', `${keys.length} members${suggested ? `, looks like ${articleFor(suggested)} ${suggested} loop` : ''}.`, { loopNumber: ref }))
   }
 
   return {
