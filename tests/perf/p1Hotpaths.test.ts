@@ -33,6 +33,7 @@ import { standardOf } from '../../src/model/standard'
 import { qaFor, resetQaCache } from '../../src/validate/engine'
 import { runRules } from '../../src/validate/engine'
 import { ALL_RULES } from '../../src/validate/rules/index'
+import { noReceiver } from '../../src/validate/rules/instrumentation'
 import { newLoop } from '../../src/model/loop'
 import { loopViews } from '../../src/model/loopIndex'
 import { planLoopAdoption } from '../../src/model/loopAdoption'
@@ -128,6 +129,45 @@ test('the I/O rows and the excluded count come from one consistent walk', () => 
   // And the derived list agrees with the report built from the same index.
   const ix = buildIndex(doc)
   expect(deriveIoList(ix)).toHaveLength(report.rows.length)
+})
+
+/**
+ * D8 SCALING EVIDENCE.
+ *
+ * A rule being faster at one size proves nothing about its complexity. This
+ * measures `no-receiver` across four sizes and prints the cost PER NODE: a
+ * linear rule holds that roughly flat as N grows, a quadratic one doubles it
+ * every time N doubles.
+ *
+ * The old implementation ran `ix.allNodes.some(...)` inside a loop over
+ * `ix.allNodes`. The new one makes one pass over `ix.loops` to count receivers
+ * and one pass over `ix.allNodes` to ask — so the per-node figure should stay
+ * within noise of itself from 250 to 2,000.
+ */
+test.skipIf(!process.env.PERF)('no-receiver scales linearly', () => {
+  process.stderr.write('\n  --- no-receiver scaling ---\n')
+  const rows: { n: number; ms: number; per: number }[] = []
+  for (const n of [250, 500, 1000, 2000]) {
+    const ix = buildIndex(project(n))
+    noReceiver.run(ix); noReceiver.run(ix)
+    const t0 = performance.now()
+    for (let i = 0; i < 20; i++) noReceiver.run(ix)
+    const ms = (performance.now() - t0) / 20
+    rows.push({ n, ms, per: (ms * 1000) / n })
+  }
+  for (const r of rows) {
+    process.stderr.write(`  n=${String(r.n).padStart(5)}  ${r.ms.toFixed(3)} ms  ${r.per.toFixed(4)} us/node\n`)
+  }
+  const first = rows[0]!
+  const last = rows[rows.length - 1]!
+  process.stderr.write(
+    `  8x the nodes -> ${(last.ms / first.ms).toFixed(1)}x the time` +
+    ` (linear ~8x, quadratic ~64x); us/node ${first.per.toFixed(4)} -> ${last.per.toFixed(4)}\n`,
+  )
+  // Linear would be ~8x for an 8x size increase; quadratic ~64x. Twice the
+  // linear expectation is a generous ceiling that still fails loudly on a
+  // reintroduced nested scan.
+  expect(last.ms / first.ms).toBeLessThan(16)
 })
 
 test.skipIf(!process.env.PERF)('P1 hot paths', () => {
@@ -241,12 +281,21 @@ test.skipIf(!process.env.PERF)('P1 hot paths', () => {
    * duplicate pass rather than adding a fourth implementation of "which units
    * is this loop in".
    *
-   * THE DOMINANT COST IS NOT THE LOOP LAYER. `no-receiver` alone is ~4.5 ms of
-   * the ~8.1 ms rule pass: it runs `ix.allNodes.some(...)` inside a loop over
-   * `ix.allNodes`, so 500 x 501 on this fixture. It is pre-existing, it is
-   * deliberately untouched by P2-C, and it is answerable in O(N) off `ix.loops`
-   * whenever someone scopes that as its own task. The per-rule attribution
-   * below is what makes that claim checkable rather than a hunch.
+   * THE DOMINANT COST WAS NOT THE LOOP LAYER. `no-receiver` alone was ~4 ms of
+   * the rule pass: it ran `ix.allNodes.some(...)` inside a loop over
+   * `ix.allNodes`, so 500 x 501 on this fixture. P2-C deliberately left it
+   * alone; D8 then fixed it as its own task, off `ix.loops`, and the numbers
+   * below are the paired before/after taken from a worktree at the pre-D8
+   * commit minutes apart on one machine:
+   *
+   *                                 BEFORE (D8)   AFTER (D8)
+   *   no-receiver, n=500              4.65 ms       0.18 ms    26x
+   *   no-receiver, n=2000            57.14 ms       0.51 ms   113x
+   *   runRules, index reused          5.70 ms       2.14 ms    2.7x
+   *   buildIndex + runRules           9.36 ms       4.41 ms    2.1x
+   *
+   * The scaling test above is what makes "O(N)" a claim rather than a hope:
+   * 8x the nodes cost the old version 42.3x the time and cost this one 4.0x.
    */
   bench('buildIndex + runRules (per edit)', 20, () => { runRules(buildIndex(doc), {}) })
   // The SAME pass on a reused index — the shape `qaFor` actually has, since it

@@ -8,6 +8,10 @@ import { isPortEnd } from '../../model/types'
 import { edgesOf, signalReach } from '../../model/projectIndex'
 import { formatTag } from '../../isa/tag'
 
+/** A receiver reads the measurement: Indicate, Control or Record, anywhere
+ *  after the measured-variable letter. The same test the nested scan used. */
+const RECEIVER_LETTERS = /[ICR]/
+
 /** Actuators that need a pneumatic signal, not a milliamp loop. */
 const PNEUMATIC_ACTUATORS = new Set(['diaphragm', 'piston'])
 
@@ -17,19 +21,49 @@ export const noReceiver: Rule = {
   severity: 'warning',
   discipline: 'instrumentation',
   why: 'A transmitter with no indicator or controller in its loop measures something nobody reads.',
+  /**
+   * ONE PASS TO COUNT RECEIVERS, ONE PASS TO ASK.
+   *
+   * This used to run `ix.allNodes.some(...)` inside a loop over `ix.allNodes`,
+   * so a project of 500 tagged instruments did 250,000 comparisons and the rule
+   * alone was ~62% of the whole QA pass. The grouping it was recomputing per
+   * candidate — same first letter, same loop number — is precisely what
+   * `deriveLoops` already computed once for the index, so the fix is to read it
+   * rather than to rediscover it. `ix.loops` is unchanged and so is its meaning.
+   *
+   * WHY THE COUNT AND THE FIRST ID, rather than a boolean. The old scan
+   * excluded the candidate BY NODE ID, not by tag, and that is load-bearing: a
+   * tag like `LIT` ends in T (so it is a measurement) and carries an I (so it is
+   * also a receiver). A loop whose only receiver is the transmitter itself has
+   * nobody receiving it, and a boolean would lose that. Keeping the count and
+   * the first receiver's id answers it in O(1) per candidate:
+   *
+   *   count > 1                  → some receiver is not this node
+   *   count === 1 && first !== n → the one receiver is somebody else
+   *   count === 1 && first === n → it is only itself: NOT received
+   *
+   * Everything else — which nodes are candidates, what counts as a receiver,
+   * the message, the key, the target — is untouched.
+   */
   run(ix) {
+    const receivers = new Map<string, { count: number; first: string }>()
+    for (const loop of ix.loops) {
+      for (const m of loop.members) {
+        if (!RECEIVER_LETTERS.test(m.tag.letters.slice(1))) continue
+        const key = `${loop.family}-${loop.loop}`
+        const seen = receivers.get(key)
+        if (seen) seen.count += 1
+        else receivers.set(key, { count: 1, first: m.nodeId })
+      }
+    }
+
     const out = []
     for (const n of ix.allNodes) {
       const t = n.node.tag
       if (n.node.kind !== 'instrument' || !t?.letters || !t.loop) continue
       if (t.letters.length < 2 || !t.letters.endsWith('T')) continue
-      const family = t.letters[0]
-      const hasReceiver = ix.allNodes.some((o) => {
-        const ot = o.node.tag
-        if (o.node.id === n.node.id || !ot?.letters) return false
-        if (ot.letters[0] !== family || ot.loop !== t.loop) return false
-        return /[ICR]/.test(ot.letters.slice(1))
-      })
+      const seen = receivers.get(`${t.letters[0]}-${t.loop}`)
+      const hasReceiver = seen !== undefined && (seen.count > 1 || seen.first !== n.node.id)
       if (hasReceiver) continue
       out.push(
         finding(noReceiver, n.key!, `${formatTag(t, '-')} measures but nothing receives it — add an indicator or controller?`, {
