@@ -110,8 +110,9 @@ keys (`Line.1.spec.material`, `Line.1.design.pressure`, …) from
 ### `Set="PIDStudio.ConnectionPoints"` on a node
 
 A derived projection of the connection points a drawn line **actually uses**.
-This is *not* a nozzle model: `ProjectDoc` has no `Nozzle` entity, nothing here
-is persisted, and no engineering fact is attached to a node id.
+This is *not* the nozzle model: nothing here is persisted, and no engineering
+fact is attached to a node id. Persistent nozzles live on the equipment's
+`EngineeringRecord` and are not exported at all — see §3.
 
 Only used ports are projected. A catalogue symbol carries every port it could
 ever have — a vertical vessel has eleven — and the drawing offers no evidence
@@ -137,13 +138,14 @@ put it there and has nothing to say about it.
 
 ## 3. Not currently representable
 
-- **Nozzles as engineering objects.** There is no persistent `Nozzle` entity.
-  The P3 Program 4 Phase-1 audit found no authoritative owner for one: nozzle
-  facts would have to hang off the equipment's registry key, and 0 of 13
-  equipment nodes on the bundled sample drawings carry a tag. Deferred pending
-  a decision on whether equipment must be tagged.
-- **Nozzle size, rating, class, service and orientation.** No source in the
-  model. The only nozzle data anywhere is one free-text field.
+- **Nozzles as engineering objects.** The model now HAS them —
+  `EngineeringRecord.nozzles` holds a persistent `Nozzle` with a number, size,
+  rating, facing, service and an optional `portId` (P3-4B-1) — and the exporter
+  does not yet project them. Mapping a nozzle onto the Proteus shape needs the
+  actual 4.2 schema, which this repository does not contain, and P3-4A's
+  decision stands: nothing is invented from memory. Until then a nozzle appears
+  in the product's own Nozzle schedule (`Export → Nozzle schedule`) and in no
+  XML element here.
 - **Inlet / outlet role** for ~95% of ports — 19 of 386 catalogue ports carry
   an authoritative name.
 - **Process flow direction.** P3 Program 1 established that the model does not

@@ -15,7 +15,7 @@ import { LEGACY_AREA_FIELD, buildHierarchy, placementOf } from '../model/hierarc
 import { LOOP_TYPE_LABELS } from '../model/loop'
 import { nozzlesOf, type Nozzle } from '../model/nozzle'
 import { showStatus } from '../feedback/notices'
-import { getSymbol } from '../symbols/registry'
+import { portsOfNode } from '../model/projectIndex'
 
 const STATUS_LABEL: Record<RecordStatus, string> = {
   draft: 'Draft',
@@ -45,12 +45,12 @@ function NozzleSection({ node, recordKey, kind }: { node: PlantNode; recordKey: 
   const [draft, setDraft] = useState('')
 
   const nozzles = nozzlesOf(doc.registry?.[recordKey])
-  const ports = useMemo(() => {
-    let catalogue: { id: string }[] = []
-    // An unregistered symbol has no ports to offer. It must not throw here.
-    try { catalogue = getSymbol(node.symbolId).ports } catch { catalogue = [] }
-    return [...catalogue, ...(node.extraPorts ?? [])].map((p) => p.id)
-  }, [node.symbolId, node.extraPorts])
+  // The shared resolver, which already degrades to no ports for a symbol the
+  // catalogue does not have rather than throwing. Keyed on the two fields it
+  // reads, exactly as before: the store hands this panel a new `node` object
+  // on every edit, and rebuilding the list for each would be work nothing
+  // asked for.
+  const ports = useMemo(() => portsOfNode(node).map((p) => p.id), [node.symbolId, node.extraPorts])
 
   const field = (nozzle: Nozzle, name: 'size' | 'rating' | 'facing' | 'service', label: string) => (
     <label className="eng-field" key={name}>

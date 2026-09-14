@@ -16,6 +16,7 @@ import { buildIndex } from '../model/projectIndex'
 import { countNonIo, deriveIoList } from '../model/ioList'
 import { loopPlaceLabel, loopViews } from '../model/loopIndex'
 import { runEnds, type Run, type RunEnd } from '../model/run'
+import { countEquipmentWithoutNozzles, deriveNozzleSchedule } from '../model/nozzleSchedule'
 import { LOOP_TYPE_LABELS, type LoopCompleteness } from '../model/loop'
 
 /**
@@ -63,7 +64,7 @@ export const csvRow = row
 
 /** Symbol display name, degrading to the raw id rather than throwing. A custom
  *  symbol may not be registered at the moment a report runs (the same case
- *  `projectIndex.portsOf` guards), and a report that throws takes the whole
+ *  `projectIndex.portsOfNode` guards), and a report that throws takes the whole
  *  Data workspace down with it. */
 function symbolName(symbolId: string): string {
   try {
@@ -141,6 +142,19 @@ export interface ReportRow {
    * the table.
    */
   recordKey: string | null
+  /**
+   * What makes this ROW unique, when `id` cannot.
+   *
+   * `id` is the object the row came from and is what `locateCell` jumps to, so
+   * it is a node or edge id. That works for every report where one object is
+   * one row — which was all of them until the nozzle schedule, where one
+   * vessel is one node and many rows. A table keyed on `id` alone would then
+   * render several rows under one React key.
+   *
+   * ABSENT ON EVERY EXISTING REPORT, deliberately: `id` keeps exactly the
+   * meaning it has always had, and a consumer reads `rowId ?? id`.
+   */
+  rowId?: string
   /**
    * Absent where the row is not a registry record at all.
    *
@@ -804,6 +818,101 @@ export function loopListRows(doc: ProjectDoc): ReportRow[] {
 
 export function loopListCsv(doc: ProjectDoc): string {
   return toCsv(LOOP_LIST_COLUMNS, loopListRows(doc))
+}
+
+/* --------------------------------------------------------- nozzle schedule */
+
+/**
+ * THE NOZZLE SCHEDULE — export only, and read only.
+ *
+ * One row per PERSISTENT nozzle out of `EngineeringRecord.nozzles`. Never one
+ * per connection point: a catalogue symbol carries every port it could ever
+ * have, and manufacturing a nozzle from one would be the software inventing
+ * equipment. `model/nozzleSchedule.ts` holds the derivation and the reasoning.
+ *
+ * READ-ONLY, by the Loop list's mechanism rather than by a switch: every
+ * column is derived or lives inside an array element addressed by a ULID, so
+ * none of them carries a `field`, so `editableAt` returns null for every cell.
+ * Nozzles are edited on the Engineering tab, which is where they are entered.
+ *
+ * Area and Unit are DERIVED columns here rather than `HIERARCHY_COLUMNS`. The
+ * assignment belongs to the equipment record, not to the nozzle, and six
+ * nozzle rows each offering a picker onto one record would be six controls
+ * writing one value.
+ */
+export const NOZZLE_SCHEDULE_SPEC: ReportColumn[] = [
+  ...derived(
+    'Equipment Tag', 'Equipment Label', 'Symbol', 'Sheet',
+    'Nozzle Number', 'Size', 'Rating', 'Facing', 'Service',
+    'Connection Point', 'Port Name', 'Connected Line', 'Status', 'Notes',
+    'Area', 'Unit',
+  ),
+]
+export const NOZZLE_SCHEDULE_COLUMNS = NOZZLE_SCHEDULE_SPEC.map((c) => c.label)
+
+function nozzleRowsFrom(ix: ReturnType<typeof buildIndex>): ReportRow[] {
+  return deriveNozzleSchedule(ix).map((r) => ({
+    // The drawn symbol, so `locateCell` can jump to it. A nozzle on an orphaned
+    // record has nothing to jump to and falls back to its own stable id — the
+    // same fallback the Loop list makes for a loop with nothing drawn.
+    id: r.nodeId || r.nozzleId,
+    // What makes the ROW unique. One vessel is one node and many nozzles, so
+    // `id` above cannot identify a row. See ReportRow.rowId.
+    rowId: r.rowId,
+    sheetId: r.sheetId,
+    // The equipment's key, so the Area/Unit filters resolve — but no column
+    // carries a `field`, so nothing here is editable.
+    recordKey: r.key,
+    recordKind: 'equipment' as const,
+    cells: [
+      r.key,
+      joinDistinct(r.labels),
+      joinDistinct(r.symbols),
+      joinDistinct(r.sheetNames),
+      r.number,
+      r.size,
+      r.rating,
+      r.facing,
+      r.service,
+      r.portId,
+      // Blank unless the CATALOGUE names the point. A positional description
+      // is true of every symbol and says nothing about what the connection is
+      // for; printing one in an engineering column would turn where a nozzle
+      // sits into what it is. The P3-4A rule, unchanged.
+      joinDistinct(r.portNames),
+      // Blank for an unnumbered run. No number is ever fabricated.
+      joinDistinct(r.lineNumbers),
+      r.status,
+      r.notes,
+      r.areaCode,
+      r.unitCode,
+    ],
+  }))
+}
+
+/**
+ * The nozzle rows AND the equipment records carrying none.
+ *
+ * Both off ONE index walk, the shape `ioListReport` established: a reader has
+ * to be able to tell an exclusion from an omission. "Fourteen nozzles" means
+ * something different from "fourteen, and nine other vessels have none yet".
+ */
+export function nozzleScheduleReport(doc: ProjectDoc): { rows: ReportRow[]; excluded: number } {
+  const ix = buildIndex(doc)
+  return { rows: nozzleRowsFrom(ix), excluded: countEquipmentWithoutNozzles(ix) }
+}
+
+export function nozzleScheduleRows(doc: ProjectDoc): ReportRow[] {
+  return nozzleRowsFrom(buildIndex(doc))
+}
+
+export function nozzleScheduleCsv(doc: ProjectDoc): string {
+  return toCsv(NOZZLE_SCHEDULE_COLUMNS, nozzleScheduleRows(doc))
+}
+
+export function downloadNozzleSchedule(): void {
+  const doc = useStore.getState().doc
+  download(`${doc.meta.name || 'diagram'}-nozzle-schedule.csv`, nozzleScheduleCsv(doc), 'text/csv')
 }
 
 export const ENGINEERING_SPEC: ReportColumn[] = [

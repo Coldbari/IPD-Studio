@@ -9,6 +9,7 @@ import { requiredFor } from '../../model/standard'
 import { collectHmiBindings } from '../../model/references'
 import { recordFieldValue } from '../../model/hierarchy'
 import { danglingNozzlePorts, duplicateNozzleNumbers, duplicateNozzlePorts } from '../../model/nozzle'
+import { portIdsOfKey } from '../../model/projectIndex'
 
 export const orphanRecord: Rule = {
   id: 'orphan-record',
@@ -242,7 +243,9 @@ export const nozzlePortMissing: Rule = {
       // Nothing drawn wears this key, so there are no ports to check against.
       // `orphan-record` is what reports that, and it reports it once.
       if (!drawn?.length) continue
-      const available = new Set(drawn.flatMap((n) => n.ports.map((p) => p.id)))
+      // The shared answer to "which ports does this tag currently have",
+      // rather than a third private reconstruction of it.
+      const available = portIdsOfKey(ix, key)
       for (const nozzle of danglingNozzlePorts(ix.records[key], available).sort((a, b) => a.number.localeCompare(b.number))) {
         out.push(
           finding(nozzlePortMissing, `${key}/${nozzle.number}`, `${key} nozzle ${nozzle.number} points at connection point ${nozzle.portId}, which this symbol does not have`, {

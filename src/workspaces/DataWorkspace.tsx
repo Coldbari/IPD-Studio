@@ -36,9 +36,12 @@ import {
   LOOP_LIST_SPEC,
   loopListRows,
   downloadLoopList,
+  NOZZLE_SCHEDULE_SPEC,
+  nozzleScheduleReport,
+  downloadNozzleSchedule,
 } from '../export/csv'
 
-type Tab = 'instruments' | 'io' | 'lines' | 'equipment' | 'valves' | 'loops'
+type Tab = 'instruments' | 'io' | 'lines' | 'equipment' | 'valves' | 'loops' | 'nozzles'
 
 interface Report {
   label: string
@@ -51,7 +54,7 @@ interface Report {
   note?: string
 }
 
-const TABS: Tab[] = ['instruments', 'io', 'lines', 'equipment', 'valves', 'loops']
+const TABS: Tab[] = ['instruments', 'io', 'lines', 'equipment', 'valves', 'loops', 'nozzles']
 
 /** Which cell is open for editing. One at a time — a table where every cell is
  *  a live input costs thousands of DOM nodes and invites edits nobody meant. */
@@ -165,6 +168,26 @@ export default function DataWorkspace() {
         download: downloadLoopList,
         empty: 'No loops declared yet. A loop is an engineering entity with a type and a number — declare one under Loops on the toolbar, or adopt what the tag numbers already imply.',
       },
+      // READ-ONLY for the Loop list's reason: no column carries a `field`, so
+      // `editableAt` returns null for every cell. A nozzle lives inside an
+      // array element addressed by a ULID, which the cell-commit path has no
+      // way to write — and no need to, because the Engineering tab is where
+      // nozzles are entered.
+      nozzles: ((): Report => {
+        const { rows, excluded } = nozzleScheduleReport(doc)
+        return {
+          label: 'Nozzle schedule',
+          columns: NOZZLE_SCHEDULE_SPEC,
+          rows,
+          download: downloadNozzleSchedule,
+          empty: 'No nozzles entered yet. A nozzle is engineering data, not a connection point on a symbol — add one on the Engineering tab of a tagged piece of equipment, and it appears here.',
+          ...(excluded > 0
+            ? {
+                note: `${excluded} equipment record${excluded === 1 ? ' has' : 's have'} no nozzles entered. Nothing is taken from the symbol's connection points — a catalogue vessel carries every port it could ever have, which is not a nozzle schedule.`,
+              }
+            : {}),
+        }
+      })(),
       valves: {
         label: 'Valve list',
         columns: VALVE_LIST_SPEC,
@@ -457,7 +480,7 @@ export default function DataWorkspace() {
                 </thead>
                 <tbody>
                   {visible.map((r) => (
-                    <tr key={r.id}>
+                    <tr key={r.rowId ?? r.id}>
                       {r.cells.map((value, i) => {
                         const assign = active.columns[i]?.assign
                         // The Unit cell is a picker straight onto the record:

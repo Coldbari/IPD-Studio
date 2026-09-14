@@ -105,14 +105,27 @@ export interface ProjectIndex {
   hierarchy: Hierarchy
 }
 
-function portsOf(node: PlantNode): { id: string; kind: PortKind }[] {
+/**
+ * Every connection point a placed symbol actually offers: the catalogue's,
+ * plus the pins the user added to this placement.
+ *
+ * THE one answer, exported because three callers were building it separately —
+ * this index, the nozzle QA rule and the Inspector's port picker — and three
+ * implementations of "which ports does this thing have" is three places for
+ * the answer to drift. It is not a port subsystem: it resolves nothing, names
+ * nothing and decides nothing about what a port MEANS.
+ *
+ * An unknown symbol id (a custom symbol not registered yet) has no ports
+ * rather than throwing. A report that threw would take the whole Data
+ * workspace down with it.
+ */
+export function portsOfNode(node: PlantNode): { id: string; kind: PortKind }[] {
   try {
     return [...getSymbol(node.symbolId).ports, ...(node.extraPorts ?? [])].map((p) => ({
       id: p.id,
       kind: p.kind,
     }))
   } catch {
-    // an unknown symbol id (a custom symbol not registered yet) has no ports
     return []
   }
 }
@@ -137,7 +150,7 @@ export function buildIndex(doc: ProjectDoc): ProjectIndex {
   for (const sheet of doc.sheets) {
     for (const node of sheet.nodes) {
       const key = keyOfNode(node)
-      const indexed: IndexedNode = { node, sheet, key, kind: kindOfNode(node), ports: portsOf(node) }
+      const indexed: IndexedNode = { node, sheet, key, kind: kindOfNode(node), ports: portsOfNode(node) }
       nodes.set(node.id, indexed)
       allNodes.push(indexed)
       if (key) {
@@ -222,6 +235,29 @@ export function buildIndex(doc: ProjectDoc): ProjectIndex {
 /** Edges touching a node. Never allocates for the common empty case. */
 export function edgesOf(ix: ProjectIndex, nodeId: string): PlantEdge[] {
   return ix.edgesByNode.get(nodeId) ?? []
+}
+
+/**
+ * Every connection point the objects wearing one registry key currently offer.
+ *
+ * The UNION across placements, because a tag may legitimately be drawn on two
+ * sheets and the ports are the drawing's answer, not the record's. Read off
+ * `IndexedNode.ports`, which `buildIndex` has already resolved, so this walks
+ * nothing and touches no symbol.
+ *
+ * A key with nothing drawn returns an EMPTY set, and callers must not read
+ * that as "every port is missing": there are no ports to be missing from.
+ * `orphan-record` is what reports a record with nothing on a sheet.
+ *
+ * PORT EXISTENCE IS NOT NOZZLE EXISTENCE. This says what the symbol offers and
+ * nothing whatever about what has been specified — see model/nozzle.ts.
+ */
+export function portIdsOfKey(ix: ProjectIndex, key: string): Set<string> {
+  const ids = new Set<string>()
+  for (const indexed of ix.nodesByKey.get(key) ?? []) {
+    for (const port of indexed.ports) ids.add(port.id)
+  }
+  return ids
 }
 
 export function neighboursOf(ix: ProjectIndex, nodeId: string): string[] {
