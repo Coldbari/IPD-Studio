@@ -8,6 +8,7 @@ import { labelForField } from '../../model/fields'
 import { requiredFor } from '../../model/standard'
 import { collectHmiBindings } from '../../model/references'
 import { recordFieldValue } from '../../model/hierarchy'
+import { danglingNozzlePorts, duplicateNozzleNumbers, duplicateNozzlePorts } from '../../model/nozzle'
 
 export const orphanRecord: Rule = {
   id: 'orphan-record',
@@ -156,4 +157,117 @@ export const equipmentNoRecord: Rule = {
   },
 }
 
-export const DATA_RULES: Rule[] = [orphanRecord, orphanedBinding, requiredFieldEmpty, equipmentNoRecord]
+/* --------------------------------------------------------------- nozzles */
+
+/**
+ * THE THREE NOZZLE CHECKS, and the long list of ones deliberately absent.
+ *
+ * All three are deterministic statements about what the document says about
+ * ITSELF — two nozzles wearing one number, two claiming one port, a port that
+ * is not on the symbol. None of them reads a line, a service, a piping class
+ * or a port side, because a nozzle's size, rating, facing and service are
+ * typed by an engineer and nothing in the drawing establishes them. There is
+ * deliberately no rule saying a nozzle should be an inlet, should match the
+ * line size, or should exist at all because a symbol has a port.
+ *
+ * A nozzle on an ORPHANED record is not reported here either. The record
+ * outliving its symbol is `orphan-record`'s finding, and saying it again per
+ * nozzle would bury it.
+ */
+export const nozzleDuplicateNumber: Rule = {
+  id: 'nozzle-duplicate-number',
+  title: 'Nozzles sharing a number',
+  // Critical, and the twin of `duplicate-tag`: two nozzles called N2 on one
+  // vessel cannot both be fabricated, inspected or bought against that number.
+  severity: 'critical',
+  discipline: 'data',
+  why: 'Two nozzles on one piece of equipment sharing a number cannot both be specified or fabricated.',
+  run(ix) {
+    const out: RuleFinding[] = []
+    for (const key of Object.keys(ix.records).sort()) {
+      const record = ix.records[key]
+      for (const [, group] of [...duplicateNozzleNumbers(record)].sort(([a], [b]) => a.localeCompare(b))) {
+        const number = group[0]!.number
+        out.push(
+          finding(nozzleDuplicateNumber, `${key}/${number}`, `${key} has ${group.length} nozzles numbered ${number}`, {
+            ...anchorOf(ix, key),
+          }),
+        )
+      }
+    }
+    return out
+  },
+}
+
+export const nozzleDuplicatePort: Rule = {
+  id: 'nozzle-duplicate-port',
+  title: 'Nozzles claiming one connection point',
+  // A warning rather than critical: the drawing may be mid-edit, and the
+  // engineering data is not wrong — two nozzles simply cannot be at the same
+  // point on the symbol.
+  severity: 'warning',
+  discipline: 'data',
+  why: 'Two nozzles cannot be at the same connection point on the symbol.',
+  run(ix) {
+    const out: RuleFinding[] = []
+    for (const key of Object.keys(ix.records).sort()) {
+      const record = ix.records[key]
+      for (const [portId, group] of [...duplicateNozzlePorts(record)].sort(([a], [b]) => a.localeCompare(b))) {
+        const numbers = group.map((n) => n.number).sort().join(', ')
+        out.push(
+          finding(nozzleDuplicatePort, `${key}/${portId}`, `${key}: nozzles ${numbers} all claim connection point ${portId}`, {
+            ...anchorOf(ix, key),
+          }),
+        )
+      }
+    }
+    return out
+  },
+}
+
+export const nozzlePortMissing: Rule = {
+  id: 'nozzle-port-missing',
+  title: 'Nozzles pointing at a connection point that is gone',
+  // Warning, not critical: the NOZZLE is still good engineering data. What is
+  // broken is where it says it sits, and nothing is repaired automatically —
+  // remapping it to a port that merely looks similar is the guess this
+  // refuses to make.
+  severity: 'warning',
+  discipline: 'data',
+  why: 'A nozzle naming a connection point the symbol does not have cannot be located on the drawing.',
+  run(ix) {
+    const out: RuleFinding[] = []
+    for (const key of Object.keys(ix.records).sort()) {
+      const drawn = ix.nodesByKey.get(key)
+      // Nothing drawn wears this key, so there are no ports to check against.
+      // `orphan-record` is what reports that, and it reports it once.
+      if (!drawn?.length) continue
+      const available = new Set(drawn.flatMap((n) => n.ports.map((p) => p.id)))
+      for (const nozzle of danglingNozzlePorts(ix.records[key], available).sort((a, b) => a.number.localeCompare(b.number))) {
+        out.push(
+          finding(nozzlePortMissing, `${key}/${nozzle.number}`, `${key} nozzle ${nozzle.number} points at connection point ${nozzle.portId}, which this symbol does not have`, {
+            ...anchorOf(ix, key),
+          }),
+        )
+      }
+    }
+    return out
+  },
+}
+
+/** Where a nozzle finding points: the first drawn object wearing the key, so
+ *  the report can jump to something. Absent when nothing is drawn. */
+function anchorOf(ix: Parameters<Rule['run']>[0], key: string): { targetId?: string; sheetId?: string } {
+  const first = ix.nodesByKey.get(key)?.[0]
+  return first ? { targetId: first.node.id, sheetId: first.sheet.id } : {}
+}
+
+export const DATA_RULES: Rule[] = [
+  orphanRecord,
+  orphanedBinding,
+  requiredFieldEmpty,
+  equipmentNoRecord,
+  nozzleDuplicateNumber,
+  nozzleDuplicatePort,
+  nozzlePortMissing,
+]

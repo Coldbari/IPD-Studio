@@ -8,6 +8,7 @@ import type { Registry } from './registry'
 import { keyOfNode, kindOfNode } from './registry'
 import { checkWidgetProps } from '../hmi/model'
 import { checkLoops } from './loop'
+import { checkNozzles } from './nozzle'
 import { DEFAULT_ISSUE_STATUSES, standardFromLegacySettings } from './standard'
 import { INITIAL_REVISION_CODE, legacyRevisionId, newRevision } from './revision'
 
@@ -214,6 +215,12 @@ export function loadDoc(raw: unknown): ProjectDoc {
     // later program's job.
     const loopProblem = checkLoops(doc)
     if (loopProblem) throw new DocError(loopProblem)
+    // Nozzles, same line again: a malformed SHAPE refuses the file, a broken
+    // REFERENCE loads. A `portId` naming nothing and a duplicate number both
+    // open and are reported by QA; a nozzle that is not an object is a file
+    // this build cannot reason about.
+    const nozzleProblem = checkNozzles(doc.registry)
+    if (nozzleProblem) throw new DocError(nozzleProblem)
     // The tag conventions used to live in `settings`. They fold into the
     // standard so ONE place answers "how are tags formatted here" — but the old
     // fields are left in place and still read, so a v5 file written by this

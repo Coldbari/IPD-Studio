@@ -5,7 +5,7 @@
 import { useMemo, useState } from 'react'
 import type { PlantNode } from '../model/types'
 import { FIELD_CATALOG } from '../model/fields'
-import { RECORD_STATUSES, keyOfNode, kindOfNode, type RecordStatus } from '../model/registry'
+import { RECORD_STATUSES, keyOfNode, kindOfNode, type EntityKind, type RecordStatus } from '../model/registry'
 import { pauseHistory, resumeHistory, useStore } from '../store/store'
 import { expandLetters } from '../isa/tag'
 import DatasheetEditor from './DatasheetEditor'
@@ -13,12 +13,138 @@ import UnitPicker from './UnitPicker'
 import LoopPicker from './LoopPicker'
 import { LEGACY_AREA_FIELD, buildHierarchy, placementOf } from '../model/hierarchy'
 import { LOOP_TYPE_LABELS } from '../model/loop'
+import { nozzlesOf, type Nozzle } from '../model/nozzle'
+import { showStatus } from '../feedback/notices'
+import { getSymbol } from '../symbols/registry'
 
 const STATUS_LABEL: Record<RecordStatus, string> = {
   draft: 'Draft',
   'in-review': 'In review',
   approved: 'Approved',
   issued: 'Issued',
+}
+
+/**
+ * THE NOZZLE SCHEDULE for a piece of equipment, at its minimum.
+ *
+ * Everything here writes through the three authoritative store actions. The
+ * panel decides nothing about numbering, collisions or history, and nothing is
+ * inferred: size, rating, facing and service are blank until an engineer types
+ * them, and connecting a line to a port does NOT fill any of them in.
+ *
+ * The port picker offers only the ports the drawn symbol actually has, and it
+ * offers "no port" first, because a nozzle schedule legitimately runs ahead of
+ * the drawing. A stored `portId` the symbol no longer has is shown as broken
+ * rather than silently blanked or remapped to something that looks similar.
+ */
+function NozzleSection({ node, recordKey, kind }: { node: PlantNode; recordKey: string; kind: EntityKind }) {
+  const doc = useStore((s) => s.doc)
+  const addNozzle = useStore((s) => s.addNozzle)
+  const updateNozzle = useStore((s) => s.updateNozzle)
+  const removeNozzle = useStore((s) => s.removeNozzle)
+  const [draft, setDraft] = useState('')
+
+  const nozzles = nozzlesOf(doc.registry?.[recordKey])
+  const ports = useMemo(() => {
+    let catalogue: { id: string }[] = []
+    // An unregistered symbol has no ports to offer. It must not throw here.
+    try { catalogue = getSymbol(node.symbolId).ports } catch { catalogue = [] }
+    return [...catalogue, ...(node.extraPorts ?? [])].map((p) => p.id)
+  }, [node.symbolId, node.extraPorts])
+
+  const field = (nozzle: Nozzle, name: 'size' | 'rating' | 'facing' | 'service', label: string) => (
+    <label className="eng-field" key={name}>
+      <span>{label}</span>
+      <input
+        data-testid={`nozzle-${nozzle.number}-${name}`}
+        value={nozzle[name] ?? ''}
+        onChange={(e) => { updateNozzle(recordKey, nozzle.id, { [name]: e.target.value }); pauseHistory() }}
+        onBlur={resumeHistory}
+      />
+    </label>
+  )
+
+  return (
+    <section className="eng-section" data-testid="eng-nozzles">
+      <div className="prop-title">Nozzles</div>
+      {nozzles.length === 0 && (
+        <p className="prop-hint" data-testid="eng-nozzles-empty">
+          No nozzles on this record yet. A nozzle is engineering data — its size, rating and service are
+          typed here, never read off the line connected to it.
+        </p>
+      )}
+      {nozzles.map((nozzle) => (
+        <div className="nozzle" key={nozzle.id} data-testid={`nozzle-${nozzle.id}`}>
+          <div className="nozzle-head">
+            <input
+              className="nozzle-number"
+              aria-label="Nozzle number"
+              data-testid={`nozzle-${nozzle.id}-number`}
+              defaultValue={nozzle.number}
+              onBlur={(e) => {
+                const result = updateNozzle(recordKey, nozzle.id, { number: e.target.value })
+                if (!result.ok) {
+                  showStatus(result.reason ?? 'That nozzle number is not available', { kind: 'warning' })
+                  e.target.value = nozzle.number
+                }
+              }}
+            />
+            <select
+              aria-label="Connection point"
+              data-testid={`nozzle-${nozzle.id}-port`}
+              value={nozzle.portId ?? ''}
+              onChange={(e) => updateNozzle(recordKey, nozzle.id, { portId: e.target.value })}
+            >
+              <option value="">— no connection point —</option>
+              {ports.map((id) => <option key={id} value={id}>{id}</option>)}
+              {/* A stored port the symbol no longer has still shows, so the
+                  value is visible rather than silently reset to blank. */}
+              {nozzle.portId && !ports.includes(nozzle.portId) && (
+                <option value={nozzle.portId}>{nozzle.portId} (not on this symbol)</option>
+              )}
+            </select>
+            <button
+              data-testid={`nozzle-${nozzle.id}-remove`}
+              title={`Remove nozzle ${nozzle.number}`}
+              onClick={() => removeNozzle(recordKey, nozzle.id)}
+            >
+              ✕
+            </button>
+          </div>
+          {nozzle.portId && !ports.includes(nozzle.portId) && (
+            <p className="prop-hint eng-loop-broken" data-testid={`nozzle-${nozzle.id}-broken`}>
+              <b>Broken:</b> this symbol has no connection point {nozzle.portId}. Nothing has been
+              reassigned — pick one above, or leave it for the record.
+            </p>
+          )}
+          {field(nozzle, 'size', 'Size')}
+          {field(nozzle, 'rating', 'Rating')}
+          {field(nozzle, 'facing', 'Facing')}
+          {field(nozzle, 'service', 'Service')}
+        </div>
+      ))}
+      <div className="tag-row">
+        <input
+          placeholder="number (N1)"
+          aria-label="New nozzle number"
+          data-testid="nozzle-new-number"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+        <button
+          data-testid="nozzle-add"
+          disabled={!draft.trim()}
+          onClick={() => {
+            const result = addNozzle(recordKey, kind, draft)
+            if (result.ok) setDraft('')
+            else showStatus(result.reason ?? 'That nozzle could not be added', { kind: 'warning' })
+          }}
+        >
+          Add nozzle
+        </button>
+      </div>
+    </section>
+  )
 }
 
 /**
@@ -206,6 +332,11 @@ export default function InspectorEngineering({ node }: { node: PlantNode }) {
           ))}
         </section>
       ))}
+
+      {/* Equipment only for now: a nozzle is a connection on a vessel, a pump
+          or an exchanger. Valves and instruments have ports too, but nothing
+          in the model says those are nozzles. */}
+      {kind === 'equipment' && <NozzleSection node={node} recordKey={key} kind={kind} />}
 
       {node.kind === 'instrument' && (
         <div className="prop-row">

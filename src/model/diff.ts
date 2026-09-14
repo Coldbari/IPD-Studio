@@ -32,6 +32,7 @@ import { keyOfEdge, keyOfNode } from './registry'
 import type { EngineeringRecord } from './registry'
 import { buildHierarchy, type Hierarchy } from './hierarchy'
 import type { Loop } from './loop'
+import type { Nozzle } from './nozzle'
 import { fingerprintStandard } from './provenance'
 import type { IssueGate } from './standard'
 
@@ -431,11 +432,73 @@ function diffRegistry(before: ProjectDoc, after: ProjectDoc, renames: Map<string
         before: loopText(before, oldRec.loopId), after: loopText(after, newRec.loopId), category: 'engineering',
       })
     }
+    diffNozzles(oldRec, newRec, toKey, push)
   }
 
   for (const key of Object.keys(now)) if (was[key]) compare(key, key)
   // A renamed record still has its own fields compared, under the new key.
   for (const from of movedFrom) compare(from, renames.get(from)!)
+}
+
+/** The comparable fields of a nozzle, in the order a reviewer reads them.
+ *  `id` is excluded: it IS the identity the comparison is matched on. */
+const NOZZLE_FIELDS = ['number', 'portId', 'size', 'rating', 'facing', 'service', 'notes'] as const
+
+/** A nozzle in one line, for the two cases where the whole thing arrived or
+ *  left and naming one field would under-report it. */
+function nozzleText(nozzle: Nozzle): string {
+  const parts = [nozzle.size, nozzle.rating, nozzle.facing, nozzle.service].filter(Boolean)
+  const port = nozzle.portId ? `port ${nozzle.portId}` : 'no port'
+  return [nozzle.number, ...parts, port].join(' · ')
+}
+
+/**
+ * The equipment's nozzle schedule, nozzle by nozzle.
+ *
+ * MATCHED ON STABLE ID, NAMED BY NUMBER — the same split as the unit and the
+ * loop above. Reordering the array is not an engineering change and reports
+ * nothing; renumbering N2 to N3 is ONE change on that nozzle rather than a
+ * removal and an addition.
+ *
+ * A modified nozzle is named by the number it carries in the NEWER document,
+ * because that is the document a reviewer is looking at.
+ */
+function diffNozzles(
+  oldRec: EngineeringRecord,
+  newRec: EngineeringRecord,
+  key: string,
+  push: (c: DocChange) => void,
+) {
+  const was = new Map((oldRec.nozzles ?? []).map((n) => [n.id, n]))
+  const now = new Map((newRec.nozzles ?? []).map((n) => [n.id, n]))
+
+  for (const [id, nozzle] of was) {
+    if (now.has(id)) continue
+    push({
+      kind: 'modified', entityType: 'record', entityId: key, entityKey: key,
+      field: `nozzle ${nozzle.number}`, before: nozzleText(nozzle), after: undefined, category: 'engineering',
+    })
+  }
+  for (const [id, nozzle] of now) {
+    if (was.has(id)) continue
+    push({
+      kind: 'modified', entityType: 'record', entityId: key, entityKey: key,
+      field: `nozzle ${nozzle.number}`, before: undefined, after: nozzleText(nozzle), category: 'engineering',
+    })
+  }
+  for (const [id, nozzle] of now) {
+    const old = was.get(id)
+    if (!old) continue
+    for (const field of NOZZLE_FIELDS) {
+      const wasV = old[field]
+      const isV = nozzle[field]
+      if (wasV === isV) continue
+      push({
+        kind: 'modified', entityType: 'record', entityId: key, entityKey: key,
+        field: `nozzle ${nozzle.number} ${field}`, before: wasV, after: isV, category: 'engineering',
+      })
+    }
+  }
 }
 
 /** A unit as a reviewer reads it: `AREA/UNIT`, or nothing when unassigned.
@@ -952,6 +1015,7 @@ export const RECORD_FIELD_COVERAGE: Record<keyof EngineeringRecord, 'compared' |
   owner: 'compared',
   unitId: 'compared — by stable id, displayed as AREA/UNIT codes',
   loopId: 'compared — by stable id, displayed as the loop NUMBER, so renumbering a loop stays one change on the loop rather than one per member',
+  nozzles: 'compared — nozzle by nozzle, matched on stable id and named by NUMBER, so reordering the schedule reports nothing and renumbering one reports one change',
   key: 'Excluded: it IS the identity the comparison is keyed on; a changed key is a rename, reported on the node.',
   kind: 'Excluded: derived from the object that wears the tag, and a change there is already reported as the node changing kind.',
   rev: 'Excluded: stamped BY issuing, so comparing it across two issues reports the act of comparing.',

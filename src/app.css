@@ -878,6 +878,16 @@ button.used-row:hover { background: var(--c-accent-soft); color: var(--c-accent)
 }
 .drawer-more:hover { border-style: solid; border-color: var(--c-accent); color: var(--c-accent); background: var(--c-surface); }
 
+/* ── equipment nozzles (engineering inspector) ───────────────────────────── */
+.nozzle {
+  border: 1px solid var(--c-line); border-radius: var(--r);
+  padding: 6px 8px 4px; margin-bottom: 8px; background: var(--c-surface);
+}
+.nozzle-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.nozzle-head .nozzle-number { flex: 0 0 5.5em; font-weight: 600; }
+.nozzle-head select { flex: 1 1 auto; min-width: 0; }
+.nozzle-head button { flex: 0 0 auto; }
+
 /* ── piping run context (edge inspector) ─────────────────────────────────── */
 .run-fact {
   display: flex; flex-direction: column; gap: 1px;

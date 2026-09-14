@@ -3,6 +3,7 @@
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
 import type { PlantEdge, PlantNode } from './types'
+import type { Nozzle } from './nozzle'
 import { formatTag } from '../isa/tag'
 
 /**
@@ -68,6 +69,24 @@ export interface EngineeringRecord {
    * document: it loads, and `danglingLoopMembers()` reports it.
    */
   loopId?: string
+  /**
+   * The equipment's nozzles (model/nozzle.ts).
+   *
+   * NESTED, not referenced. The record IS the ownership boundary, so a nozzle
+   * carries no equipment id: `retagRegistry` below spreads the whole record
+   * across a rename and the schedule comes with it, introducing NO new
+   * machine-written tag reference for model/references.ts to have to carry.
+   * That is the same trade that put `loopId` here rather than `members[]` on
+   * the Loop.
+   *
+   * ONLY A TAGGED OBJECT HAS A RECORD, so only tagged equipment can own
+   * nozzles. That is not a nozzle rule — it is the rule this whole file
+   * states, applied once more.
+   *
+   * Absent on every document written before they existed, which is every
+   * document so far.
+   */
+  nozzles?: Nozzle[]
   /** Revision in which this record last changed (populated from v0.19). */
   rev?: string
   updated?: string

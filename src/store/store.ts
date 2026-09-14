@@ -66,6 +66,8 @@ import type { EngineeringRecord, EntityKind, RecordStatus, Registry } from '../m
 import { keyOfEdge, keyOfNode } from '../model/registry'
 import type { Area, LegacyRow, Unit } from '../model/hierarchy'
 import type { Loop, LoopType } from '../model/loop'
+import type { Nozzle, NozzleInit } from '../model/nozzle'
+import { newNozzle, nozzleNumberTaken } from '../model/nozzle'
 import { loopNumberKey, loopNumberTaken, newLoop } from '../model/loop'
 import type { AdoptionRow } from '../model/loopAdoption'
 import { drawnKinds, liveKeys } from '../model/registry'
@@ -104,6 +106,14 @@ export interface LoopResult {
 }
 
 /** What a rename did to the engineering record behind a tag or line number. */
+/** What a nozzle action did, or why it refused. Same shape as `LoopResult`. */
+export interface NozzleResult {
+  ok: boolean
+  /** The nozzle's stable id, on success. */
+  id?: string
+  reason?: string
+}
+
 export interface RetagResult {
   /** The new key already carried a record, so nothing was moved or copied. */
   collision: boolean
@@ -253,6 +263,25 @@ export interface StoreState {
   /** Clear a record's loop assignment. Explicit, and deliberately NOT reachable
    *  by clearing a tag: those are different intentions. */
   unassignLoop(key: string): LoopResult
+  /* ------------------------------------------------------ equipment nozzles */
+  /**
+   * Add a nozzle to a tagged object's engineering record.
+   *
+   * Refused when the object has no engineering key, when the number is blank,
+   * and when another nozzle on the SAME record already wears that number.
+   * Refusals touch nothing and record no undo step.
+   *
+   * A record is created if there is not one yet — the same thing
+   * `setRecordField` does, and for the same reason: the tag is what makes the
+   * record possible, and the user has just asked for one.
+   */
+  addNozzle(key: string, kind: EntityKind, number: string, init?: NozzleInit): NozzleResult
+  /** Change one nozzle's fields. `id` never moves, and unlisted fields are
+   *  left exactly as they were. A renumber onto a number another nozzle on the
+   *  same record wears is refused whole. */
+  updateNozzle(key: string, nozzleId: string, patch: NozzleInit): NozzleResult
+  /** Delete one nozzle. Touches no other nozzle and no other record field. */
+  removeNozzle(key: string, nozzleId: string): NozzleResult
   /** Apply an adopted-loop plan as ONE undo step. Only rows the plan marked
    *  `adopt` are acted on, each re-checked against the live document first;
    *  nothing is renamed, deleted or inferred. */
@@ -1242,6 +1271,120 @@ export const useStore = create<StoreState>()(
             }
           })
           return { ok: true, id: was }
+        },
+
+        /* ---------------------------------------------------- nozzles */
+
+        addNozzle(key, kind, number, init = {}) {
+          const state = get()
+          // A nozzle is engineering data, and engineering data hangs off the
+          // tag. An untagged object has no key, so there is nowhere to put it —
+          // and minting a record under a fabricated key to hold it would be
+          // exactly the silent invention this refuses.
+          if (!key) {
+            return { ok: false, reason: 'That equipment has no tag yet, so there is nothing to hang a nozzle on.' }
+          }
+          const trimmed = number.trim()
+          if (!trimmed) return { ok: false, reason: 'A nozzle needs a number.' }
+          const prev = state.doc.registry?.[key]
+          if (nozzleNumberTaken(prev, trimmed)) {
+            return { ok: false, reason: `${key} already has a nozzle ${trimmed}.` }
+          }
+
+          const nozzle = newNozzle(trimmed, init)
+          set((sx) => {
+            const record: EngineeringRecord = sx.doc.registry?.[key] ?? { key, kind, fields: {} }
+            return {
+              doc: touched({
+                ...sx.doc,
+                registry: {
+                  ...sx.doc.registry,
+                  // Appended, so the schedule keeps the order it was entered
+                  // in. Ordering carries no engineering meaning and the diff
+                  // matches on id, so reordering reports nothing.
+                  [key]: { ...record, nozzles: [...(record.nozzles ?? []), nozzle], updated: new Date().toISOString() },
+                },
+              }),
+              dirty: true,
+            }
+          })
+          return { ok: true, id: nozzle.id }
+        },
+
+        updateNozzle(key, nozzleId, patch) {
+          const state = get()
+          const prev = state.doc.registry?.[key]
+          const target = (prev?.nozzles ?? []).find((n) => n.id === nozzleId)
+          if (!target) return { ok: false, reason: `There is no nozzle ${nozzleId} on ${key}.` }
+          if (patch.number !== undefined) {
+            const trimmed = patch.number.trim()
+            if (!trimmed) return { ok: false, reason: 'A nozzle needs a number.' }
+            if (nozzleNumberTaken(prev, trimmed, nozzleId)) {
+              return { ok: false, reason: `${key} already has a nozzle ${trimmed}.` }
+            }
+          }
+
+          set((sx) => {
+            const record = sx.doc.registry?.[key]
+            if (!record) return sx
+            const fields = ['number', 'portId', 'size', 'rating', 'facing', 'service', 'notes'] as const
+            const next = (record.nozzles ?? []).map((n) => {
+              if (n.id !== nozzleId) return n
+              // Only the keys the caller named. An absent key is untouched; an
+              // EMPTY one clears the field rather than storing a blank, so a
+              // saved document never claims an engineer typed nothing.
+              const merged: Nozzle = { ...n }
+              for (const field of fields) {
+                if (!(field in patch)) continue
+                const value = patch[field]?.trim()
+                if (field === 'number') merged.number = value ?? n.number
+                else if (value) merged[field] = value
+                else delete merged[field]
+              }
+              // Compared by VALUE, then the ORIGINAL object is returned when
+              // nothing moved — the panel's inputs call this on every
+              // keystroke, and a `{ ...n }` that merely looks new would fill
+              // the undo stack with edits nobody made.
+              return fields.every((f) => merged[f] === n[f]) ? n : merged
+            })
+            if (next.every((n, i) => n === (record.nozzles ?? [])[i])) return sx
+            return {
+              doc: touched({
+                ...sx.doc,
+                registry: { ...sx.doc.registry, [key]: { ...record, nozzles: next, updated: new Date().toISOString() } },
+              }),
+              dirty: true,
+            }
+          })
+          return { ok: true, id: nozzleId }
+        },
+
+        removeNozzle(key, nozzleId) {
+          const state = get()
+          const prev = state.doc.registry?.[key]
+          if (!(prev?.nozzles ?? []).some((n) => n.id === nozzleId)) {
+            return { ok: false, reason: `There is no nozzle ${nozzleId} on ${key}.` }
+          }
+          set((sx) => {
+            const record = sx.doc.registry?.[key]
+            if (!record) return sx
+            const next = (record.nozzles ?? []).filter((n) => n.id !== nozzleId)
+            // The LAST nozzle leaves no empty array behind: absent and empty
+            // mean the same thing, and only one of them survives a round trip
+            // unchanged.
+            const { nozzles: _drop, ...rest } = record
+            return {
+              doc: touched({
+                ...sx.doc,
+                registry: {
+                  ...sx.doc.registry,
+                  [key]: { ...rest, ...(next.length ? { nozzles: next } : {}), updated: new Date().toISOString() },
+                },
+              }),
+              dirty: true,
+            }
+          })
+          return { ok: true, id: nozzleId }
         },
 
         /**
