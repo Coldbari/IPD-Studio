@@ -495,3 +495,96 @@ decision — remove, remap or ignore — stays yours.
   binding.
 - Reconciliation is an **edit-mode** action. An operator station does not
   reshape its own screens.
+
+## The hydraulic model (new, not yet driving the runtime)
+
+`sim/hydraulic/` is a canonical process topology and a coupled pressure/flow
+solver, built and proven as a standalone module. **It does not yet drive the
+running simulation** — `sim/engine.ts` still uses the branch/conductance model
+below it. What follows describes the new module and states exactly where it
+stops; `docs/HMI-AUDIT.md` records why.
+
+### Why it exists
+
+The running solver decides flow first and derives pressure from it:
+
+```text
+Q = pump rating × speed × ∏(valve fraction)     then     P = f(Q)
+```
+
+Three things that cannot express. Flow is **linear in valve position**, which
+is not what a valve does. **Junctions never balance**, because each
+source-to-destination path is solved alone and a tee is two unrelated paths.
+And **pressure cannot cause anything**, because it is computed after the thing
+it is meant to cause. Flows are also non-negative by construction, so a line
+can never reverse.
+
+### What the new module does
+
+```text
+valve position → resistance → pressure field → flow → inventory
+```
+
+A pressure-node / flow-edge graph, compiled once per document
+(`buildProcessModel`, 0.053 ms on the bundled sample) and solved each tick
+(`solveHydraulics`).
+
+- **Explicit ports.** Every piece of equipment offers named process ports —
+  `suction`/`discharge`, `inlet`/`outlet`, `bottom`/`top` — and a stream
+  attaches to a port, not to a rectangle. Where the P&ID states the port
+  (`aPort`/`bPort`, carried across by the importer) that is used; otherwise the
+  role comes from the end's position on the widget and is recorded as a
+  lower-confidence attachment. A port fixes only *which node* a stream joins;
+  **direction is an output of the solve**.
+- **Two lines that merely cross do not connect.** Only an explicit attachment
+  joins anything.
+
+### The equations
+
+| | |
+| --- | --- |
+| Resistive edge | `ΔP = R·Q·|Q|` ⇒ `Q = sign(ΔP)·√(|ΔP|/R)` |
+| Valve | `R = K/f⁴`, so at fixed ΔP flow goes as `f²`; `f = 0` ⇒ `R = ∞` |
+| Pump | `H = H₀·r²·(1 − (Q/(1.5·Qr·r))²)`, affinity laws: head as speed², capacity as speed |
+| Shutoff | `H₀ = duty.head / (1 − 1/1.5²)` — `duty.head` is the head **at the rated flow**, as a datasheet states it |
+| Vessel node | `P = P_supply + (level/100)·tankFullHeadBar` |
+| Boundary | `P = P_supply` |
+| Junction | `Σ Q_in − Σ Q_out = 0`, solved by damped Newton on nodal pressures |
+
+Calibration: `PIPE_K = VALVE_K = 4e-4 bar/(m³/h)²`, sized so a 50 m³/h / 4 bar
+machine through a three-run path with one open control valve settles at
+**exactly 50.00 m³/h** — its duty point. It falls to 48.95 as the receiving
+vessel fills, 28.47 at a half-open valve, 5.34 at 20 %.
+
+### Assumptions, stated
+
+One incompressible fluid at one density. No vapour, no phase change, no
+compressibility. No elevation except a vessel's own liquid head. Quasi-steady:
+re-solved each tick against current inventories and positions, with no
+transient acoustics. **A stopped pump blocks** — the model assumes the
+discharge check valve a pumped system carries, rather than modelling one. A
+free pipe end is a boundary at supply pressure: it can supply and it can
+receive. Pipe resistance is a calibrated constant, not a calculation from
+diameter and length, because an HMI pipe carries neither.
+
+Two numerical compromises, both because `√` has infinite slope at zero:
+resistive flow is linear below `LINEAR_DP = 1e-4 bar`, and the pump curve is
+linear within `PUMP_EPS = 1e-4` of shutoff — which is exactly where a machine
+sits when the path in front of it is shut. Flows below `ZERO_FLOW = 1e-9 m³/h`
+report as exactly zero, so a dead line is dead.
+
+### Where it stops
+
+**The solve converges on series networks and does not converge on branched
+ones.** A single path closes to a mass-balance residual below `1e-7 m³/h` in
+about twenty iterations. A network with a tee balances the junction exactly —
+to `1e-9` — and then stalls at the pump node, leaving a few m³/h between the
+suction pipe and the machine. On the bundled `sample-plant` (20 nodes, 16
+edges) it runs the full 250 iterations at a residual of 8.25 and costs
+3.14 ms.
+
+`SolveResult.converged` is the contract: a caller must present an unconverged
+solve as uncertain rather than as a reading, and
+`tests/hmi/hydraulic.test.ts` pins that the flag is reported rather than
+hidden. Until it converges on branched networks the module must not drive the
+operator screens, because most real plants branch.

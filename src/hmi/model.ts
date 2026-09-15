@@ -120,6 +120,22 @@ export interface HmiPipe {
    *  imports put several widgets within attach range of one nozzle). */
   aId?: string
   bId?: string
+  /**
+   * The PORT each end lands on, carried across from the P&ID.
+   *
+   * `aId` says which object a line is connected to; this says where. A drawing
+   * that lands a line on a pump's suction nozzle knows that, and before this
+   * the import threw it away and the process model had to work the answer out
+   * from which side of the icon the line touched. Ports are how the hydraulic
+   * topology states `P-101.discharge -> stream -> FV-101.inlet`
+   * (`sim/hydraulic/ports.ts`).
+   *
+   * Absent on hand-drawn pipes and on every screen imported before this, where
+   * the port falls back to the end's position on the widget and the
+   * diagnostics say so.
+   */
+  aPort?: string
+  bPort?: string
 }
 
 export interface HmiScreen {
