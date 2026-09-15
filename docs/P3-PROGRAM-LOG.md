@@ -4,7 +4,7 @@ A record of the P3 sequence: what shipped, what was deliberately refused, and
 why. Written for whoever picks this up next — including a later version of the
 people who wrote it.
 
-**Baseline** `54d7a76` · **Head** `f8cf80b` · **v0.20.0**
+**Baseline** `54d7a76` · **Head** `eccb50d` · **v0.20.0**
 
 Throughout, two numbers never moved:
 
@@ -34,12 +34,15 @@ before any of this still opens.
 | `24fd9f4` | P3-4B-3 Nozzle closeout | 9 | +639 / −14 |
 | `bd84d05` | P3-5 Project Health | 10 | +1275 / −2 |
 | `f8cf80b` | P3-6 Deliverable Staleness | 8 | +1050 / −6 |
+| `c3e266b` | this log | 1 | +305 |
+| `eccb50d` | P3-7 Review Comment Threads | 17 | +1575 |
 
-Eleven commits, ~10,400 lines. Roughly half of it is tests.
+Thirteen commits, ~12,300 lines. Roughly half of it is tests.
 
-**Five read-only audits produced no commit at all** and are listed in §4. They
-were not overhead: three of them changed what got built, and one stopped a
-programme from being built at all.
+**Ten read-only audits produced no commit at all** and are listed in §4. They
+were not overhead: three of them changed what got built, two stopped a
+programme from being built at all, and one stopped this sequence's own last
+programme before it could edit a file another session was holding.
 
 ---
 
@@ -188,6 +191,38 @@ Behind a button: 14.4 ms against health's 0.155.
 
 ---
 
+### P3-7 — Review Comment Threads · `eccb50d`
+
+What a checker says about an object, kept with the object:
+`EngineeringRecord.comments?: ReviewThread[]`, each thread a ULID and an
+append-only list of notes.
+
+**Nested for a reason `collectTagRefs` already stated**: a `loopId` *"is NOT a
+tag reference and gets no RefWhere of its own"* because it is a stable id. A
+thread stores no tag either, so `retagRegistry`'s spread carries the whole
+conversation across a rename and `deleteIds` never touching the registry means
+it survives delete-and-redraw. Both proved by breaking the spread — two tests
+fail, including the store-level `setTag` path. **No 8th `RefWhere` member**,
+which the P3-NEXT audit had assumed §5.3 would cost.
+
+**It is not QA, and the UI says so rather than looking like it.** No severity,
+no finding, no effect on any count, conformance verdict or issue blocker. A test
+asserts no status label ever reads *generated*, *downloaded*, *approved* or
+*issued*.
+
+`resolved` absent is open, present is resolved; reopening **deletes the key** so
+a round trip is byte-identical. Resolving twice is refused rather than
+restamping who closed it. `by` is a copied display name — signed-in, else the
+document author, else nobody — never a uid, which would resolve to nothing in a
+file emailed onward; an absent author shows as **nothing**, not "Unknown".
+
+The diff matches threads and notes on stable ids, so reordering reports nothing
+and a reply is one change. `at` is excluded as noise; `by` is compared, because
+who said it is part of what was said. 0.019 ms to count 334 open threads across
+500 records.
+
+---
+
 ## 3. Doctrines this sequence established or upheld
 
 **Identity.** A registry key (the tag) is engineering identity; a `nodeId` is the
@@ -233,6 +268,9 @@ evidence.
 | P3-4B-3 Readiness | Found the 4 defects closed in `24fd9f4` |
 | P3-NEXT | Found no P3 master plan in the repo; chose Project Health |
 | P3-6 Architecture | **NO-GO on §5.1 as written**; reshaped it into what shipped |
+| P3-7 Architecture | Chose the record anchor; found §5.3 needs **no** `RefWhere` member |
+| P3-8 I/O Architecture | **NO-GO — blocked**; found the model cannot hold two I/O points per instrument |
+| P3-8A Timing gate | **STOPPED at the gate**: the rule to fix sits in a file another session is rewriting |
 
 The P3-6 audit is the one that earned its keep. §5.1's `IssuedDeliverable`
 design assumed two facts the product cannot observe — that a file was generated,
@@ -241,14 +279,14 @@ Building it literally would have meant persisting fiction.
 
 ---
 
-## 5. Verification at `f8cf80b`
+## 5. Verification at `eccb50d`
 
 | Gate | Result |
 |---|---|
 | `npx tsc -b --force` | exit 0 |
-| `npx vitest run` | **2850 passed, 7 skipped, 0 failed** |
+| `npx vitest run` | **3018 passed, 7 skipped, 0 failed** |
 | `npx vite build` | succeeds |
-| `npx playwright test` | 186 passed, 16 skipped, 2 failed |
+| `npx playwright test` | 189 passed, 16 skipped, 2 failed |
 | schemaVersion | 6 → 6 |
 | Fingerprint | `3c935cd3e3e09cd4` unchanged |
 | Bundled samples | untouched throughout |
@@ -268,11 +306,19 @@ reference to anything this sequence touched.
 
 Recorded rather than fixed, because each belongs to its own programme.
 
-**A real QA gap, found during P3-5 and deliberately not fixed:**
+**A real QA gap, found during P3-5 and now formally BLOCKED (P3-8A):**
 `required-field-empty` iterates `ix.nodesByKey` — **nodes only** — so `line`
 records are never checked against `standard.required.line` (`spec.size`,
 `spec.material`). Project Health *does* measure line completeness, so it can
 show a percentage the Checks workspace never comments on.
+
+The fix is small and the design is settled. It is blocked on timing, not
+architecture: the rule lives in `src/validate/rules/data.ts`, which the
+concurrent session currently holds with 43 uncommitted lines changed — its diff
+carries `export const requiredFieldEmpty` as a context line, and the rule has
+already moved from line 98 to line 80 under it. Editing that function now means
+one of the two sessions silently clobbering the other inside a *critical* rule.
+**Unblocked the moment that refactor is committed.**
 
 **Carried technical debt** (from the P3-3 audit): a false `runEndName` comment,
 `"1 ends"` pluralisation, three `buildIndex` calls per Data-workspace render,
@@ -285,8 +331,29 @@ v0.21.0. None of this sequence is in it.
 **Still deferred, still blocked:** schema-backed DEXPI. There is no Proteus 4.2
 XSD in this repository, and none of it may be invented from memory.
 
-**Unbuilt plan items:** §5.3 review comment threads (needs an 8th `RefWhere`),
-§5.4 I/O rack/slot/channel/card (needs a card-configuration model).
+**§5.4 I/O engineering — audited, designed, blocked.** The P3-8 audit found the
+plan's shape wrong and the timing worse:
+
+- *"An `io` block on the instrument record"* **cannot hold a real I/O list.**
+  `deriveIoList` produces one row per TAG and `signal.type` is one scalar on one
+  record, so the model cannot express a control valve with an AO and two limit
+  switches, or a motor with DO + DI + AI. The right shape is an **array** —
+  `EngineeringRecord.io?: IoPoint[]` with a ULID per point, exactly as `nozzles`
+  and `comments` are.
+- `rack + slot + channel` is a **location, not an identity**. Re-landing a point
+  is the same point moved — the mutable-display-value trap that already stranded
+  a nozzle acceptance in P3-4B-3.
+- **No card/rack/cabinet entity hierarchy is needed** for the minimum, and no
+  JB/terminal/cable model. Those are only required for auto-assignment, which is
+  a separate and much larger programme.
+- Blocked for the same reason as the line gap: it requires rewriting
+  `duplicate-system-tag` (a critical rule) while the QA layer is mid-refactor.
+
+**What that refactor is doing**, as observed read-only: `RuleFinding` gains an
+`hmi?: { screenId, widgetId?, pipeId? }` anchor; `orphaned-binding`'s detection
+moves out of `data.ts` into a new `model/diagnostics.ts`; ten new
+`DIAGNOSTIC_RULES` register in `rules/index.ts`; plus new `model/fingerprint.ts`
+and `model/reconcile.ts`. None of it is committed.
 
 ---
 
@@ -295,7 +362,7 @@ XSD in this repository, and none of it may be invented from memory.
 | | |
 |---|---|
 | Branch | `perf/canvas-rasterisation` → pushed to `origin` |
-| `main` | fast-forwarded `659ff7d` → `f8cf80b` (29 commits, no rewrite) |
+| `main` | fast-forwarded `659ff7d` → `c3e266b` (30 commits, no rewrite) |
 | Built from | a clean worktree at `f8cf80b`, **not** the working tree |
 | Deployed | `firebase deploy --only hosting` → <https://pid-studio-praharsh.web.app> |
 | Not touched | Firestore rules, indexes, auth config |
@@ -303,3 +370,31 @@ XSD in this repository, and none of it may be invented from memory.
 The clean-worktree build was deliberate: the working tree held another session's
 uncommitted HMI work, and a deploy from it would have published someone else's
 half-finished changes to the live site.
+
+**`eccb50d` (P3-7) is committed but NOT pushed and NOT deployed.** The live site
+and `origin/main` are at `c3e266b`. Review comment threads exist in the local
+repository only.
+
+---
+
+## 8. Where this stands
+
+**Closed:** D3–D5, P3-1 through P3-4B-3, P3-5, P3-6, P3-7.
+
+**Blocked, both on the same thing:** the line `required-field-empty` gap
+(P3-8A) and §5.4 I/O engineering (P3-8). Neither is blocked on design — both
+designs are settled and written down above. Both are blocked because they must
+edit the QA rule layer, and another session is holding it uncommitted.
+
+**The next move, in order:**
+
+1. Wait for the concurrent QA refactor to land.
+2. Re-audit the settled rule set in one short pass — `rules/data.ts`,
+   `rules/index.ts`, `rules.ts`, `engine.ts`, plus the new `diagnostics.ts`
+   files and `sampleBaseline.test.ts`, whose finding counts will move.
+3. Close the line required-field gap. Small, and it makes Checks and Project
+   Health agree about line completeness.
+4. Then P3-8 I/O, to the array design above.
+
+**Nothing in this sequence is waiting on a decision from anyone.** Both blocked
+programmes resume on a `git commit` that is not mine to make.
