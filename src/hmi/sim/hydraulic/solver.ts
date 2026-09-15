@@ -68,7 +68,7 @@
 
 import type { ProcessEdge, ProcessModel } from './model'
 import { valveResistance } from './model'
-import { BOUNDS, DEFAULTS } from '../units'
+import { DEFAULTS } from '../units'
 
 /**
  * Below this pressure difference an edge is treated as linear. bar.
@@ -106,10 +106,16 @@ export const ZERO_FLOW = 1e-9
 
 /** Mass-balance residual that counts as converged, m³/h. */
 export const MASS_TOL = 1e-7
-/** Newton step damping. Under-relaxed because the square-root law is stiff. */
-const DAMPING = 0.7
-/** A pressure step larger than this per iteration is clipped, bar. */
-const MAX_STEP = 20
+/** Smallest line-search factor tried before the solve declares failure. */
+const MIN_LAMBDA = 1 / 1024
+/** Armijo slack: a step must reduce the residual norm by at least this
+ *  fraction of λ to be accepted. Small, because the square-root law makes
+ *  early steps modest. */
+const ARMIJO = 1e-4
+/** Jacobian perturbation, bar. Well inside LINEAR_DP and PUMP_EPS, so a
+ *  derivative is never taken across the kink where a linearised piece meets
+ *  its square root. */
+const JAC_H = 1e-6
 
 export interface SolveInputs {
   /** Valve opening 0..1 for a tag. 0 shuts the path. */
@@ -127,6 +133,35 @@ export interface SolveInputs {
   pipeFactor?(pipeId: string): number
 }
 
+/**
+ * Per-iteration diagnostics. Requested explicitly by a test or a debug path
+ * and NEVER allocated by a production solve — `solveHydraulics` only writes
+ * here when a caller hands it a sink.
+ */
+export interface SolveTrace {
+  iteration: number
+  /** L-infinity residual before this step, m³/h. */
+  worst: number
+  /** L2 residual norm before this step. */
+  norm: number
+  /** Which free node carries `worst`. */
+  worstNode: string
+  /** L-infinity Newton step before damping, bar. */
+  stepNorm: number
+  /** Line-search factor actually accepted. */
+  lambda: number
+  /** Candidate steps rejected by the line search at this iteration. */
+  rejected: number
+  /** Node pressures after the accepted step, bar. */
+  pressure: Record<string, number>
+  /** Edge flows after the accepted step, m³/h. */
+  flow: Record<string, number>
+  /** Edges whose flow sign differs from the previous iteration. */
+  reversed: string[]
+  /** True when the dense solve reported a singular Jacobian. */
+  singular: boolean
+}
+
 export interface SolveResult {
   /** Node id -> pressure, bar. */
   pressure: Record<string, number>
@@ -141,6 +176,28 @@ export interface SolveResult {
   iterations: number
   /** Worst mass-balance residual at any junction, m³/h. */
   residual: number
+  /** The free node carrying the worst residual, for an honest failure report. */
+  worstNode?: string
+  /** Why the solve stopped, when it did not converge. */
+  reason?: 'max-iterations' | 'singular-jacobian' | 'line-search-stalled' | 'no-free-nodes'
+  /**
+   * Nodes the solve put BELOW absolute zero, which this model cannot
+   * represent: real liquid cavitates there.
+   *
+   * Reported rather than clamped. Clamping was the bug this phase fixed — it
+   * removed the root and made a branched network unsolvable — and quietly
+   * returning a negative absolute pressure would be just as dishonest in the
+   * other direction. A caller must present these as INVALID rather than as a
+   * reading; the surrounding flows are the mathematical answer to the network
+   * as posed, and the network as posed asks for more suction than exists.
+   */
+  cavitating: string[]
+  /** Nodes with no path to any boundary or vessel. Their pressure level is
+   *  undetermined by the network, so they are held at the supply pressure and
+   *  named here rather than being allowed to make the whole solve singular. */
+  undetermined: string[]
+  /** Filled only when the caller asked for it. */
+  trace?: SolveTrace[]
 }
 
 /** Static head a vessel's contents put on a bottom nozzle, bar. */
@@ -265,7 +322,16 @@ function edgeFlow(e: ProcessEdge, pFrom: number, pTo: number, s: SolveInputs): n
  * they stand, and it answers what is flowing NOW. The dynamics live in what
  * those flows then do to the inventories, which is `engine.ts`'s job.
  */
-export function solveHydraulics(model: ProcessModel, s: SolveInputs): SolveResult {
+export interface SolveOptions {
+  /** Collect per-iteration diagnostics. Test and debug paths only. */
+  trace?: boolean
+  /** A previous converged pressure field to start from. Ignored when the node
+   *  set does not match, so it can never change the answer — only how quickly it
+   *  gets there. */
+  warmStart?: Record<string, number>
+}
+
+export function solveHydraulics(model: ProcessModel, s: SolveInputs, opts: SolveOptions = {}): SolveResult {
   const n = model.nodes.length
   const pressure = new Float64Array(n)
   const fixed = new Uint8Array(n)
@@ -283,17 +349,75 @@ export function solveHydraulics(model: ProcessModel, s: SolveInputs): SolveResul
       pressure[i] = node.pressureBar ?? DEFAULTS.supplyPressureBar
       fixed[i] = 1
     } else {
-      // Start every free node at the boundary pressure. Deterministic, and
-      // close enough that Newton converges in a few steps.
-      pressure[i] = DEFAULTS.supplyPressureBar
+      /**
+       * INITIAL GUESS.
+       *
+       * Cold: every free node at the supply pressure. Deterministic, and close
+       * enough that a series network converges in a handful of steps.
+       *
+       * Warm: a previous CONVERGED pressure field, used only when it names
+       * this node — a field from a different topology is ignored outright
+       * rather than partially applied, so a warm start can change how quickly
+       * the solve gets there and never where it arrives. A test pins that the
+       * warm and cold answers agree.
+       */
+      const warm = opts.warmStart?.[node.id]
+      pressure[i] = warm !== undefined && Number.isFinite(warm) ? warm : DEFAULTS.supplyPressureBar
     }
+  }
+
+  const edgeFrom = model.edges.map((e) => model.indexOf.get(e.from) ?? -1)
+  const edgeTo = model.edges.map((e) => model.indexOf.get(e.to) ?? -1)
+
+  /**
+   * FREEZE THE UNDETERMINED.
+   *
+   * A free node with no path to any fixed node has no pressure LEVEL: every
+   * pressure field that satisfies its mass balance is equally valid, shifted
+   * by a constant, and the Jacobian for that block is singular. One such
+   * subgraph — an unpiped stub, a fragment of an import — made the whole
+   * refinery sample fail at iteration zero with a singular Jacobian, taking
+   * nineteen perfectly determined nodes down with it.
+   *
+   * So they are frozen at the supply pressure and removed from the unknowns.
+   * Their edges then carry whatever their own difference implies, which for an
+   * isolated fragment is nothing, and the determined part of the plant solves
+   * normally. Connectivity here ignores resistance on purpose: a node reached
+   * only through a SHUT valve is still determined, and its balance is met by
+   * carrying zero.
+   *
+   * `undetermined` is reported, because a fragment that cannot have a pressure
+   * is a topology problem and not a solver one.
+   */
+  const reached = new Uint8Array(n)
+  const queue: number[] = []
+  for (let i = 0; i < n; i++) if (fixed[i]) { reached[i] = 1; queue.push(i) }
+  const incident = new Map<number, number[]>()
+  for (let k = 0; k < model.edges.length; k++) {
+    for (const v of [edgeFrom[k]!, edgeTo[k]!]) {
+      if (v < 0) continue
+      incident.set(v, [...(incident.get(v) ?? []), k])
+    }
+  }
+  while (queue.length > 0) {
+    const v = queue.pop()!
+    for (const k of incident.get(v) ?? []) {
+      const other = edgeFrom[k]! === v ? edgeTo[k]! : edgeFrom[k]!
+      if (other < 0 || reached[other]) continue
+      reached[other] = 1
+      queue.push(other)
+    }
+  }
+  const undetermined: string[] = []
+  for (let i = 0; i < n; i++) {
+    if (fixed[i] || reached[i]) continue
+    fixed[i] = 1
+    pressure[i] = DEFAULTS.supplyPressureBar
+    undetermined.push(model.nodes[i]!.id)
   }
 
   const free: number[] = []
   for (let i = 0; i < n; i++) if (!fixed[i]) free.push(i)
-
-  const edgeFrom = model.edges.map((e) => model.indexOf.get(e.from) ?? -1)
-  const edgeTo = model.edges.map((e) => model.indexOf.get(e.to) ?? -1)
 
   /** Mass-balance residual at every free node, m³/h. */
   const residuals = (p: Float64Array): Float64Array => {
@@ -311,52 +435,135 @@ export function solveHydraulics(model: ProcessModel, s: SolveInputs): SolveResul
     return r
   }
 
+  // ── Newton with a backtracking line search ────────────────────────────
+  //
+  // THE BUG THIS REPLACED. The previous loop clamped every iterate into
+  // [0, 64] bar. That is not a Newton safeguard, it is a truncation of the
+  // search space, and on a branched network it removed the root: two legs of a
+  // tee draw more than one leg, the suction pipe needs more than the boundary
+  // pressure to deliver it, the true suction pressure is therefore BELOW the
+  // supply, and the clamp pinned the iterate at zero where no step could
+  // improve the residual. The solve sat at a residual of 8.25 for 250
+  // iterations. A sub-atmospheric suction is a real operating condition — it
+  // is what NPSH is about — and the solver has to be allowed to find it.
+  //
+  // In its place: accept a step only if it reduces the residual norm, and
+  // otherwise halve it. That is the standard Armijo-style safeguard, it cannot
+  // remove a root, and it makes divergence visible instead of silent.
   let iterations = 0
   let worst = Infinity
+  let worstNode = ''
+  let reason: SolveResult['reason'] | undefined
+  const trace: SolveTrace[] | undefined = opts.trace ? [] : undefined
+
+  const norm = (r: Float64Array): number => {
+    let sum = 0
+    for (const v of r) sum += v * v
+    return Math.sqrt(sum)
+  }
+  const worstOf = (r: Float64Array): { value: number; at: number } => {
+    let value = 0
+    let at = 0
+    for (let i = 0; i < r.length; i++) {
+      const a = Math.abs(r[i]!)
+      if (a > value) { value = a; at = i }
+    }
+    return { value, at }
+  }
+  const flowsNow = (p: Float64Array): Record<string, number> => {
+    const out: Record<string, number> = {}
+    for (let k = 0; k < model.edges.length; k++) {
+      const a = edgeFrom[k]!, b = edgeTo[k]!
+      out[model.edges[k]!.id] = a < 0 || b < 0 ? 0 : edgeFlow(model.edges[k]!, p[a]!, p[b]!, s)
+    }
+    return out
+  }
 
   if (free.length === 0) {
     worst = 0
+    reason = undefined
   } else {
-    const h = 1e-6 // bar, the perturbation for the numerical Jacobian
+    const m = free.length
+    const J = new Float64Array(m * m)
+    const candidate = new Float64Array(n)
+    let prevFlow = opts.trace ? flowsNow(pressure) : {}
+
     for (; iterations < MAX_ITER; iterations++) {
       const r0 = residuals(pressure)
-      worst = 0
-      for (const v of r0) worst = Math.max(worst, Math.abs(v))
+      const w0 = worstOf(r0)
+      worst = w0.value
+      worstNode = model.nodes[free[w0.at]!]!.id
       if (worst < MASS_TOL) break
+      const n0 = norm(r0)
 
-      // Dense Jacobian. free.length is tens; this is microseconds.
-      const m = free.length
-      const J = new Float64Array(m * m)
+      // Numerical Jacobian. `h` sits well inside every linearised region, so a
+      // derivative is never taken across a kink — see LINEAR_DP and PUMP_EPS.
       for (let c = 0; c < m; c++) {
         const idx = free[c]!
         const keep = pressure[idx]!
-        pressure[idx] = keep + h
+        pressure[idx] = keep + JAC_H
         const r1 = residuals(pressure)
         pressure[idx] = keep
-        for (let rI = 0; rI < m; rI++) J[rI * m + c] = (r1[rI]! - r0[rI]!) / h
+        for (let rI = 0; rI < m; rI++) J[rI * m + c] = (r1[rI]! - r0[rI]!) / JAC_H
       }
 
       const step = solveDense(J, r0, m)
-      if (!step) break // singular: an isolated node with no path to anywhere
-      // Under-relax while the residual is large and the square-root law is
-      // steep; take the full Newton step once close, or the last few orders of
-      // magnitude cost hundreds of damped iterations.
-      const relax = worst < 1e-3 ? 1 : DAMPING
-      let moved = 0
-      for (let i = 0; i < m; i++) {
-        const d = Math.max(-MAX_STEP, Math.min(MAX_STEP, -step[i]! * relax))
-        pressure[free[i]!] = clampBar(pressure[free[i]!]! + d)
-        moved = Math.max(moved, Math.abs(d))
+      if (!step) {
+        reason = 'singular-jacobian'
+        if (trace) trace.push({ iteration: iterations, worst, norm: n0, worstNode, stepNorm: 0, lambda: 0, rejected: 0, pressure: named(model, pressure), flow: flowsNow(pressure), reversed: [], singular: true })
+        break
       }
-      if (moved < 1e-12) break
+
+      let stepNorm = 0
+      for (let i = 0; i < m; i++) stepNorm = Math.max(stepNorm, Math.abs(step[i]!))
+
+      // Backtracking: start at the full Newton step and halve until the
+      // residual norm actually improves. A step is never accepted merely for
+      // being finite.
+      let lambda = 1
+      let rejected = 0
+      let accepted = false
+      for (; lambda >= MIN_LAMBDA; lambda /= 2) {
+        candidate.set(pressure)
+        for (let i = 0; i < m; i++) candidate[free[i]!] = pressure[free[i]!]! - step[i]! * lambda
+        let ok = true
+        for (const i of free) if (!Number.isFinite(candidate[i]!)) { ok = false; break }
+        if (ok) {
+          const n1 = norm(residuals(candidate))
+          // Armijo with a slack factor: require a real reduction, not just a
+          // non-increase, or the search can inch along forever.
+          if (n1 < n0 * (1 - ARMIJO * lambda)) { accepted = true; break }
+        }
+        rejected += 1
+      }
+
+      if (!accepted) {
+        reason = 'line-search-stalled'
+        if (trace) trace.push({ iteration: iterations, worst, norm: n0, worstNode, stepNorm, lambda: 0, rejected, pressure: named(model, pressure), flow: flowsNow(pressure), reversed: [], singular: false })
+        break
+      }
+      pressure.set(candidate)
+
+      if (trace) {
+        const now = flowsNow(pressure)
+        const reversed = Object.keys(now).filter((id) => Math.sign(now[id]!) !== Math.sign(prevFlow[id] ?? 0) && Math.abs(now[id]!) > ZERO_FLOW)
+        trace.push({ iteration: iterations, worst, norm: n0, worstNode, stepNorm, lambda, rejected, pressure: named(model, pressure), flow: now, reversed, singular: false })
+        prevFlow = now
+      }
     }
+    if (iterations >= MAX_ITER && reason === undefined) reason = 'max-iterations'
     const rf = residuals(pressure)
-    worst = 0
-    for (const v of rf) worst = Math.max(worst, Math.abs(v))
+    const wf = worstOf(rf)
+    worst = wf.value
+    worstNode = model.nodes[free[wf.at]!]!.id
   }
 
   const outP: Record<string, number> = {}
-  for (let i = 0; i < n; i++) outP[model.nodes[i]!.id] = pressure[i]!
+  const cavitating: string[] = []
+  for (let i = 0; i < n; i++) {
+    outP[model.nodes[i]!.id] = pressure[i]!
+    if (pressure[i]! < 0) cavitating.push(model.nodes[i]!.id)
+  }
   const flow: Record<string, number> = {}
   const pipeFlow: Record<string, number> = {}
   for (let k = 0; k < model.edges.length; k++) {
@@ -368,11 +575,23 @@ export function solveHydraulics(model: ProcessModel, s: SolveInputs): SolveResul
     for (const id of e.pipeIds) pipeFlow[id] = safe
   }
 
-  return { pressure: outP, flow, pipeFlow, converged: worst < MASS_TOL, iterations, residual: worst }
+  const converged = worst < MASS_TOL
+  return {
+    pressure: outP, flow, pipeFlow, converged, iterations, residual: worst, undetermined, cavitating,
+    ...(converged ? {} : { worstNode, ...(reason ? { reason } : {}) }),
+    ...(trace ? { trace } : {}),
+  }
 }
 
-const clampBar = (v: number): number =>
-  Math.max(BOUNDS.pressureBar.min, Math.min(BOUNDS.pressureBar.max, Number.isFinite(v) ? v : BOUNDS.pressureBar.min))
+/** Node pressures keyed by id, for a trace record. */
+function named(model: ProcessModel, p: Float64Array): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (let i = 0; i < model.nodes.length; i++) out[model.nodes[i]!.id] = p[i]!
+  return out
+}
+
+// `clampBar` is gone deliberately: clamping a Newton iterate removes roots.
+// See the note above the iteration loop.
 
 /**
  * Dense Gaussian elimination with partial pivoting. Returns null when the

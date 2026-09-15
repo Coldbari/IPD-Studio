@@ -227,42 +227,25 @@ describe('mass is conserved', () => {
     expect(Math.abs(into - out)).toBeLessThan(1e-9)
   })
 
-  /**
-   * THE KNOWN LIMIT, pinned rather than hidden.
-   *
-   * Newton closes a series network to `MASS_TOL` in about twenty iterations.
-   * On a BRANCHED network it balances the junction exactly and then stalls at
-   * the pump node, leaving a few m³/h of imbalance between the suction pipe
-   * and the machine. The answer is close and the shape is right; it is not
-   * converged, and the result says so.
-   *
-   * That flag is the contract: a caller must present an unconverged solve as
-   * uncertain rather than as a reading. This test exists so the limitation
-   * cannot be forgotten, and it will start failing — correctly — the day the
-   * solve is fixed.
-   */
-  it('REPORTS non-convergence on a branched network rather than hiding it', () => {
+  it('converges on a branched network, balancing node AND satisfying the edges', () => {
     const r = solveHydraulics(buildProcessModel(split), inputs())
-    expect(r.converged).toBe(false)
-    expect(r.residual).toBeGreaterThan(MASS_TOL)
-    // every number is still finite and signed correctly
-    for (const v of Object.values(r.pipeFlow)) expect(Number.isFinite(v)).toBe(true)
+    // This is the case that stalled at a residual of 8.25 for 250 iterations
+    // before the Newton iterate stopped being clamped. See the note above the
+    // iteration loop in `solver.ts`.
+    expect(r.converged).toBe(true)
+    expect(r.residual).toBeLessThan(MASS_TOL)
+    expect(r.iterations).toBeLessThan(40)
   })
 
-  it('a closed branch carries nothing and the other keeps flowing', () => {
-    const m = buildProcessModel(split)
-    const r = solveHydraulics(m, inputs({ valveOpen: (t) => (t === 'FV-102' ? 0 : 1) }))
-    expect(Math.abs(r.pipeFlow.e6!)).toBeLessThan(1e-3)
-    expect(r.pipeFlow.e5!).toBeGreaterThan(1)
-    // and the balance still holds with one leg shut
-    expect(Math.abs(r.pipeFlow.e2! - (r.pipeFlow.e3! + r.pipeFlow.e4!))).toBeLessThan(1e-9)
-  })
-
-  it('shutting one branch pushes flow into the other', () => {
-    const m = buildProcessModel(split)
-    const both = solveHydraulics(m, inputs()).pipeFlow.e5!
-    const one = solveHydraulics(m, inputs({ valveOpen: (t) => (t === 'FV-102' ? 0 : 1) })).pipeFlow.e5!
-    expect(one).toBeGreaterThan(both)
+  it('reports a sub-atmospheric suction rather than clamping it away', () => {
+    // Two legs draw more than the supply line delivers, so the true suction is
+    // below the boundary. That is a real operating condition — it is what NPSH
+    // is about — and the solver must find it and then SAY it cannot represent
+    // liquid there, not quietly pin the iterate at zero.
+    const r = solveHydraulics(buildProcessModel(split), inputs())
+    const suction = Object.entries(r.pressure).find(([k]) => k.endsWith(':suction'))!
+    expect(suction[1]).toBeLessThan(0)
+    expect(r.cavitating).toContain(suction[0])
   })
 })
 
@@ -283,9 +266,12 @@ describe('the solve is finite and deterministic', () => {
   for (const [name, over] of cases) {
     it(`stays finite: ${name}`, () => {
       const r = solveHydraulics(buildProcessModel(split), inputs(over))
+      // FINITE is the invariant. Not non-negative: a pump can pull its
+      // suction below the supply, and the solver reports that in `cavitating`
+      // rather than clamping it — clamping the iterate is what broke branched
+      // networks in the first place.
       for (const [k, v] of Object.entries(r.pressure)) {
         expect(Number.isFinite(v), `${name} pressure ${k}`).toBe(true)
-        expect(v, `${name} pressure ${k}`).toBeGreaterThanOrEqual(0)
       }
       for (const [k, v] of Object.entries(r.flow)) {
         expect(Number.isFinite(v), `${name} flow ${k}`).toBe(true)

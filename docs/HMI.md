@@ -499,8 +499,9 @@ decision — remove, remap or ignore — stays yours.
 ## The hydraulic model (new, not yet driving the runtime)
 
 `sim/hydraulic/` is a canonical process topology and a coupled pressure/flow
-solver, built and proven as a standalone module. **It does not yet drive the
-running simulation** — `sim/engine.ts` still uses the branch/conductance model
+solver, built and proven as a standalone module. It converges on every fixture
+topology and on all three bundled samples. **It does not yet drive the running
+simulation** — `sim/engine.ts` still uses the branch/conductance model
 below it. What follows describes the new module and states exactly where it
 stops; `docs/HMI-AUDIT.md` records why.
 
@@ -573,18 +574,48 @@ linear within `PUMP_EPS = 1e-4` of shutoff — which is exactly where a machine
 sits when the path in front of it is shut. Flows below `ZERO_FLOW = 1e-9 m³/h`
 report as exactly zero, so a dead line is dead.
 
+### Numerical method
+
+Damped Newton on nodal pressures with a **backtracking line search**: the full
+Newton step first, halved until the residual norm actually falls (Armijo, slack
+`1e-4`, floor `λ = 1/1024`). A step is never accepted for merely being finite.
+The Jacobian is numerical, perturbation `1e-6 bar`, which sits well inside
+every linearised region so a derivative is never taken across a kink.
+
+**The iterate is never clamped.** Clamping it into `[0, 64] bar` was what made
+branched networks unsolvable: two legs of a tee draw more than one supply line
+delivers, so the true suction is *below* the boundary, and the clamp pinned the
+iterate at zero where no step could improve the residual. A sub-atmospheric
+suction is a real operating condition — it is what NPSH is about. Nodes the
+solve puts below absolute zero are reported in `cavitating` and must be
+presented as INVALID rather than as a reading.
+
+A free node with no path to any fixed node has no pressure *level*, so its
+Jacobian block is singular. Those are frozen at supply pressure and named in
+`undetermined`, rather than one disconnected fragment making the whole plant
+unsolvable — which is what happened to the refinery sample (12 such nodes).
+
+**Warm start** reuses a previous converged pressure field, and only for nodes
+it names. It halves the iteration count and cannot change the answer; a test
+pins warm against cold.
+
+### Convergence, measured
+
+| Network | Nodes/edges | Iterations | Residual |
+| --- | --- | --- | --- |
+| `template-hmi-demo` | 10 / 8 | 6 (warm 3) | 1.4e-13 |
+| `sample-plant` | 20 / 16 | 6 (warm 3) | 1.6e-8 |
+| `sample-refinery-unit` | 43 / 31 | 6 (warm 3) | 1.6e-8 |
+
+All sixteen fixture topologies converge — series, tee, merge, unequal branches,
+parallel pumps, recirculation, reversal, zero-flow equilibrium, stopped pump,
+closed branch — each verified on node mass balance **and** on every edge's own
+constitutive equation, re-derived independently from the solved pressures.
+
+Cost: `buildProcessModel` 0.05–0.09 ms once per document; `solveHydraulics`
+0.04–0.22 ms cold, 0.005–0.022 ms warm.
+
 ### Where it stops
 
-**The solve converges on series networks and does not converge on branched
-ones.** A single path closes to a mass-balance residual below `1e-7 m³/h` in
-about twenty iterations. A network with a tee balances the junction exactly —
-to `1e-9` — and then stalls at the pump node, leaving a few m³/h between the
-suction pipe and the machine. On the bundled `sample-plant` (20 nodes, 16
-edges) it runs the full 250 iterations at a residual of 8.25 and costs
-3.14 ms.
-
-`SolveResult.converged` is the contract: a caller must present an unconverged
-solve as uncertain rather than as a reading, and
-`tests/hmi/hydraulic.test.ts` pins that the flag is reported rather than
-hidden. Until it converges on branched networks the module must not drive the
-operator screens, because most real plants branch.
+The solver is trustworthy; it is **not yet wired into the runtime**, and that
+is the next phase's work. `engine.ts` still runs the branch/conductance model.
