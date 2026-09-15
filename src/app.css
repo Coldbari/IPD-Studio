@@ -1765,3 +1765,16 @@ button.used-row:hover { background: var(--c-accent-soft); color: var(--c-accent)
 .ph-bar { height: 8px; border-radius: 4px; background: var(--c-chrome-2); overflow: hidden; margin: 4px 0 6px; }
 .ph-bar span { display: block; height: 100%; background: var(--c-accent); opacity: .3; transition: width .18s ease; }
 @media (prefers-reduced-motion: reduce) { .ph-bar span { transition: none; } }
+
+/* Deliverable staleness: a deliberate check, so it starts with a button
+   rather than running on every render. */
+.ph-run {
+  height: 26px; padding: 0 12px; border: 1px solid var(--c-line); border-radius: var(--r);
+  background: var(--c-surface); font: inherit; font-size: 12px; color: var(--c-ink); cursor: pointer;
+}
+.ph-run:hover:not(:disabled) { background: var(--c-chrome-2); }
+.ph-run:disabled { opacity: .6; cursor: default; }
+.ph-state { font-size: 10px; font-weight: 700; letter-spacing: .04em; min-width: 12em; }
+.ph-state-differs { color: var(--c-warn); }
+.ph-state-unchanged { color: var(--c-ink-3); }
+.ph-state-no-snapshot, .ph-state-not-comparable { color: var(--c-ink-3); font-weight: 600; }

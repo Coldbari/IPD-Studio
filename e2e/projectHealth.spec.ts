@@ -46,8 +46,10 @@ test('the Project workspace reports what is drawn, and each tile opens its sourc
   // that reads as an em dash, never as 0%.
   await expect(page.getByTestId('ph-complete-line')).toHaveText('—')
 
-  // No invented deliverables figure.
-  await expect(page.getByTestId('ph-deliverables')).toHaveCount(0)
+  // No invented deliverables figure. P3-6 added a staleness section, which
+  // COMPARES regenerated reports — it never counts files the product cannot see,
+  // and it computes nothing until it is asked.
+  await expect(page.getByTestId('ph-deliverables-jump')).toHaveCount(0)
 
   // The counts tile opens the Data workspace, where the tables are.
   await page.getByTestId('ph-counts-jump').click()
@@ -70,4 +72,50 @@ test('the quality tile agrees with the Checks workspace it opens', async ({ page
   } else {
     await expect(page.locator('.rail-badge')).toHaveCount(0)
   }
+})
+
+test('deliverable staleness compares against the last issue, and only when asked', async ({ page }) => {
+  await seed(page)
+
+  // Issue Rev A through the real path, which is what stores the snapshot.
+  await page.evaluate(async () => {
+    const w = window as never as { __pid: { useStore: { getState(): any } } }
+    const { useStore } = w.__pid
+    useStore.getState().setSheetMeta({ drawingNumber: 'PID-1001' })
+    const sheetId = useStore.getState().doc.sheets[0].id
+    const rev = useStore.getState().addRevision(sheetId, {
+      code: 'A', status: 'IFC', description: 'Issued for construction',
+      date: '2026-03-04', preparedBy: 'P Nagpure', checkedBy: 'R Nair', approvedBy: 'A Bose',
+    })
+    const mod = await import('/src/persist/revisions.ts')
+    await mod.issueRevision(sheetId, rev)
+  })
+
+  await page.getByTestId('rail-project').click()
+
+  // Nothing is compared until it is asked for — sixteen report builds must not
+  // happen on a render.
+  await expect(page.getByTestId('ph-deliverables-basis')).toContainText('PID-1001')
+  await expect(page.getByTestId('ph-deliverables-jump')).toHaveCount(0)
+
+  await page.getByTestId('ph-deliverables-run').click()
+  await expect(page.getByTestId('ph-deliv-equipment-list')).toHaveText('UNCHANGED')
+  await expect(page.getByTestId('ph-deliv-dexpi')).toHaveText('NOT COMPARABLE')
+
+  // Change one engineering field, and the report that prints it goes stale.
+  await page.getByTestId('rail-project').click()
+  await page.evaluate(() => {
+    const w = window as never as { __pid: { useStore: { getState(): any } } }
+    w.__pid.useStore.getState().setRecordField('TK-101', 'equipment', 'construction.material', 'SS316')
+  })
+
+  // The old answer describes a document that no longer exists, so it is gone.
+  await expect(page.getByTestId('ph-deliverables-jump')).toHaveCount(0)
+  await page.getByTestId('ph-deliverables-run').click()
+  await expect(page.getByTestId('ph-deliv-equipment-list')).toHaveText('DIFFERS')
+  await expect(page.getByTestId('ph-deliv-line-list')).toHaveText('UNCHANGED')
+
+  // And it opens the workspace where those reports live.
+  await page.getByTestId('ph-deliverables-jump').click()
+  await expect(page).toHaveURL(/\/app\/data$/)
 })

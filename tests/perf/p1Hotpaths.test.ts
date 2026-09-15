@@ -31,6 +31,7 @@ import { evaluateConformance, issueBlockers } from '../../src/model/conformance'
 import { conformanceCsv } from '../../src/export/csv'
 import { standardOf } from '../../src/model/standard'
 import { projectHealth } from '../../src/model/health'
+import { deliverableStatus } from '../../src/model/deliverables'
 import { qaFor, resetQaCache } from '../../src/validate/engine'
 import { runRules } from '../../src/validate/engine'
 import { ALL_RULES } from '../../src/validate/rules/index'
@@ -193,6 +194,23 @@ test.skipIf(!process.env.PERF)('P1 hot paths', () => {
   const healthIx = buildIndex(doc)
   const healthQa = runRules(healthIx, {})
   bench('projectHealth (index + QA reused)', 200, () => { projectHealth(healthIx, healthQa) })
+
+  /*
+   * P3-6 — what comparing every deliverable against the last issue costs.
+   *
+   * EIGHT reports generated TWICE, each building its own index — two orders of
+   * magnitude more than the health projection above, which is exactly why this
+   * one is behind a button and that one is not. Nothing here is on a render
+   * path: the Project workspace computes it when asked and discards it when the
+   * document moves.
+   *
+   * The `find`-free part matters more than the total: one pass over the
+   * catalogue, one generation per (deliverable, document), and no repeated
+   * snapshot read — the caller fetches the snapshot once and hands it in.
+   */
+  bench('deliverableStatus (8 reports x 2 documents)', 5, () => {
+    deliverableStatus(doc, { ok: true, doc })
+  })
 
   /*
    * P3 PROGRAM 1 — what deriving piping runs costs inside `buildIndex`.

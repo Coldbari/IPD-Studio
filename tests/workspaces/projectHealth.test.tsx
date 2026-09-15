@@ -146,13 +146,25 @@ describe('an absent denominator prints —, never 0%', () => {
 })
 
 describe('there is no fabricated deliverables metric', () => {
-  it('has no deliverables tile at all', async () => {
+  // P3-6 added a deliverable STALENESS section, which compares regenerated
+  // reports. The claim this protects is unchanged: nothing on this screen
+  // counts deliverables the product cannot see.
+  it('shows no deliverable count, and claims nothing before it has compared', async () => {
     seed()
     const host = await mount()
-    expect(q(host, 'ph-deliverables')).toBeNull()
-    expect(host.textContent).not.toMatch(/deliverable/i)
     // The plan's old mock read "Datasheets 342 / 386". Nothing tracks that.
     expect(host.textContent).not.toMatch(/\d+\s*\/\s*\d+/)
+    // Not computed until asked — the button is what starts it.
+    expect(q(host, 'ph-deliverables-run')).not.toBeNull()
+    expect(q(host, 'ph-deliverables-jump')).toBeNull()
+  })
+
+  it('never uses a word for a state it cannot observe', async () => {
+    seed()
+    const host = await mount()
+    for (const word of [/generated/i, /downloaded/i, /approved/i]) {
+      expect(host.textContent).not.toMatch(word)
+    }
   })
 })
 
