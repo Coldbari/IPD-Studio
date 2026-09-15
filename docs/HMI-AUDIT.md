@@ -584,3 +584,77 @@ Phase 0 figures of 0.9 ms and 5.7 ms for the old synchronous path.
   `missing-simulation-model` finding, and a dashed trend.
 - **P3 — the trend time axis** prints `00:00` twice while the run is shorter
   than the selected span.
+
+
+---
+
+## K3.1 — why the four loops were off setpoint
+
+The K3 integration was reverted with a pressure loop 0.5 bar off and a level
+loop 4.8 % off. The obvious reading was "retune the controllers". It was wrong,
+and no gain was changed.
+
+### The pressure loops — the setpoint is not reachable
+
+Sweeping PV-101 end to end and reading PT-101 at each point gives the
+achievable range of the controlled variable:
+
+| valve | Q (m³/h) | PT-101 (bar) |
+| --- | --- | --- |
+| 100 % | 50.00 | **3.500** |
+| 60 % | 35.96 | 5.768 |
+| 20 % | 5.34 | 8.146 |
+| 0 % | 0.00 | **8.200** |
+
+**Achievable range 3.50–8.20 bar. The tests ask for SP = 3.** It is below the
+minimum, and the 0.5 bar "offset" is exactly `3.50 − 3.00`.
+
+The controller is behaving correctly and provably so: it drives the valve to
+100 %, the conditional integration freezes the integrator at 95.07 instead of
+winding up, and the PV sits at the lowest pressure the process can deliver.
+Transient: 8.18 → 4.41 → 3.66 → 3.50, monotone, valve 15 → 78 → 94 → 100.
+
+The range moved because K3 corrected the pump semantics — `duty.head` is the
+head AT the rated flow, as a datasheet states it, so shutoff is 7.2 bar rather
+than 4. The old SP was chosen against the old, lower band.
+
+**Classification B: setpoint physically unreachable.** The fix is the test's
+setpoint, not the controller — and that change must land WITH the integration,
+because on the current runtime SP 3 is still correct.
+
+### The outlet-valve level loop — the edge of authority
+
+This loop drains by gravity, so its authority is the static head of the vessel
+it is emptying, which is the thing it controls. At the setpoint:
+
+```text
+inflow (FV-201 at 30 %)   11.78 m³/h
+drain at FULL travel      11.18 m³/h     ← short by 5 %
+drain at 60 % level       12.25 m³/h
+```
+
+The actuator is marginally short at setpoint, so the equilibrium sits a few per
+cent above it, where the extra head makes up the difference. The loop is stable
+and closes; it simply has almost no margin, which is why a change in the drain
+characteristic moves its steady state by several per cent rather than a
+fraction of one.
+
+**A gain sweep settles it.** Closing the loop through the real solver at
+kp = 6, 4, 3, 2, 1.5, 1, 0.75 and 0.5 (ti = 600) gives a final level within
+0.005 % of setpoint at every gain, with valve travel spreads of 0.00–0.06 %.
+**Tuning is not the cause and cannot be the cure.**
+
+### What changed
+
+Nothing in the controllers, nothing in the hydraulics. One new test file,
+`tests/hmi/loopReachability.test.ts`, closes both loops through the real solver
+and the real gains and pins what they can physically reach — including that an
+unreachable setpoint saturates at the limit rather than wandering.
+
+### What remains
+
+The level loop's 4.8 % in the integration is consistent with the edge-of-
+authority finding but is **not yet proven** to be it: reproducing that exact
+number needs the integration present, and it is still gated. The remaining work
+is a fixture-sizing decision (give the drain more authority, or accept an
+equilibrium above setpoint), not a tuning one.
