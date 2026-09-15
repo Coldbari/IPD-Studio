@@ -119,3 +119,55 @@ test('deliverable staleness compares against the last issue, and only when asked
   await page.getByTestId('ph-deliverables-jump').click()
   await expect(page).toHaveURL(/\/app\/data$/)
 })
+
+test('review comments: write one on a record, reply, resolve, reopen — and the project counts it', async ({ page }) => {
+  await seed(page)
+
+  // Select the tagged vessel so the Inspector shows its Engineering tab.
+  await page.evaluate(() => {
+    const w = window as never as { __pid: { useStore: { getState(): any } } }
+    const { useStore } = w.__pid
+    const tank = useStore.getState().doc.sheets[0].nodes.find((n: any) => n.tag?.letters === 'TK')
+    useStore.getState().setSelection([tank.id])
+  })
+  await page.getByTestId('insp-eng').click()
+
+  // A review comment is not a QA finding, and the panel says so.
+  await expect(page.getByTestId('eng-review-empty')).toContainText('no severity')
+
+  await page.getByTestId('rev-new-body').fill('Design pressure looks low for this duty.')
+  await page.getByTestId('rev-add').click()
+  await expect(page.getByTestId('eng-review-open')).toHaveText('1 open')
+
+  // Reply into the same thread.
+  const threadId = await page.evaluate(() => {
+    const w = window as never as { __pid: { useStore: { getState(): any } } }
+    return w.__pid.useStore.getState().doc.registry['TK-101'].comments[0].id
+  })
+  await page.getByTestId(`rev-${threadId}-reply`).click()
+  await page.getByTestId(`rev-${threadId}-reply-body`).fill('Agreed — raise it to 12 barg.')
+  await page.getByTestId(`rev-${threadId}-reply-send`).click()
+  await expect(page.getByTestId(`rev-${threadId}`)).toContainText('raise it to 12 barg')
+
+  // The Project workspace counts it, and says it is not QA.
+  await page.getByTestId('rail-project').click()
+  await expect(page.getByTestId('ph-review-open')).toHaveText('1')
+  await expect(page.getByTestId('ph-review-note')).toContainText('never block an issue')
+
+  // Resolve, and the count falls to zero. Switching workspaces unmounts the
+  // drawing, so the Inspector opens on its first tab again.
+  await page.getByTestId('rail-draw').click()
+  await page.getByTestId('insp-eng').click()
+  await page.getByTestId(`rev-${threadId}-resolve`).click()
+  await expect(page.getByTestId(`rev-${threadId}-resolved`)).toBeVisible()
+  await page.getByTestId('rail-project').click()
+  await expect(page.getByTestId('ph-review-open')).toHaveText('0')
+
+  // Reopen, and it comes back as the same thread.
+  await page.getByTestId('rail-draw').click()
+  await page.getByTestId('insp-eng').click()
+  await page.getByTestId(`rev-${threadId}-reopen`).click()
+  await expect(page.getByTestId(`rev-${threadId}-resolve`)).toBeVisible()
+  await page.getByTestId('rail-project').click()
+  await expect(page.getByTestId('ph-review-open')).toHaveText('1')
+})

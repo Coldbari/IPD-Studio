@@ -121,6 +121,8 @@ describe('every top-level record property is accounted for in the diff', () => {
       // P3-4B-1: the equipment's nozzle schedule. Listed here because this
       // test's whole job is that no record property escapes the ledger.
       nozzles: [{ id: 'n1', number: 'N1' }],
+      // P3-7: review comment threads, for the same reason.
+      comments: [{ id: 't1', notes: [{ id: 'n1', body: 'a', at: '2026-09-15T00:00:00.000Z' }] }],
     })).sort()
     expect(declared).toEqual(actual)
   })

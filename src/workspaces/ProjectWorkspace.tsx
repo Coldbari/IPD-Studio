@@ -243,6 +243,24 @@ export default function ProjectWorkspace() {
             </p>
           </section>
 
+          {/* -------------------------------------------------- review */}
+          <section className="ph-card" data-testid="ph-review">
+            <h2>Review comments</h2>
+            <button className="ph-jump" data-testid="ph-review-jump" onClick={go('data')}>
+              <span className="ph-big" data-testid="ph-review-open">{health.review.threads}</span>
+              <span className="ph-row">
+                {health.review.threads === 1 ? 'unresolved thread' : 'unresolved threads'}
+                {health.review.records > 0 && ` on ${health.review.records} object${health.review.records === 1 ? '' : 's'}`}
+              </span>
+            </button>
+            {/* Said plainly, because an unresolved count sitting beside a QA
+                count invites exactly the wrong reading. */}
+            <p className="prop-hint" data-testid="ph-review-note">
+              Notes between people, written on the Engineering tab of an object. They carry no
+              severity and never block an issue — that is what Checks is for.
+            </p>
+          </section>
+
           {/* ----------------------------------------- deliverable staleness */}
           <section className="ph-card ph-card-wide" data-testid="ph-deliverables">
             <h2>Deliverable staleness</h2>

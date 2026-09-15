@@ -32,6 +32,7 @@ import { conformanceCsv } from '../../src/export/csv'
 import { standardOf } from '../../src/model/standard'
 import { projectHealth } from '../../src/model/health'
 import { deliverableStatus } from '../../src/model/deliverables'
+import { newThread, unresolvedCount } from '../../src/model/review'
 import { qaFor, resetQaCache } from '../../src/validate/engine'
 import { runRules } from '../../src/validate/engine'
 import { ALL_RULES } from '../../src/validate/rules/index'
@@ -194,6 +195,28 @@ test.skipIf(!process.env.PERF)('P1 hot paths', () => {
   const healthIx = buildIndex(doc)
   const healthQa = runRules(healthIx, {})
   bench('projectHealth (index + QA reused)', 200, () => { projectHealth(healthIx, healthQa) })
+
+  /*
+   * P3-7 — what counting open review threads costs.
+   *
+   * One pass over the registry for both numbers, off the records the index
+   * already holds. No `buildIndex`, no per-tile scan, no cache — and nothing
+   * the canvas ever reads, so a drawing gesture pays none of it.
+   */
+  const reviewed = {
+    ...doc,
+    registry: Object.fromEntries(
+      Object.entries(doc.registry!).map(([k, r], i) => [
+        k,
+        // Two threads on every third record, one of them resolved — a heavily
+        // reviewed project rather than a token one.
+        i % 3 === 0 ? { ...r, comments: [newThread('open question')!, { ...newThread('settled')!, resolved: { at: '2026-09-15T00:00:00.000Z' } }] } : r,
+      ]),
+    ),
+  }
+  const reviewedCount = unresolvedCount(reviewed.registry)
+  process.stderr.write(`  (review fixture: ${reviewedCount.threads} open threads on ${reviewedCount.records} records)\n`)
+  bench('unresolvedCount (500 records)', 500, () => { unresolvedCount(reviewed.registry) })
 
   /*
    * P3-6 — what comparing every deliverable against the last issue costs.

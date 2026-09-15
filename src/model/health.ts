@@ -35,6 +35,7 @@ import { requiredFor } from './standard'
 import { recordFieldValue } from './hierarchy'
 import { projectCost } from './costs'
 import { lastIssued, openRevisions, revisionsOf } from './revision'
+import { unresolvedCount } from './review'
 
 /** The four record kinds, in the order a dashboard reads them. */
 export const HEALTH_KINDS: readonly EntityKind[] = ['equipment', 'line', 'instrument', 'valve']
@@ -111,6 +112,13 @@ export interface SheetRevisionHealth {
   open: number
 }
 
+/** Open review threads, and how many objects carry one. NOT QA: a comment has
+ *  no severity and blocks no issue — see model/review.ts. */
+export interface ReviewHealth {
+  threads: number
+  records: number
+}
+
 export interface ProjectHealth {
   counts: HealthCounts
   completeness: {
@@ -122,6 +130,7 @@ export interface ProjectHealth {
   }
   qa: QaSummary
   budget: BudgetHealth
+  review: ReviewHealth
   /** One row per sheet, in document order. */
   revisions: SheetRevisionHealth[]
 }
@@ -283,6 +292,9 @@ export function projectHealth(ix: ProjectIndex, qa: QaReport): ProjectHealth {
       unpriced: cost.unpriced,
       ...(usable ? { target, fraction: cost.total / target } : {}),
     },
+    // One pass over the registry, beside the completeness pass — never a scan
+    // per tile, and nothing cached.
+    review: unresolvedCount(ix.records),
     revisions: ix.doc.sheets.map(revisionHealth),
   }
 }

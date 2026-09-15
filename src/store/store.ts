@@ -68,6 +68,8 @@ import type { Area, LegacyRow, Unit } from '../model/hierarchy'
 import type { Loop, LoopType } from '../model/loop'
 import type { Nozzle, NozzleInit } from '../model/nozzle'
 import { newNozzle, nozzleNumberTaken } from '../model/nozzle'
+import type { ReviewThread } from '../model/review'
+import { newNote, newThread } from '../model/review'
 import { loopNumberKey, loopNumberTaken, newLoop } from '../model/loop'
 import type { AdoptionRow } from '../model/loopAdoption'
 import { drawnKinds, liveKeys } from '../model/registry'
@@ -82,6 +84,8 @@ import { isPortEnd } from '../model/types'
 import { createEmptyDoc, createSheet } from '../model/doc'
 import type { HmiPipe, HmiScreen, HmiTheme, HmiWidget } from '../hmi/model'
 import { createScreen } from '../hmi/model'
+import type { ReconcilePlan } from '../model/reconcile'
+import { applyReconcile } from '../model/reconcile'
 
 export interface LoopInit {
   name?: string
@@ -110,6 +114,14 @@ export interface LoopResult {
 export interface NozzleResult {
   ok: boolean
   /** The nozzle's stable id, on success. */
+  id?: string
+  reason?: string
+}
+
+/** What a review action did, or why it refused. Same shape as `NozzleResult`. */
+export interface ReviewResult {
+  ok: boolean
+  /** The thread's stable id, on success. */
   id?: string
   reason?: string
 }
@@ -282,6 +294,28 @@ export interface StoreState {
   updateNozzle(key: string, nozzleId: string, patch: NozzleInit): NozzleResult
   /** Delete one nozzle. Touches no other nozzle and no other record field. */
   removeNozzle(key: string, nozzleId: string): NozzleResult
+
+  /* ------------------------------------------------------ review comments */
+  /**
+   * Start a review thread on a tagged object's engineering record.
+   *
+   * Refused when there is no key to hang it on and when the body is blank. A
+   * thread carries no severity and blocks nothing: it is what a checker said,
+   * not what a rule decided.
+   *
+   * `by` is a COPIED display name resolved by the caller (see `reviewAuthor`),
+   * never a user id — this store stays free of the auth layer, exactly as
+   * `ignoreFinding` does.
+   */
+  addThread(key: string, kind: EntityKind, body: string, by?: string): ReviewResult
+  /** Append a reply. Notes are append-only: a correction is another note. */
+  addNote(key: string, threadId: string, body: string, by?: string): ReviewResult
+  /** Mark a thread resolved. Resolving an already-resolved thread is refused
+   *  rather than restamping who resolved it. */
+  resolveThread(key: string, threadId: string, by?: string): ReviewResult
+  /** Reopen it. The key is DELETED rather than set false, so a round trip
+   *  through a saved file is unchanged. */
+  reopenThread(key: string, threadId: string): ReviewResult
   /** Apply an adopted-loop plan as ONE undo step. Only rows the plan marked
    *  `adopt` are acted on, each re-checked against the live document first;
    *  nothing is renamed, deleted or inferred. */
@@ -329,6 +363,16 @@ export interface StoreState {
   addHmiPipe(partial: Omit<HmiPipe, 'id'>): string
   updateHmiPipe(id: string, patch: Partial<Omit<HmiPipe, 'id'>>): void
   deleteHmiIds(ids: string[]): void
+  /**
+   * Apply one reconciliation plan as ONE undoable document transaction.
+   *
+   * The whole action is a single `set`, so zundo records exactly one step and
+   * an undo returns the document that went in — widget for widget, baseline
+   * included. It touches `doc` and nothing else: the simulation, the process
+   * history and the alarm list live in `hmi/simStore.ts`, outside the document
+   * entirely, which is why reconciling a running plant cannot disturb it.
+   */
+  applyReconciliation(plan: ReconcilePlan): void
   /** Paste/import helper: widgets + pipes land as ONE undo step. */
   addHmiBatch(widgets: Omit<HmiWidget, 'id'>[], pipes: Omit<HmiPipe, 'id'>[]): { widgetIds: string[]; pipeIds: string[] }
 }
@@ -1248,6 +1292,114 @@ export const useStore = create<StoreState>()(
           return { ok: true, id: loopId }
         },
 
+        /* ------------------------------------------- review comments */
+
+        addThread(key, kind, body, by) {
+          // Engineering data hangs off the tag, and a review comment is a
+          // statement ABOUT an engineering object. An untagged object has no
+          // key, so there is nowhere to put it — and minting a record under a
+          // fabricated key would be the silent invention this refuses.
+          if (!key) {
+            return { ok: false, reason: 'That object has no tag yet, so there is nothing to attach a comment to.' }
+          }
+          const thread = newThread(body, by)
+          if (!thread) return { ok: false, reason: 'A comment needs something written in it.' }
+
+          set((sx) => {
+            const record: EngineeringRecord = sx.doc.registry?.[key] ?? { key, kind, fields: {} }
+            return {
+              doc: touched({
+                ...sx.doc,
+                registry: {
+                  ...sx.doc.registry,
+                  // Appended, so the review reads in the order it happened.
+                  [key]: { ...record, comments: [...(record.comments ?? []), thread], updated: new Date().toISOString() },
+                },
+              }),
+              dirty: true,
+            }
+          })
+          return { ok: true, id: thread.id }
+        },
+
+        addNote(key, threadId, body, by) {
+          const prev = get().doc.registry?.[key]
+          if (!(prev?.comments ?? []).some((t) => t.id === threadId)) {
+            return { ok: false, reason: `There is no comment thread ${threadId} on ${key}.` }
+          }
+          const note = newNote(body, by)
+          if (!note) return { ok: false, reason: 'A reply needs something written in it.' }
+
+          set((sx) => {
+            const record = sx.doc.registry?.[key]
+            if (!record) return sx
+            const next = (record.comments ?? []).map((t) =>
+              t.id === threadId ? { ...t, notes: [...t.notes, note] } : t,
+            )
+            return {
+              doc: touched({
+                ...sx.doc,
+                registry: { ...sx.doc.registry, [key]: { ...record, comments: next, updated: new Date().toISOString() } },
+              }),
+              dirty: true,
+            }
+          })
+          return { ok: true, id: threadId }
+        },
+
+        resolveThread(key, threadId, by) {
+          const prev = get().doc.registry?.[key]
+          const target = (prev?.comments ?? []).find((t) => t.id === threadId)
+          if (!target) return { ok: false, reason: `There is no comment thread ${threadId} on ${key}.` }
+          // Restamping a thread that is already resolved would rewrite who
+          // closed it and when, which is the one thing an audit trail must not
+          // let an accidental second click do.
+          if (target.resolved) return { ok: false, reason: 'That comment is already resolved.' }
+
+          const resolved = { at: new Date().toISOString(), ...(by ? { by } : {}) }
+          set((sx) => {
+            const record = sx.doc.registry?.[key]
+            if (!record) return sx
+            const next = (record.comments ?? []).map((t) => (t.id === threadId ? { ...t, resolved } : t))
+            return {
+              doc: touched({
+                ...sx.doc,
+                registry: { ...sx.doc.registry, [key]: { ...record, comments: next, updated: new Date().toISOString() } },
+              }),
+              dirty: true,
+            }
+          })
+          return { ok: true, id: threadId }
+        },
+
+        reopenThread(key, threadId) {
+          const prev = get().doc.registry?.[key]
+          const target = (prev?.comments ?? []).find((t) => t.id === threadId)
+          if (!target) return { ok: false, reason: `There is no comment thread ${threadId} on ${key}.` }
+          if (!target.resolved) return { ok: false, reason: 'That comment is already open.' }
+
+          set((sx) => {
+            const record = sx.doc.registry?.[key]
+            if (!record) return sx
+            const next = (record.comments ?? []).map((t): ReviewThread => {
+              if (t.id !== threadId) return t
+              // The key is DELETED, not set to undefined: absent and
+              // `resolved: undefined` serialise differently, and only one of
+              // them survives a round trip unchanged.
+              const { resolved: _drop, ...rest } = t
+              return rest
+            })
+            return {
+              doc: touched({
+                ...sx.doc,
+                registry: { ...sx.doc.registry, [key]: { ...record, comments: next, updated: new Date().toISOString() } },
+              }),
+              dirty: true,
+            }
+          })
+          return { ok: true, id: threadId }
+        },
+
         /** The explicit opposite. Deliberately its own action rather than a
          *  side effect of clearing a tag: P0 already established that clearing
          *  a tag strands references rather than tidying them, and a loop
@@ -1820,6 +1972,16 @@ export const useStore = create<StoreState>()(
             widgets: sc.widgets.filter((w) => !idSet.has(w.id)),
             pipes: sc.pipes.filter((p) => !idSet.has(p.id)),
           }))
+        },
+
+        applyReconciliation(plan) {
+          set((s) => {
+            const doc = applyReconcile(s.doc, plan)
+            // Nothing applied — return the state object itself so zundo's
+            // identity `equality` records no step for a no-op.
+            if (doc === s.doc) return s
+            return { doc: touched(doc), dirty: true }
+          })
         },
 
         markSaved() {

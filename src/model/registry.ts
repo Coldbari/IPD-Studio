@@ -4,6 +4,7 @@
 
 import type { PlantEdge, PlantNode } from './types'
 import type { Nozzle } from './nozzle'
+import type { ReviewThread } from './review'
 import { formatTag } from '../isa/tag'
 
 /**
@@ -87,6 +88,22 @@ export interface EngineeringRecord {
    * document so far.
    */
   nozzles?: Nozzle[]
+  /**
+   * Review comment threads on this object (model/review.ts).
+   *
+   * NESTED for the reason `nozzles` is nested, and for one more of its own: a
+   * thread stores no tag, so it is not a tag reference and needs no
+   * `RefWhere` member to collect, rewrite or orphan. `retagRegistry` below
+   * carries the whole conversation across a rename, and `deleteIds` never
+   * touches the registry, so a review survives deleting and redrawing the
+   * symbol it is about.
+   *
+   * NOT QA. A thread carries no severity, produces no finding and blocks no
+   * issue. It is what a checker said, not what a rule decided.
+   *
+   * Absent on every document written before they existed.
+   */
+  comments?: ReviewThread[]
   /** Revision in which this record last changed (populated from v0.19). */
   rev?: string
   updated?: string

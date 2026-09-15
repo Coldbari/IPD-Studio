@@ -173,6 +173,7 @@ export function collectTagRefs(doc: ProjectDoc, key: string): TagRef[] {
     // only fields made a record that holds one read as "0 fields" — a preview
     // telling the user there is nothing to carry when there is.
     const fieldCount = Object.keys(record.fields).length
+    const threadCount = record.comments?.length ?? 0
     const parts = [`${fieldCount} field${fieldCount === 1 ? '' : 's'}`]
     if (record.unitId) parts.push('unit assignment')
     // A loop assignment travels with the record like everything else. It is
@@ -181,6 +182,12 @@ export function collectTagRefs(doc: ProjectDoc, key: string): TagRef[] {
     // preview must still say it is being carried, or it under-reports what a
     // rename moves.
     if (record.loopId) parts.push('loop assignment')
+    // Threads travel with the record like everything else, and are NOT a tag
+    // reference either — a thread stores no tag, so a rename carries the whole
+    // conversation without rewriting anything. Said here for the same reason
+    // the loop assignment is: a preview that omitted it would under-report
+    // what a rename moves.
+    if (threadCount > 0) parts.push(`${threadCount} review thread${threadCount === 1 ? '' : 's'}`)
     out.push({
       class: 'auto',
       where: 'registry',

@@ -33,6 +33,8 @@ import type { EngineeringRecord } from './registry'
 import { buildHierarchy, type Hierarchy } from './hierarchy'
 import type { Loop } from './loop'
 import type { Nozzle } from './nozzle'
+import type { ReviewThread } from './review'
+import { isOpen, threadsOf } from './review'
 import { fingerprintStandard } from './provenance'
 import type { IssueGate } from './standard'
 
@@ -433,6 +435,7 @@ function diffRegistry(before: ProjectDoc, after: ProjectDoc, renames: Map<string
       })
     }
     diffNozzles(oldRec, newRec, toKey, push)
+    diffComments(oldRec, newRec, toKey, push)
   }
 
   for (const key of Object.keys(now)) if (was[key]) compare(key, key)
@@ -497,6 +500,94 @@ function diffNozzles(
         kind: 'modified', entityType: 'record', entityId: key, entityKey: key,
         field: `nozzle ${nozzle.number} ${field}`, before: wasV, after: isV, category: 'engineering',
       })
+    }
+  }
+}
+
+/**
+ * How a thread is NAMED in a comparison.
+ *
+ * A thread has no title and no number — its id is a ULID nobody reads. So it is
+ * named by the words it opens with, which is how a reviewer actually recognises
+ * one. Truncated, because a revision report is a list and a paragraph in the
+ * `field` column would make it unreadable.
+ */
+function threadName(thread: ReviewThread): string {
+  const first = thread.notes[0]?.body ?? ''
+  const short = first.length > 40 ? `${first.slice(0, 40)}…` : first
+  return `comment "${short}"`
+}
+
+/** One note as a reviewer reads it, for the add/remove lines. */
+const noteText = (note: { body: string; by?: string }): string =>
+  note.by ? `${note.by}: ${note.body}` : note.body
+
+/**
+ * Review threads, thread by thread and note by note.
+ *
+ * MATCHED ON STABLE IDS at both levels. Reordering reports nothing; a reply is
+ * one added note rather than a conversation that appears to have been rewritten.
+ *
+ * `at` IS NOT COMPARED. A note that is merely older is not a change — the same
+ * ruling `updated` gets, and the reason the ledger above says so out loud.
+ */
+function diffComments(
+  oldRec: EngineeringRecord,
+  newRec: EngineeringRecord,
+  key: string,
+  push: (c: DocChange) => void,
+) {
+  const base = { kind: 'modified' as const, entityType: 'record' as const, entityId: key, entityKey: key, category: 'metadata' as const }
+  const was = new Map(threadsOf(oldRec).map((t) => [t.id, t]))
+  const now = new Map(threadsOf(newRec).map((t) => [t.id, t]))
+
+  for (const [id, thread] of was) {
+    if (now.has(id)) continue
+    push({ ...base, field: threadName(thread), before: noteText(thread.notes[0]!), after: undefined })
+  }
+  for (const [id, thread] of now) {
+    if (was.has(id)) continue
+    push({ ...base, field: threadName(thread), before: undefined, after: noteText(thread.notes[0]!) })
+  }
+
+  for (const [id, thread] of now) {
+    const old = was.get(id)
+    if (!old) continue
+    const name = threadName(thread)
+
+    // Open and resolved are the whole state machine, so the transition either
+    // way is one change and reads as a sentence rather than as a flag.
+    if (isOpen(old) !== isOpen(thread)) {
+      push({
+        ...base, field: `${name} — state`,
+        before: isOpen(old) ? 'open' : 'resolved',
+        after: isOpen(thread) ? 'open' : 'resolved',
+      })
+    } else if ((old.resolved?.by ?? '') !== (thread.resolved?.by ?? '')) {
+      push({ ...base, field: `${name} — resolved by`, before: old.resolved?.by, after: thread.resolved?.by })
+    }
+
+    const oldNotes = new Map(old.notes.map((n) => [n.id, n]))
+    const newNotes = new Map(thread.notes.map((n) => [n.id, n]))
+    for (const [noteId, note] of oldNotes) {
+      if (newNotes.has(noteId)) continue
+      push({ ...base, field: `${name} — reply`, before: noteText(note), after: undefined })
+    }
+    for (const [noteId, note] of newNotes) {
+      if (oldNotes.has(noteId)) continue
+      push({ ...base, field: `${name} — reply`, before: undefined, after: noteText(note) })
+    }
+    for (const [noteId, note] of newNotes) {
+      const before = oldNotes.get(noteId)
+      if (!before) continue
+      // Notes are append-only in this product, so a changed body means a file
+      // edited elsewhere — still worth reporting rather than swallowing.
+      if (before.body !== note.body) {
+        push({ ...base, field: `${name} — note`, before: before.body, after: note.body })
+      }
+      if ((before.by ?? '') !== (note.by ?? '')) {
+        push({ ...base, field: `${name} — author`, before: before.by, after: note.by })
+      }
     }
   }
 }
@@ -1016,6 +1107,17 @@ export const RECORD_FIELD_COVERAGE: Record<keyof EngineeringRecord, 'compared' |
   unitId: 'compared — by stable id, displayed as AREA/UNIT codes',
   loopId: 'compared — by stable id, displayed as the loop NUMBER, so renumbering a loop stays one change on the loop rather than one per member',
   nozzles: 'compared — nozzle by nozzle, matched on stable id and named by NUMBER, so reordering the schedule reports nothing and renumbering one reports one change',
+  // METADATA rather than engineering, for the reason `owner` is: a review
+  // comment does not change the plant. It IS something somebody decided
+  // between two issues, so it is reported.
+  //
+  // Matched on the thread's stable id and each note's, so reordering reports
+  // nothing and a reply is one change rather than a rewritten conversation.
+  // `at` is EXCLUDED from the comparison — a timestamp is not an engineering
+  // change, exactly as `updated` below is excluded — while `by` is compared,
+  // because who said it is part of what was said. Threads carry no severity
+  // and reach neither QA nor issue gating; see model/review.ts.
+  comments: 'compared — thread by thread and note by note, matched on stable ids, named by the opening words; timestamps excluded, authors compared',
   key: 'Excluded: it IS the identity the comparison is keyed on; a changed key is a rename, reported on the node.',
   kind: 'Excluded: derived from the object that wears the tag, and a change there is already reported as the node changing kind.',
   rev: 'Excluded: stamped BY issuing, so comparing it across two issues reports the act of comparing.',

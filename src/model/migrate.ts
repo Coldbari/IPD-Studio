@@ -9,6 +9,7 @@ import { keyOfNode, kindOfNode } from './registry'
 import { checkWidgetProps } from '../hmi/model'
 import { checkLoops } from './loop'
 import { checkNozzles } from './nozzle'
+import { checkComments } from './review'
 import { DEFAULT_ISSUE_STATUSES, standardFromLegacySettings } from './standard'
 import { INITIAL_REVISION_CODE, legacyRevisionId, newRevision } from './revision'
 
@@ -221,6 +222,11 @@ export function loadDoc(raw: unknown): ProjectDoc {
     // this build cannot reason about.
     const nozzleProblem = checkNozzles(doc.registry)
     if (nozzleProblem) throw new DocError(nozzleProblem)
+    // Review threads, same line once more. There is nothing here that CAN be a
+    // broken reference — a thread names no tag, no node and no revision — so
+    // everything this finds is a shape this build cannot display.
+    const commentProblem = checkComments(doc.registry)
+    if (commentProblem) throw new DocError(commentProblem)
     // The tag conventions used to live in `settings`. They fold into the
     // standard so ONE place answers "how are tags formatted here" — but the old
     // fields are left in place and still read, so a v5 file written by this

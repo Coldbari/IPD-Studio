@@ -178,9 +178,13 @@ function recordContents(record: EngineeringRecord | undefined): string {
   if (!record) return 'This record is already gone.'
   const fields = Object.values(record.fields).filter((v) => v.trim() !== '').length
   const nozzles = record.nozzles?.length ?? 0
+  // Review history is content somebody wrote, and discarding it silently is
+  // exactly the understatement the nozzle count was added to stop.
+  const threads = record.comments?.length ?? 0
   const parts: string[] = []
   if (fields) parts.push(`${fields} stored field${fields === 1 ? '' : 's'}`)
   if (nozzles) parts.push(`${nozzles} nozzle${nozzles === 1 ? '' : 's'}`)
+  if (threads) parts.push(`${threads} review thread${threads === 1 ? '' : 's'}`)
   if (record.unitId) parts.push('its unit assignment')
   if (record.loopId) parts.push('its loop assignment')
   if (parts.length === 0) return 'This record holds no engineering data.'

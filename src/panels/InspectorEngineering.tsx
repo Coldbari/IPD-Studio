@@ -14,6 +14,8 @@ import LoopPicker from './LoopPicker'
 import { LEGACY_AREA_FIELD, buildHierarchy, placementOf } from '../model/hierarchy'
 import { LOOP_TYPE_LABELS } from '../model/loop'
 import { nozzlesOf, type Nozzle } from '../model/nozzle'
+import { isOpen, reviewAuthor, threadsOf } from '../model/review'
+import { useAuthStore } from '../auth/authStore'
 import { showStatus } from '../feedback/notices'
 import { portsOfNode } from '../model/projectIndex'
 
@@ -179,6 +181,139 @@ function NozzleSection({ node, recordKey, kind }: { node: PlantNode; recordKey: 
           }}
         >
           Add nozzle
+        </button>
+      </div>
+    </section>
+  )
+}
+
+/**
+ * REVIEW COMMENTS on the selected object.
+ *
+ * These are NOT QA findings and the panel says so out loud. A finding is what a
+ * rule decided against the company standard; this is what a person said. It
+ * carries no severity, produces no finding, and blocks no issue — so it must
+ * not be dressed to look like one.
+ *
+ * Nothing here decides anything: the four store actions own numbering,
+ * collisions and history. The author is resolved once, here, because the store
+ * deliberately knows nothing about the auth layer — `ignoreFinding` writes
+ * `doc.meta.author` the same way.
+ *
+ * APPEND-ONLY. There is no edit control, because a correction is another note
+ * and an audit trail that can be rewritten is not one.
+ */
+function ReviewSection({ recordKey, kind }: { recordKey: string; kind: EntityKind }) {
+  const doc = useStore((s) => s.doc)
+  const addThread = useStore((s) => s.addThread)
+  const addNote = useStore((s) => s.addNote)
+  const resolveThread = useStore((s) => s.resolveThread)
+  const reopenThread = useStore((s) => s.reopenThread)
+  // Signed in or not: the app is fully usable signed out, so this degrades to
+  // the document author and then to nobody.
+  const signedIn = useAuthStore((s) => s.user?.displayName ?? undefined)
+  const [draft, setDraft] = useState('')
+  const [reply, setReply] = useState<{ id: string; body: string } | null>(null)
+
+  const by = reviewAuthor(signedIn, doc.meta.author)
+  const threads = threadsOf(doc.registry?.[recordKey])
+  const open = threads.filter(isOpen).length
+
+  const say = (result: { ok: boolean; reason?: string }) => {
+    if (!result.ok) showStatus(result.reason ?? 'That comment could not be saved', { kind: 'warning' })
+    return result.ok
+  }
+
+  return (
+    <section className="eng-section" data-testid="eng-review">
+      <div className="prop-title">
+        Review comments
+        {open > 0 && <span className="rev-open-chip" data-testid="eng-review-open">{open} open</span>}
+      </div>
+
+      {threads.length === 0 && (
+        <p className="prop-hint" data-testid="eng-review-empty">
+          No review comments on this object. These are notes between people — they carry no severity
+          and never block an issue. Checks is where the rules speak.
+        </p>
+      )}
+
+      {threads.map((thread) => (
+        <div className={`rev-thread${isOpen(thread) ? '' : ' is-resolved'}`} key={thread.id} data-testid={`rev-${thread.id}`}>
+          {thread.notes.map((note) => (
+            <div className="rev-note" key={note.id}>
+              <div className="rev-note-head">
+                {/* Absent author shows as nothing. Inventing "Unknown" would be
+                    worse than admitting nobody was named. */}
+                {note.by && <b>{note.by}</b>}
+                <time dateTime={note.at}>{note.at.slice(0, 10)}</time>
+              </div>
+              <p className="rev-note-body">{note.body}</p>
+            </div>
+          ))}
+
+          <div className="rev-actions">
+            {isOpen(thread) ? (
+              <>
+                <button
+                  data-testid={`rev-${thread.id}-reply`}
+                  onClick={() => setReply(reply?.id === thread.id ? null : { id: thread.id, body: '' })}
+                >
+                  Reply
+                </button>
+                <button
+                  data-testid={`rev-${thread.id}-resolve`}
+                  onClick={() => resolveThread(recordKey, thread.id, by)}
+                >
+                  Resolve
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="rev-resolved" data-testid={`rev-${thread.id}-resolved`}>
+                  Resolved{thread.resolved?.by ? ` by ${thread.resolved.by}` : ''} {thread.resolved?.at.slice(0, 10)}
+                </span>
+                <button data-testid={`rev-${thread.id}-reopen`} onClick={() => reopenThread(recordKey, thread.id)}>
+                  Reopen
+                </button>
+              </>
+            )}
+          </div>
+
+          {reply?.id === thread.id && (
+            <div className="tag-row">
+              <input
+                aria-label="Reply"
+                data-testid={`rev-${thread.id}-reply-body`}
+                value={reply.body}
+                onChange={(e) => setReply({ id: thread.id, body: e.target.value })}
+              />
+              <button
+                data-testid={`rev-${thread.id}-reply-send`}
+                disabled={!reply.body.trim()}
+                onClick={() => { if (say(addNote(recordKey, thread.id, reply.body, by))) setReply(null) }}
+              >
+                Send
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
+
+      <div className="tag-row">
+        <input
+          placeholder="Add a review comment…"
+          aria-label="New review comment"
+          data-testid="rev-new-body"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+        <button
+          data-testid="rev-add"
+          disabled={!draft.trim()}
+          onClick={() => { if (say(addThread(recordKey, kind, draft, by))) setDraft('') }}
+        >
+          Comment
         </button>
       </div>
     </section>
@@ -370,6 +505,10 @@ export default function InspectorEngineering({ node }: { node: PlantNode }) {
           or an exchanger. Valves and instruments have ports too, but nothing
           in the model says those are nozzles. */}
       {kind === 'equipment' && <NozzleSection node={node} recordKey={key} kind={kind} />}
+
+      {/* Every tagged object can be reviewed — a valve's fail position and a
+          line's material are as reviewable as a vessel's nozzles. */}
+      <ReviewSection recordKey={key} kind={kind} />
 
       {node.kind === 'instrument' && (
         <div className="prop-row">

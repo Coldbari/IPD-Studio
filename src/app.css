@@ -1778,3 +1778,24 @@ button.used-row:hover { background: var(--c-accent-soft); color: var(--c-accent)
 .ph-state-differs { color: var(--c-warn); }
 .ph-state-unchanged { color: var(--c-ink-3); }
 .ph-state-no-snapshot, .ph-state-not-comparable { color: var(--c-ink-3); font-weight: 600; }
+
+/* ── Review comment threads (panels/InspectorEngineering.tsx) ─────────────
+   Deliberately unlike a QA finding: no severity colour, no warning icon. A
+   comment is what a person said, not what a rule decided. */
+.rev-open-chip {
+  margin-left: 6px; padding: 0 5px; border-radius: 8px; background: var(--c-chrome-2);
+  font-size: 9.5px; font-weight: 600; color: var(--c-ink-3); vertical-align: middle;
+}
+.rev-thread { border-left: 2px solid var(--c-line); padding-left: 8px; margin-bottom: 10px; }
+.rev-thread.is-resolved { opacity: .62; }
+.rev-note { margin-bottom: 6px; }
+.rev-note-head { display: flex; gap: 6px; align-items: baseline; font-size: 10.5px; color: var(--c-ink-3); }
+.rev-note-head b { color: var(--c-ink-2); font-weight: 600; }
+.rev-note-body { margin: 1px 0 0; font-size: 12px; color: var(--c-ink); white-space: pre-wrap; }
+.rev-actions { display: flex; gap: 6px; align-items: center; font-size: 11px; }
+.rev-actions button {
+  height: 22px; padding: 0 8px; border: 1px solid var(--c-line); border-radius: 4px;
+  background: var(--c-surface); font: inherit; font-size: 11px; color: var(--c-ink-2); cursor: pointer;
+}
+.rev-actions button:hover { background: var(--c-chrome-2); }
+.rev-resolved { font-size: 10.5px; color: var(--c-ink-3); }
