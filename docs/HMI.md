@@ -582,6 +582,22 @@ Newton step first, halved until the residual norm actually falls (Armijo, slack
 The Jacobian is numerical, perturbation `1e-6 bar`, which sits well inside
 every linearised region so a derivative is never taken across a kink.
 
+**Blocked elements are steep, not infinite.** A shut valve, a stopped pump and
+a full vessel's inlet all carry a huge FINITE resistance (`SHUT_FRACTION`,
+`GATE_LEAK`) rather than exactly nothing. An infinite resistance has a zero
+derivative, and Newton cannot determine the pressure of a node whose only live
+connection carries no flow and has no slope — a dead end behind a closed valve
+made the whole solve singular, and a full vessel with a line just above it
+trapped it a thousandth of a bar short. Twelve orders of conductance down
+passes about 5e-5 m³/h at a full bar: shut as far as any observer can tell, and
+still differentiable. The exponent is a conditioning choice as much as a
+physical one — sixteen orders stalled the line search.
+
+**A full vessel refuses inflow; an empty one refuses outflow.** Stated as a
+constitutive rule on the edges at its nozzles, because a vessel with no vent
+and no overflow cannot take more than it holds. Without it the inventory clamp
+silently destroyed the mass that kept arriving at a full tank.
+
 **The iterate is never clamped.** Clamping it into `[0, 64] bar` was what made
 branched networks unsolvable: two legs of a tee draw more than one supply line
 delivers, so the true suction is *below* the boundary, and the clamp pinned the
@@ -603,17 +619,25 @@ pins warm against cold.
 
 | Network | Nodes/edges | Iterations | Residual |
 | --- | --- | --- | --- |
-| `template-hmi-demo` | 10 / 8 | 6 (warm 3) | 1.4e-13 |
-| `sample-plant` | 20 / 16 | 6 (warm 3) | 1.6e-8 |
-| `sample-refinery-unit` | 43 / 31 | 6 (warm 3) | 1.6e-8 |
+| `template-hmi-demo` | 10 / 8 | 5 (warm 2) | 2.7e-7 |
+| `sample-plant` | 20 / 16 | 6 (warm 2) | 1.6e-8 |
+| `sample-refinery-unit` | 43 / 31 | 6 (warm 2) | 1.6e-8 |
+
+**Tolerances, measured rather than claimed.** `MASS_TOL = 1e-4 m³/h` is the
+documented acceptance; the worst junction residual across every fixture and all
+three samples is **2.7e-5**, and the worst edge-equation residual is
+**1.6e-6** — a tenth of a millilitre an hour, parts per million of a typical
+duty. The solve reaches 1e-8 on well-conditioned networks and around 1e-5 on
+one with a dead end behind a shut valve, where twelve orders separate the
+stiffest edge from the slackest.
 
 All sixteen fixture topologies converge — series, tee, merge, unequal branches,
 parallel pumps, recirculation, reversal, zero-flow equilibrium, stopped pump,
 closed branch — each verified on node mass balance **and** on every edge's own
 constitutive equation, re-derived independently from the solved pressures.
 
-Cost: `buildProcessModel` 0.05–0.09 ms once per document; `solveHydraulics`
-0.04–0.22 ms cold, 0.005–0.022 ms warm.
+Cost: `buildProcessModel` 0.03–0.07 ms once per document; `solveHydraulics`
+0.03–0.28 ms cold, 0.004–0.022 ms warm.
 
 ### Where it stops
 

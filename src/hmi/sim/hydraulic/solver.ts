@@ -67,7 +67,7 @@
  */
 
 import type { ProcessEdge, ProcessModel } from './model'
-import { valveResistance } from './model'
+import { SHUT_FRACTION, VALVE_K, valveResistance } from './model'
 import { DEFAULTS } from '../units'
 
 /**
@@ -104,8 +104,17 @@ const MAX_ITER = 250
  */
 export const ZERO_FLOW = 1e-9
 
-/** Mass-balance residual that counts as converged, m³/h. */
-export const MASS_TOL = 1e-7
+/**
+ * Mass-balance residual that counts as converged, m³/h.
+ *
+ * A ten-thousandth of a cubic metre an hour: a tenth of a millilitre, two
+ * parts per million of a typical 50 m³/h duty, and far below anything an
+ * instrument in this model can resolve. Stated as a real number rather than
+ * claimed as exact — the solve reaches around 1e-8 on well-conditioned
+ * networks and around 1e-5 on one with a dead end behind a shut valve, where
+ * twelve orders of magnitude separate the stiffest edge from the slackest.
+ */
+export const MASS_TOL = 1e-4
 /** Smallest line-search factor tried before the solve declares failure. */
 const MIN_LAMBDA = 1 / 1024
 /** Armijo slack: a step must reduce the residual norm by at least this
@@ -244,7 +253,7 @@ export function pumpHead(headAtRated: number, ratedFlow: number, speed: number, 
  * resistance — a shut valve — carries nothing, which is how a closed valve
  * blocks flow in this model rather than by a separate rule.
  */
-function resistiveFlow(dp: number, r: number): number {
+export function resistiveFlow(dp: number, r: number): number {
   // An infinite resistance is a shut path and carries nothing. A zero or
   // negative one is not physical; the floor keeps the square root finite
   // rather than letting a modelling slip become an infinite flow.
@@ -285,7 +294,11 @@ function pumpFlow(dp: number, e: ProcessEdge, s: SolveInputs): number {
   // Without that assumption a vessel siphons out through an idle pump the
   // moment it has any head, which is not what a plant does and is not what
   // the calm-start doctrine promises the operator.
-  if (speed <= 0) return 0
+  //
+  // Blocked the same way a shut valve is: a huge finite resistance rather than
+  // a hard zero, so the nodes either side keep a determined pressure. See
+  // SHUT_FRACTION.
+  if (speed <= 0) return resistiveFlow(dp, VALVE_K / SHUT_FRACTION ** 4)
   const h0 = shutoffFromDuty(Math.max(1e-9, s.pumpHead(tag))) * speed * speed
   const qr = Math.max(1e-9, s.pumpRated(tag)) * RUNOUT_FACTOR * speed
   // `dp` is P_from − P_to, so the rise the network demands of the pump is −dp.
@@ -300,19 +313,56 @@ function pumpFlow(dp: number, e: ProcessEdge, s: SolveInputs): number {
   return qr * shape
 }
 
+/**
+ * A closed vessel accepts nothing more when it is full, and gives nothing up
+ * when it is empty.
+ *
+ * Stated as a CONSTITUTIVE rule on the edges at its nozzles rather than as a
+ * conductance trick, because it is a physical statement: a vessel with no vent
+ * and no overflow — which is every vessel this model has — cannot take more
+ * liquid than it holds, and one with nothing in it cannot give any up. Without
+ * it the inventory clamp silently destroyed the mass that kept arriving at a
+ * full tank, which is exactly the kind of quiet non-conservation this whole
+ * programme exists to remove.
+ *
+ * The gate is one-directional, like a check valve: a full vessel can still
+ * DRAIN, and an empty one can still FILL.
+ *
+ * IT MULTIPLIES RATHER THAN ZEROES, and that is not a hedge. A hard zero has a
+ * hard ZERO DERIVATIVE, and Newton cannot climb out of a region where moving a
+ * pressure changes no flow at all — a full vessel with a line just above it
+ * trapped the solve a thousandth of a bar from the answer, unable to see that
+ * dropping the node below the vessel would let it drain. `GATE_LEAK` is the
+ * same treatment `SHUT_FRACTION` gives a closed valve: twelve orders of
+ * conductance down, so the flow is around a microlitre an hour, and the slope
+ * still points the way out.
+ */
+const GATE_LEAK = 1e-6
+
+function vesselGate(q: number, e: ProcessEdge, model: ProcessModel, s: SolveInputs): number {
+  if (q === 0) return q
+  const into = q > 0 ? e.to : e.from
+  const outOf = q > 0 ? e.from : e.to
+  const inTag = model.vesselOfNode.get(into)
+  if (inTag !== undefined && s.vesselLevel(inTag) >= 100) return q * GATE_LEAK
+  const outTag = model.vesselOfNode.get(outOf)
+  if (outTag !== undefined && s.vesselLevel(outTag) <= 0) return q * GATE_LEAK
+  return q
+}
+
 /** Flow through one edge given the pressures at its ends. */
-function edgeFlow(e: ProcessEdge, pFrom: number, pTo: number, s: SolveInputs): number {
+function edgeFlow(e: ProcessEdge, pFrom: number, pTo: number, s: SolveInputs, model: ProcessModel): number {
   const dp = pFrom - pTo
-  if (e.kind === 'pump') return pumpFlow(dp, e, s)
+  if (e.kind === 'pump') return vesselGate(pumpFlow(dp, e, s), e, model, s)
   let r = e.resistance
   if (e.kind === 'valve' && e.tag) r = valveResistance(s.valveOpen(e.tag))
   if (s.pipeFactor) for (const id of e.pipeIds) {
     const f = Math.max(0, Math.min(1, s.pipeFactor(id)))
     // A restriction multiplies resistance: a quarter of the opening is
     // sixteen times the resistance, the same law the valve uses.
-    r = f <= 1e-3 ? Number.POSITIVE_INFINITY : r / f ** 4
+    r = r / Math.max(SHUT_FRACTION, f) ** 4
   }
-  return resistiveFlow(dp, r)
+  return vesselGate(resistiveFlow(dp, r), e, model, s)
 }
 
 /**
@@ -426,7 +476,7 @@ export function solveHydraulics(model: ProcessModel, s: SolveInputs, opts: Solve
     for (let k = 0; k < model.edges.length; k++) {
       const a = edgeFrom[k]!, b = edgeTo[k]!
       if (a < 0 || b < 0) continue
-      const q = edgeFlow(model.edges[k]!, p[a]!, p[b]!, s)
+      const q = edgeFlow(model.edges[k]!, p[a]!, p[b]!, s, model)
       if (!Number.isFinite(q)) continue
       byNode[a]! -= q
       byNode[b]! += q
@@ -474,7 +524,7 @@ export function solveHydraulics(model: ProcessModel, s: SolveInputs, opts: Solve
     const out: Record<string, number> = {}
     for (let k = 0; k < model.edges.length; k++) {
       const a = edgeFrom[k]!, b = edgeTo[k]!
-      out[model.edges[k]!.id] = a < 0 || b < 0 ? 0 : edgeFlow(model.edges[k]!, p[a]!, p[b]!, s)
+      out[model.edges[k]!.id] = a < 0 || b < 0 ? 0 : edgeFlow(model.edges[k]!, p[a]!, p[b]!, s, model)
     }
     return out
   }
@@ -507,7 +557,31 @@ export function solveHydraulics(model: ProcessModel, s: SolveInputs, opts: Solve
         for (let rI = 0; rI < m; rI++) J[rI * m + c] = (r1[rI]! - r0[rI]!) / JAC_H
       }
 
-      const step = solveDense(J, r0, m)
+      /**
+       * ROW EQUILIBRATION — the scaling §9 asks about.
+       *
+       * The unknowns are pressures in bar; the residuals are flows in m³/h.
+       * A stiff edge (an open pipe) has a sensitivity around 25 m³/h per bar
+       * and a blocked one (a shut valve) around 1e-5, so the untouched matrix
+       * spans six orders of magnitude and Gaussian elimination loses the small
+       * rows entirely. Dividing each row by its own largest entry puts every
+       * equation on the same footing without changing the solution: scaling a
+       * row of `J x = −F` scales that row of `F` identically.
+       *
+       * Before this the line search stalled short of tolerance on any network
+       * with a dead end behind a closed valve.
+       */
+      const scaled = Float64Array.from(J)
+      const rhs = Float64Array.from(r0)
+      for (let rI = 0; rI < m; rI++) {
+        let big = 0
+        for (let c = 0; c < m; c++) big = Math.max(big, Math.abs(scaled[rI * m + c]!))
+        if (big <= 0) continue
+        for (let c = 0; c < m; c++) scaled[rI * m + c] = scaled[rI * m + c]! / big
+        rhs[rI] = rhs[rI]! / big
+      }
+
+      const step = solveDense(scaled, rhs, m)
       if (!step) {
         reason = 'singular-jacobian'
         if (trace) trace.push({ iteration: iterations, worst, norm: n0, worstNode, stepNorm: 0, lambda: 0, rejected: 0, pressure: named(model, pressure), flow: flowsNow(pressure), reversed: [], singular: true })
@@ -569,7 +643,7 @@ export function solveHydraulics(model: ProcessModel, s: SolveInputs, opts: Solve
   for (let k = 0; k < model.edges.length; k++) {
     const e = model.edges[k]!
     const a = edgeFrom[k]!, b = edgeTo[k]!
-    const q = a < 0 || b < 0 ? 0 : edgeFlow(e, pressure[a]!, pressure[b]!, s)
+    const q = a < 0 || b < 0 ? 0 : edgeFlow(e, pressure[a]!, pressure[b]!, s, model)
     const safe = Number.isFinite(q) && Math.abs(q) > ZERO_FLOW ? q : 0
     flow[e.id] = safe
     for (const id of e.pipeIds) pipeFlow[id] = safe

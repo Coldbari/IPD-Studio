@@ -131,6 +131,9 @@ export interface ProcessModel {
   equipment: Map<string, { kind: EquipmentKind; widgetId: string; ports: ProcessPort[] }>
   /** Vessel tag -> the nodes its nozzles sit on. */
   vesselNodes: Map<string, string[]>
+  /** The inverse: node id -> the vessel whose nozzle it is. Used by the solver
+   *  to gate an edge that would fill a full vessel or drain an empty one. */
+  vesselOfNode: Map<string, string>
   /** Pipe id -> the edge that carries it, so a widget bound to a line can ask
    *  the solver what that line is doing. */
   edgeOfPipe: Map<string, string>
@@ -218,9 +221,31 @@ export const FITTING_K = PIPE_K / 10
  */
 export const VALVE_K = 4e-4
 
+/**
+ * The opening a shut element is treated as having.
+ *
+ * NOT zero, and this is the point. An infinite resistance carries exactly no
+ * flow and has exactly no derivative, so the nodes either side of a shut valve
+ * become numerically undetermined — their pressures can slide together
+ * anywhere and still balance. A dead-end behind a closed valve then made the
+ * whole solve singular even though the drawing is perfectly connected.
+ *
+ * `1e-3` of an opening gives a resistance twelve orders of magnitude above
+ * open, so the flow it passes is around 5e-5 m³/h at a full bar — a twentieth
+ * of a millilitre an hour, two parts per million of a typical duty. The valve
+ * is shut as far as any observer is concerned, and the Jacobian still has a
+ * slope to work with. This is the standard treatment for a closed element in a
+ * pipe-network solve.
+ *
+ * The exponent is a CONDITIONING choice as much as a physical one. An earlier
+ * value of `1e-4` put sixteen orders between a shut valve and an open one,
+ * which is a Jacobian condition number around 1e8, and the line search stalled
+ * short of tolerance on any network with a dead end behind a closed valve.
+ */
+export const SHUT_FRACTION = 1e-3
+
 export function valveResistance(openFraction: number): number {
-  const f = Math.max(0, Math.min(1, openFraction))
-  if (f <= 1e-3) return Number.POSITIVE_INFINITY
+  const f = Math.max(SHUT_FRACTION, Math.min(1, openFraction))
   return VALVE_K / f ** 4
 }
 
@@ -243,6 +268,7 @@ export function buildProcessModel(screens: HmiScreen | HmiScreen[]): ProcessMode
   const edges: ProcessEdge[] = []
   const equipment: ProcessModel['equipment'] = new Map()
   const vesselNodes = new Map<string, string[]>()
+  const vesselOfNode = new Map<string, string>()
   const edgeOfPipe = new Map<string, string>()
   const issues: TopologyIssue[] = []
   const nodeById = new Map<string, ProcessNode>()
@@ -292,7 +318,10 @@ export function buildProcessModel(screens: HmiScreen | HmiScreen[]): ProcessMode
           ports: [p],
         })
       }
-      if (kind === 'vessel' && w.tag) vesselNodes.set(w.tag, ports.map((p) => p.id))
+      if (kind === 'vessel' && w.tag) {
+        vesselNodes.set(w.tag, ports.map((p) => p.id))
+        for (const p of ports) vesselOfNode.set(p.id, w.tag)
+      }
 
       // The device itself is an EDGE between its own two ports. A vessel is
       // not: its nozzles are separated by the liquid, not by a resistance.
@@ -341,7 +370,7 @@ export function buildProcessModel(screens: HmiScreen | HmiScreen[]): ProcessMode
   }
 
   const indexOf = new Map(nodes.map((n, i) => [n.id, i]))
-  return { nodes, edges, indexOf, equipment, vesselNodes, edgeOfPipe, issues }
+  return { nodes, edges, indexOf, equipment, vesselNodes, vesselOfNode, edgeOfPipe, issues }
 
   /** Resolve one pipe end to a node, recording how certain the answer is. */
   function attachEnd(
