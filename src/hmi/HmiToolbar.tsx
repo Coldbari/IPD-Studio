@@ -6,15 +6,20 @@ import { useState } from 'react'
 import { useStore, activeHmiScreen } from '../store/store'
 import { useSimStore } from './simStore'
 import Modal from '../panels/Modal'
+import ReconcileDialog from './ReconcileDialog'
+import { SIM_SPEEDS, clockText } from './sim/units'
 
-const mmss = (t: number) => `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(Math.floor(t % 60)).padStart(2, '0')}`
 
-/** Training scenario injector: trip pumps, stick valves, freeze bound
- *  transmitters, choke the busiest line. Everything is journaled and Reset
- *  restores the plant. */
+/** Training scenario injector: trip pumps, stick valves, freeze or force
+ *  transmitters, fail an instrument outright, choke the busiest line.
+ *  Everything is journaled and Reset restores the plant.
+ *
+ *  These are TEST functions and live behind their own modal on purpose — an
+ *  operator control and a fault injection must never sit on the same button. */
 function EventsModal({ onClose }: { onClose(): void }) {
   const doc = useStore((s) => s.doc)
   const tags = useSimStore((s) => s.tags)
+  const defs = useSimStore((s) => s.defs)
   const plugged = useSimStore((s) => s.plugged)
   const write = useSimStore((s) => s.writeTag)
   const plugArtery = useSimStore((s) => s.plugArtery)
@@ -23,6 +28,8 @@ function EventsModal({ onClose }: { onClose(): void }) {
   const pumps: string[] = []
   const valves: string[] = []
   const bound: string[] = []
+  const measurements: string[] = []
+  const MEASURING = new Set(['display', 'gauge', 'bar', 'trend'])
   for (const sc of doc.hmiScreens) {
     for (const w of sc.widgets) {
       if (!w.tag || seen.has(w.tag)) continue
@@ -30,12 +37,22 @@ function EventsModal({ onClose }: { onClose(): void }) {
       if (w.type === 'pump' || w.type === 'equip') pumps.push(w.tag)
       else if (w.type === 'valve' && w.props?.throttle === true) valves.push(w.tag)
       else if (typeof w.props?.bindTank === 'string' || typeof w.props?.bindPipe === 'string') bound.push(w.tag)
+      // every measurement can be forced or failed, bound to the process or not
+      if (MEASURING.has(w.type) && w.props?.controller !== true) measurements.push(w.tag)
     }
   }
   const toggle = (tag: string, sig: string) => write(tag, sig, (tags[tag]?.[sig] ?? 0) >= 0.5 ? 0 : 1)
+  /** Drive the reading off scale and pin it there — the classic "is the
+   *  interlock really wired?" test. Releasing it lets the process take over
+   *  again from wherever it had got to. */
+  const forceHigh = (tag: string) => {
+    if ((tags[tag]?.FORCED ?? 0) >= 0.5) return write(tag, 'FORCED', 0)
+    write(tag, 'PV', defs[tag]?.max ?? 100)
+    write(tag, 'FORCED', 1)
+  }
   const row = (label: string, active: boolean, onClick: () => void, key: string) => (
     <button key={key} data-testid="event-row" onClick={onClick}
-      style={{ textAlign: 'left', padding: '6px 10px', ...(active ? { background: '#fde8e8', border: '1px solid #c53030', color: '#9b1c1c', fontWeight: 600 } : {}) }}>
+      style={{ textAlign: 'left', padding: '6px 10px', ...(active ? { borderColor: 'var(--hmi-alarm-high)', color: 'var(--hmi-alarm-high)', fontWeight: 600 } : {}) }}>
       {active ? '↩ ' : '⚡ '}{label}
     </button>
   )
@@ -51,9 +68,15 @@ function EventsModal({ onClose }: { onClose(): void }) {
         {bound.slice(0, 6).map((t) => row(
           (tags[t]?.FROZEN ?? 0) >= 0.5 ? `Unfreeze ${t}` : `Freeze transmitter ${t}`,
           (tags[t]?.FROZEN ?? 0) >= 0.5, () => toggle(t, 'FROZEN'), `z-${t}`))}
+        {measurements.slice(0, 4).map((t) => row(
+          (tags[t]?.FORCED ?? 0) >= 0.5 ? `Release ${t}` : `Force ${t} high`,
+          (tags[t]?.FORCED ?? 0) >= 0.5, () => forceHigh(t), `h-${t}`))}
+        {measurements.slice(0, 4).map((t) => row(
+          (tags[t]?.BAD ?? 0) >= 0.5 ? `Restore ${t} quality` : `Fail ${t} (bad quality)`,
+          (tags[t]?.BAD ?? 0) >= 0.5, () => toggle(t, 'BAD'), `b-${t}`))}
         {row(plugged.length > 0 ? `Clear plugged lines (${plugged.length})` : 'Plug the busiest line',
           plugged.length > 0, () => (plugged.length > 0 ? clearPlugs() : plugArtery()), 'plug')}
-        <p style={{ fontSize: 11, color: '#889', margin: '6px 0 0' }}>
+        <p style={{ fontSize: 11, color: 'var(--hmi-text-muted)', margin: '6px 0 0' }}>
           Injected upsets land in the journal; Reset restores the plant.
         </p>
       </div>
@@ -83,6 +106,7 @@ export default function HmiToolbar({ onExit, tool, setTool, onImport, onUndo, on
   const replaceScreen = useStore((s) => s.replaceScreen)
 
   const [confirmReimport, setConfirmReimport] = useState(false)
+  const [reconciling, setReconciling] = useState(false)
   const [eventsOpen, setEventsOpen] = useState(false)
   const reimport = async () => {
     if (!screen?.fromSheetId) return
@@ -124,7 +148,7 @@ export default function HmiToolbar({ onExit, tool, setTool, onImport, onUndo, on
       {mode === 'run' ? (
         <>
           <span data-testid="run-title" style={{ fontSize: 14, fontWeight: 700, marginLeft: 6 }}>{screen?.name}</span>
-          <span style={{ opacity: 0.8 }}>⏱ {mmss(t)}</span>
+          <span style={{ opacity: 0.8 }} title="Simulated process time">⏱ {clockText(t)}</span>
           {nBy('high') > 0 && <span className="al-prio al-prio-high">■ {nBy('high')}</span>}
           {nBy('medium') > 0 && <span className="al-prio al-prio-medium">▲ {nBy('medium')}</span>}
           {nBy('low') > 0 && <span className="al-prio al-prio-low">● {nBy('low')}</span>}
@@ -133,7 +157,11 @@ export default function HmiToolbar({ onExit, tool, setTool, onImport, onUndo, on
               onClick={() => useStore.getState().setActiveScreen(home.id)}>⌂ {home.name}</button>
           )}
           <button data-testid="hmi-play" onClick={() => sim().playPause()}>{playing ? 'Pause' : 'Play'}</button>
-          <button data-testid="hmi-speed" onClick={() => sim().setSpeed(speed === 1 ? 5 : 1)}>{speed}×</button>
+          <button data-testid="hmi-speed"
+            title="Training speed — accelerates the clock, not the physics"
+            onClick={() => sim().setSpeed(SIM_SPEEDS[(SIM_SPEEDS.indexOf(speed) + 1) % SIM_SPEEDS.length]!)}>
+            {speed}×
+          </button>
           <button data-testid="hmi-reset" onClick={() => sim().reset()}>Reset</button>
           <button data-testid="hmi-events" onClick={() => setEventsOpen(true)}
             title="Inject a process upset (training scenarios)">⚡ Events</button>
@@ -154,7 +182,16 @@ export default function HmiToolbar({ onExit, tool, setTool, onImport, onUndo, on
             title="Fit view (Ctrl+0) — wheel zooms, Space/middle-drag pans">⛶</button>
           <button data-testid="hmi-import" onClick={onImport} title="Build an HMI screen from a P&ID sheet">From P&ID…</button>
           {screen?.fromSheetId && doc.sheets.some((sh) => sh.id === screen.fromSheetId) && (
-            <button data-testid="hmi-reimport" onClick={() => setConfirmReimport(true)} title="Rebuild this screen from its source sheet">Re-import</button>
+            <>
+              {/* The SAFE path, and the one offered first: see what differs and
+                  choose per object. Re-import is still here because rebuilding
+                  a screen from scratch is sometimes exactly what you want —
+                  but it is no longer the only thing on offer, and its dialog
+                  now says what reconciling would do instead. */}
+              <button data-testid="hmi-reconcile" onClick={() => setReconciling(true)}
+                title="Compare this screen with its P&ID sheet and choose what to apply">Reconcile…</button>
+              <button data-testid="hmi-reimport" onClick={() => setConfirmReimport(true)} title="Rebuild this screen from its source sheet, discarding your layout">Re-import</button>
+            </>
           )}
         </>
       )}
@@ -167,14 +204,21 @@ export default function HmiToolbar({ onExit, tool, setTool, onImport, onUndo, on
       {eventsOpen && mode === 'run' && (
         <EventsModal onClose={() => setEventsOpen(false)} />
       )}
+      {reconciling && <ReconcileDialog onClose={() => setReconciling(false)} />}
       {confirmReimport && screen && (
         <Modal title="Re-import screen" onClose={() => setConfirmReimport(false)}>
-          <p style={{ margin: '4px 0 12px' }}>
-            Rebuild <strong>{screen.name}</strong> from its P&ID sheet? Your HMI edits to this screen are replaced (Ctrl+Z undoes).
+          <p style={{ margin: '4px 0 8px', maxWidth: '54ch', lineHeight: 1.5 }}>
+            Rebuild <strong>{screen.name}</strong> from its P&ID sheet? Every edit you have made to this
+            screen — widgets moved, resized, added, grouped — is <strong>discarded</strong> and replaced by
+            a fresh import. Ctrl+Z undoes it.
+          </p>
+          <p className="op-sub" style={{ margin: '0 0 12px', maxWidth: '54ch' }}>
+            To bring in what has changed on the sheet and keep your layout, close this and use
+            <strong> Reconcile…</strong> instead.
           </p>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button onClick={() => setConfirmReimport(false)}>Cancel</button>
-            <button data-testid="reimport-confirm" style={{ background: '#2b6cb0', color: '#fff', border: 'none', borderRadius: 4, padding: '4px 14px' }}
+            <button data-testid="reimport-confirm" style={{ background: 'var(--hmi-accent)', color: 'var(--hmi-text-on-accent)', border: 'none', borderRadius: 2, padding: '4px 14px' }}
               onClick={() => void reimport()}>Re-import</button>
           </div>
         </Modal>

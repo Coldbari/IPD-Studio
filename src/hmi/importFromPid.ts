@@ -13,6 +13,7 @@ import { formatTag } from '../isa/tag'
 import { getSymbol } from '../symbols/registry'
 import { portDirection, rotateDir } from '../canvas/shapes'
 import { orthogonalizeVia, routePipe } from './routePipes'
+import { baselineFor } from '../model/fingerprint'
 import type { Dir, Rect } from './routePipes'
 // side-effect: fill the symbol registry (same import the catalog tests use)
 import '../symbols/lib/index'
@@ -69,12 +70,14 @@ function widgetTypeFor(node: PlantNode, category: string): { type: WidgetType; p
     if (!/^[A-Z]{1,4}$/.test(letters) || letters.endsWith('Y')) {
       return { type: 'symbol', props: { symbolId: node.symbolId } }
     }
-    // sensible demo units per measured family so imported displays read real
-    const unit = ({ L: '%', T: '°C', P: 'bar', F: 'm³/h' } as Record<string, string>)[letters[0] ?? '']
-    const u: HmiWidget['props'] = unit === undefined ? undefined : { unit }
-    if (letters.endsWith('T')) return { type: 'display', props: u } // transmitters (incl. CT) are plain measurements
-    if (letters.includes('C') && !letters.endsWith('V')) return { type: 'display', props: { controller: true, ...u } }
-    return { type: 'display', props: u }
+    // No unit is written here. `sim/tags.ts` derives it from the SAME ISA
+    // letter this function is already reading, so a copy in widget props would
+    // be a second place for the answer to live and a second place to get it
+    // wrong. The importer decides what KIND of widget this is; the engineering
+    // metadata decides what it reads in.
+    if (letters.endsWith('T')) return { type: 'display', props: undefined } // transmitters (incl. CT) are plain measurements
+    if (letters.includes('C') && !letters.endsWith('V')) return { type: 'display', props: { controller: true } }
+    return { type: 'display', props: undefined }
   }
   return { type: 'symbol', props: { symbolId: node.symbolId } }
 }
@@ -296,7 +299,7 @@ function wireLoopValves(sheet: Sheet, widgets: HmiWidget[], ctx: ImportCtx, sep:
 /** ≤2-hop neighborhood walk from an instrument node over ALL edges, looking
  *  for what this instrument's ISA family actually measures: 'tank' walks to
  *  the nearest vessel (level), 'pipe' to the nearest process run (flow). */
-function findBinding(sheet: Sheet, nodeId: string, ctx: ImportCtx, want: 'tank' | 'pipe'): { bindTank?: string; bindPipe?: string } {
+export function findBinding(sheet: Sheet, nodeId: string, ctx: ImportCtx, want: 'tank' | 'pipe'): { bindTank?: string; bindPipe?: string } {
   const nodesById = new Map(sheet.nodes.map((n) => [n.id, n]))
   let frontier = [nodeId]
   const seen = new Set(frontier)
@@ -324,6 +327,25 @@ function findBinding(sheet: Sheet, nodeId: string, ctx: ImportCtx, want: 'tank' 
   return {}
 }
 
+/**
+ * Where each ISA family looks for its process, in order of preference.
+ *
+ * Module scope rather than a local, because RECONCILIATION binds an instrument
+ * it adds to an existing screen through the same table and the same
+ * `findBinding` walk. A second copy would be a second opinion about what a
+ * level transmitter measures.
+ */
+export const BIND_ORDER: Record<string, ('tank' | 'pipe')[]> = {
+  L: ['tank', 'pipe'],
+  T: ['tank', 'pipe'],
+  F: ['pipe'],
+  P: ['pipe', 'tank'],
+}
+
+/** Instruments whose ISA letters end in T/I/E read the process directly; a
+ *  controller gets its PV from loop pairing instead. */
+export const readsProcess = (letters: string): boolean => /[TIE]$/.test(letters)
+
 /** Full import: widgets + pipes + measurement bindings, scaled into HMI_WORLD. */
 export function importSheet(doc: ProjectDoc, sheetId: string): HmiScreen {
   const sheet = doc.sheets.find((s) => s.id === sheetId)
@@ -332,20 +354,31 @@ export function importSheet(doc: ProjectDoc, sheetId: string): HmiScreen {
   const nodesById = new Map(sheet.nodes.map((n) => [n.id, n]))
   wireLoopValves(sheet, widgets, ctx, doc.settings.tagSeparator)
 
-  // measurement bindings: transmitters, indicators, and primary elements all
+  // Measurement bindings: transmitters, indicators and primary elements all
   // read the process (a controller gets its PV from loop pairing instead).
-  // Family decides the physics: L measures a vessel's level, F a pipe's flow;
-  // other families (T, P, …) have no bulk model and keep demo values.
+  //
+  // The ISA first letter decides WHAT is measured and therefore where to look
+  // for it. Every family listed here now has a process model behind it: level
+  // and temperature belong to a vessel, flow and pressure to a line — with the
+  // other place as a fallback, because a level bridle is piped and a tank can
+  // be tapped for pressure. A family with no model binds to nothing and keeps
+  // an idle value, which sim/quality.ts reports as UNCERTAIN rather than
+  // dressing up as a reading.
   for (const node of sheet.nodes) {
     const letters = node.tag?.letters ?? ''
-    if (node.kind !== 'instrument' || !/[TIE]$/.test(letters)) continue
-    const want = letters.startsWith('L') ? 'tank' as const : letters.startsWith('F') ? 'pipe' as const : null
-    if (!want) continue
+    if (node.kind !== 'instrument' || !readsProcess(letters)) continue
+    const order = BIND_ORDER[letters[0] ?? '']
+    if (!order) continue
     const name = ctx.nameOf.get(node.id)
     const widget = widgets.find((w) => w.tag === name)
     if (!widget) continue
-    const binding = findBinding(sheet, node.id, ctx, want)
-    if (binding.bindTank ?? binding.bindPipe) widget.props = { ...widget.props, ...binding }
+    for (const want of order) {
+      const binding = findBinding(sheet, node.id, ctx, want)
+      if (binding.bindTank ?? binding.bindPipe) {
+        widget.props = { ...widget.props, ...binding }
+        break
+      }
+    }
   }
 
   // solid graphics stay where the P&ID put them — routed pipes must go
@@ -418,7 +451,13 @@ export function importSheet(doc: ProjectDoc, sheetId: string): HmiScreen {
 
   deoverlap(widgets, pipes)
 
-  return { id: ulid(), name: `${sheet.name} HMI`, theme: 'classic', widgets, pipes, fromSheetId: sheetId }
+  // THE RECONCILIATION BASELINE, recorded at birth. A screen that knows what
+  // the engineering data said when it was built can afterwards report what
+  // CHANGED; one that does not can only ever report what was added or removed.
+  // See model/reconcile.ts.
+  const baseline = baselineFor(doc, sheet, widgets.map((w) => w.tag).filter((t): t is string => t !== undefined))
+
+  return { id: ulid(), name: `${sheet.name} HMI`, theme: 'classic', widgets, pipes, fromSheetId: sheetId, baseline }
 }
 
 const MOVABLE = new Set<string>(['display', 'gauge', 'trend', 'lamp', 'button', 'switch'])

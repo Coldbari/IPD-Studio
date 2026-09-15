@@ -3,6 +3,7 @@
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
 import type { HmiPipe, HmiScreen, HmiWidget } from '../model'
+import { HEATER_SYMBOLS } from './tags'
 
 export type EndRef = { kind: 'source' } | { kind: 'sink' } | { kind: 'tank'; tag: string }
 
@@ -18,8 +19,29 @@ export interface Branch {
    *  line must not siphon the liquid out. */
   fromBottom?: boolean
   pumps: string[]
+  /** Driven equipment on the path that adds HEAT rather than head — a fired
+   *  or electric heater, a boiler. Kept apart from `pumps` because the flow
+   *  solver must never treat one as a driver: before this split, dropping a
+   *  heater into a line made it pump. */
+  heaters: string[]
   valves: string[]
   pipeIds: string[]
+  /** Index into `pipeIds` of the first pipe whose head is a pump — the point
+   *  where suction becomes discharge. Absent on an unpumped branch. Used only
+   *  by the pressure profile in sim/process.ts. */
+  pumpIndex?: number
+  /** Index into `pipeIds` of the first pipe whose head is a throttling
+   *  element — where the high side becomes the low side. Absent when the path
+   *  has no valve. */
+  valveIndex?: number
+  /** Every inline device on the path, IN ORDER.
+   *
+   *  `pumps`, `heaters` and `valves` are the sets the solver needs and say
+   *  nothing about sequence. This is the same information arranged the way a
+   *  reader needs it — source, then what the fluid passes through, then the
+   *  destination — and it is what the overview flowsheet draws. Metadata only:
+   *  no solver reads it, so flow behaviour is untouched. */
+  devices: { tag: string; kind: 'pump' | 'heater' | 'valve'; at: number }[]
 }
 
 export interface FlowNetwork { branches: Branch[] }
@@ -84,7 +106,7 @@ export function buildNetwork(screen: HmiScreen): FlowNetwork {
     const branch: Branch = {
       id: `B${++n}`, from, to,
       ...(fromBottom !== undefined ? { fromBottom } : {}),
-      pumps: [], valves: [], pipeIds: path.map((p) => p.id),
+      pumps: [], heaters: [], valves: [], devices: [], pipeIds: path.map((p) => p.id),
     }
     // inline devices sit at the head of every pipe after the first (and at
     // the first pipe's head for a dangling chain start)
@@ -92,8 +114,22 @@ export function buildNetwork(screen: HmiScreen): FlowNetwork {
       const w = ends.get(p)!.a
       if (i === 0 && !inline(w)) return
       if (!w) return
-      if ((w.type === 'pump' || w.type === 'equip') && w.tag) branch.pumps.push(w.tag)
-      if (w.type === 'valve' && w.tag) branch.valves.push(w.tag)
+      if ((w.type === 'pump' || w.type === 'equip') && w.tag) {
+        const symbolId = typeof w.props?.symbolId === 'string' ? w.props.symbolId : ''
+        if (w.type === 'equip' && HEATER_SYMBOLS.has(symbolId)) {
+          branch.heaters.push(w.tag)
+          branch.devices.push({ tag: w.tag, kind: 'heater', at: i })
+        } else {
+          branch.pumps.push(w.tag)
+          branch.devices.push({ tag: w.tag, kind: 'pump', at: i })
+          if (branch.pumpIndex === undefined) branch.pumpIndex = i
+        }
+      }
+      if (w.type === 'valve' && w.tag) {
+        branch.valves.push(w.tag)
+        branch.devices.push({ tag: w.tag, kind: 'valve', at: i })
+        if (branch.valveIndex === undefined) branch.valveIndex = i
+      }
     })
     branches.push(branch)
   }
@@ -138,8 +174,13 @@ export function solveFlows(
   pumpOn: (pumpTag: string) => number,
   tankLevel: (tag: string) => number,
   pipeFactor: ((pipeId: string) => number) | undefined,
-  rating: { rated: number; gravity: number },
+  /** `rated` is the pump's RATED FLOW in m³/h (UNITS.flow) — a function when
+   *  pumps differ, which they do once duties come out of the registry, and a
+   *  plain number when they do not. `gravity` is the m³/h a gravity or
+   *  battery-limit branch delivers through a fully open path. */
+  rating: { rated: number | ((pumpTag: string) => number); gravity: number },
 ): Record<string, number> {
+  const ratedOf = typeof rating.rated === 'function' ? rating.rated : () => rating.rated as number
   const g: Record<string, number> = {}
   const driver: Record<string, number> = {}
   for (const b of net.branches) {
@@ -152,7 +193,9 @@ export function solveFlows(
     if (b.pumps.length > 0) {
       // calm-start doctrine holds: every pump on the path must be driving
       const ramp = Math.min(...b.pumps.map((p) => clamp01(pumpOn(p))))
-      driver[b.id] = ramp > 0 ? rating.rated * ramp : 0
+      // series pumps: the weakest rating sets what the path can carry
+      const rated = Math.min(...b.pumps.map((p) => ratedOf(p)))
+      driver[b.id] = ramp > 0 ? rated * ramp : 0
     } else if (b.from.kind === 'tank') {
       const uncontrollableStub = b.to.kind === 'sink' && b.valves.length === 0
       driver[b.id] = b.fromBottom && !uncontrollableStub ? rating.gravity : 0

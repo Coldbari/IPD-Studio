@@ -132,6 +132,25 @@ export interface HmiScreen {
   fromSheetId?: string
   /** RUN opens on the home screen (at most one carries the flag). */
   home?: boolean
+  /**
+   * THE RECONCILIATION BASELINE: tag -> the engineering facts as they stood
+   * when this screen was last built from, or reconciled against, its sheet.
+   *
+   * Recorded so a CHANGE can be told from a state that has simply always been
+   * that way. Without it, "the range changed" is unanswerable — the HMI stopped
+   * storing engineering metadata in Step B, so a registry edit is reflected
+   * instantly and there is nothing left to disagree with.
+   *
+   * DELIBERATELY EXCLUDES everything runtime: no PVs, no history, no alarm
+   * state, no simulation clock, no widget geometry. It is a statement about
+   * the ENGINEERING↔HMI relationship and nothing else, so a running plant and
+   * a rearranged screen both leave it untouched — see `model/reconcile.ts`.
+   *
+   * Absent on every screen built before Step I, which is the honest answer:
+   * such a screen has no recorded baseline and reconciliation says so rather
+   * than inventing changes on the first open.
+   */
+  baseline?: Record<string, string>
 }
 
 /** Logical canvas size; the SVG scales to fit its container. */

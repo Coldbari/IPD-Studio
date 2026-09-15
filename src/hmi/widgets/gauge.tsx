@@ -3,15 +3,14 @@
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
 import type { WidgetView } from './shared'
-import { fmt, num } from './shared'
+import { fmt, fmtQ, measureOf } from './shared'
+import { hasNumber } from '../sim/quality'
 
 /** Radial gauge: needle sweeps -120°..+120° over props.min..props.max, with
  *  warn/alarm zone arcs when H/HH (or L/LL) limits are set. */
-export default function Gauge({ widget, theme, sim }: WidgetView) {
+export default function Gauge({ widget, theme, sim, eng, quality }: WidgetView) {
   const { w, h } = widget
-  const min = num(widget.props?.min) ?? 0
-  const max = num(widget.props?.max) ?? 100
-  const unit = typeof widget.props?.unit === 'string' ? widget.props.unit : ''
+  const { min, max, unit, limits } = measureOf(widget, eng)
   const pv = sim.PV ?? min
   const span = max - min || 1
   const angOf = (v: number) => -120 + 240 * Math.max(0, Math.min(1, (v - min) / span))
@@ -25,10 +24,10 @@ export default function Gauge({ widget, theme, sim }: WidgetView) {
     return `M ${s.x} ${s.y} A ${rr} ${rr} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${e.x} ${e.y}`
   }
   const zones: { from: number | undefined; to: number | undefined; color: string }[] = [
-    { from: num(widget.props?.H), to: num(widget.props?.HH) ?? max, color: theme.warn },
-    { from: num(widget.props?.HH), to: max, color: theme.alarm },
-    { from: min, to: num(widget.props?.L), color: theme.warn },
-    { from: min, to: num(widget.props?.LL), color: theme.alarm },
+    { from: limits.H, to: limits.HH ?? max, color: theme.warn },
+    { from: limits.HH, to: max, color: theme.alarm },
+    { from: min, to: limits.L, color: theme.warn },
+    { from: min, to: limits.LL, color: theme.alarm },
   ]
   return (
     <g>
@@ -37,13 +36,16 @@ export default function Gauge({ widget, theme, sim }: WidgetView) {
         if (from === undefined || to === undefined || to <= from) return null
         return <path key={i} d={arcPath(angOf(from), angOf(to))} fill="none" stroke={color} strokeWidth={4} />
       })}
-      <g transform={`rotate(${angOf(pv)} ${cx} ${cy})`}>
-        <line x1={cx} y1={cy} x2={cx} y2={cy - r + 6} stroke={theme.text} strokeWidth={2.5} />
-      </g>
+      {/* no needle for a bad reading: a parked pointer still reads as a value */}
+      {hasNumber(quality) && (
+        <g transform={`rotate(${angOf(pv)} ${cx} ${cy})`}>
+          <line x1={cx} y1={cy} x2={cx} y2={cy - r + 6} stroke={theme.text} strokeWidth={2.5} />
+        </g>
+      )}
       <circle cx={cx} cy={cy} r={3.5} fill={theme.text} />
       <text x={at(-120).x} y={at(-120).y + 12} textAnchor="middle" fill={theme.textDim} fontSize={8}>{fmt(min, 0)}</text>
       <text x={at(120).x} y={at(120).y + 12} textAnchor="middle" fill={theme.textDim} fontSize={8}>{fmt(max, 0)}</text>
-      <text x={cx} y={cy + r * 0.7} textAnchor="middle" fill={theme.text} fontSize={12} fontWeight={600}>{fmt(pv, 0)}{unit ? ` ${unit}` : ''}</text>
+      <text x={cx} y={cy + r * 0.7} textAnchor="middle" fill={theme.text} fontSize={12} fontWeight={600}>{fmtQ(pv, quality, 0)}{unit ? ` ${unit}` : ''}</text>
       <text x={cx} y={h + 12} textAnchor="middle" fill={theme.textDim} fontSize={10}>{widget.tag ?? widget.label ?? ''}</text>
     </g>
   )

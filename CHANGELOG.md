@@ -6,6 +6,94 @@ All notable changes to IPD Studio. Format follows
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-09-15 — the operator workstation
+
+The HMI stops being a screen that animates and becomes a workstation with a
+process behind it. Real engineering units, pressure and temperature that
+respond to what the operator does, a time-bounded history behind the trends,
+six operator pages, a design system with one meaning per colour, and — because
+the P&ID and the screens are allowed to diverge — seven engineering diagnostics
+and a reconciliation view that makes the divergence visible instead of
+silently regenerating anyone's work.
+
+Full record in `docs/HMI-PROGRAM-LOG.md`; the audit that opened and closed it
+is in `docs/HMI-AUDIT.md`.
+
+### Added
+
+- **Real engineering units, end to end.** Flow m³/h, volume m³, pressure bar,
+  temperature °C, declared in one place and converted at the boundary. Physical
+  quantities come from the engineering record — capacity from
+  `construction.volume`, pump duty from `duty.capacity` and `duty.head` — and
+  never from geometry. Tank capacity used to default to the widget's pixel area
+  divided by 40, so dragging a vessel's resize handle changed the process model.
+- **Pressure and temperature that actually respond.** A quadratic pump curve
+  with the affinity laws, a pressure profile along each branch, and a
+  well-mixed vessel energy balance with heater duty, inflow mixing and ambient
+  loss. `PT` and `TT` PVs were a seeded random walk before this, so a `PIC` or
+  `TIC` drove its valve for ever against a measurement that could not respond —
+  the loop was open and looked closed. Shutting a valve now makes the pump ride
+  up its curve: 1.020 bar open, 5.007 bar shut, which is supply plus shutoff
+  head.
+- **Data quality on every value.** `good / forced / stale / uncertain / bad`,
+  worst-first, each with a badge, a glyph and a reason. A bad reading prints
+  dashes rather than the last number it held, because a stale number is read as
+  a live one. A frozen transmitter used to render identically to a live one.
+- **One canonical equipment state machine.** The mimic, the faceplate and the
+  Equipment page read `equipmentState()` and cannot disagree about whether a
+  pump is running. Trips raise a TRIP alarm and need an explicit reset.
+- **A real process history.** Two time-bounded ring buffers per signal, mutated
+  in place, decimated on read. Spans from one minute to an hour, a value
+  cursor, and no sample ever manufactured by interpolation.
+- **An operator workstation.** Overview, Process, Equipment, Alarms, Trends and
+  Diagnostics behind one always-present page bar, with a dynamic overview that
+  includes a mini-flowsheet projected from the solver's own network — so the
+  picture cannot drift from the plant.
+- **Seven engineering diagnostics**, computed once and read by the Checks
+  workspace, the operator's Diagnostics page and the reconciliation view:
+  missing tag, broken connection, missing instrument, invalid range, invalid
+  unit, missing simulation model, unbound HMI object. Deterministic, keyed, and
+  navigable to the object they are about — including, for the first time, to a
+  widget on an HMI screen.
+- **P&ID ↔ HMI reconciliation.** Added, removed, changed and unchanged, with a
+  preview that lists exactly what will happen, an apply that is one undoable
+  document transaction, and a `remap` that never guesses its destination.
+  Hand-laid screens survive: existing widgets are never moved, resized,
+  relabelled or regenerated.
+
+### Changed
+
+- **One resolver for engineering metadata.** Every widget, the faceplate, the
+  alarm engine and the simulation now draw on the compiled `TagDef`. Before
+  this a tag whose record said `0–10 bar` alarmed correctly at 8 while its bar
+  graph drew a 0–100 scale with no limit ticks at all.
+- **A design system with one meaning per colour.** Semantic tokens emitted as
+  CSS custom properties, consumed by both the SVG graphics and the stylesheets.
+  Ninety-one colour literals across sixteen components are gone, and a test
+  fails the build if one returns. `stopped` and `closed` used to be the same red
+  as a critical alarm, so a correctly shut-down plant looked like an emergency;
+  inactive is now a quiet neutral.
+- **Faceplates adapt to what the object is** — a pump gets START/STOP and no
+  setpoint, a controller gets PV/SP/OUT and AUTO|MANUAL, a transmitter gets its
+  range, quality and source.
+- **Re-import was demoted, not removed.** It still rebuilds a screen from its
+  sheet, and now says plainly that it discards your layout and points at
+  Reconcile instead.
+
+### Fixed
+
+- **A `NaN` that silenced the alarm system.** Flow transmitters bound to a line
+  were seeded non-finite at RUN and RESET; a controller in AUTO latched it in
+  its integrator, and it spread to the valve, the vessel and that vessel's
+  level, pressure and temperature. Because every comparison against `NaN` is
+  false, alarms on those tags stopped annunciating entirely while quality still
+  read GOOD. Two of the three bundled samples did this on every run.
+- A temperature controller taking its PV from a vessel's **level**: `TIC-101`
+  and `TK-101` both parse to ISA family T, loop 101. Controller pairing now
+  also requires the partner to measure the same quantity.
+- Bound transmitters coming up at mid-range for one frame on RUN and RESET.
+- A pressure section off-by-one that made the pipe *leaving* a pump its suction.
+
 ## [0.20.0] — 2026-09-07 — company standards
 
 The QA engine stops checking every drawing against the same generic rules and

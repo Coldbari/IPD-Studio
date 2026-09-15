@@ -4,7 +4,12 @@
 
 import { memo, useEffect, useRef, useState } from 'react'
 import type { ThemeTokens } from './theme'
-import type { TrendData } from './widgets/shared'
+import { measureOf } from './widgets/shared'
+import type { HistoryReader } from './sim/history'
+import { History } from './sim/history'
+import type { TagDef } from './sim/tags'
+import type { Quality, QualityState } from './sim/quality'
+import { QUALITY_GLYPH, QUALITY_LABEL } from './sim/quality'
 import type { HmiScreen, HmiWidget, WidgetType } from './model'
 import { HMI_WORLD, WIDGET_DEFAULT_SIZE } from './model'
 import { THEMES } from './theme'
@@ -41,9 +46,19 @@ export interface HmiCanvasProps {
   /** Runtime bindings (absent in edit mode). */
   sim?: Record<string, Record<string, number>>
   flows?: Record<string, number>
-  history?: Record<string, number[]>
-  historyT?: number[]
+  /** Live process history (RUN only). Mutated in place with stable identity,
+   *  so `historyVersion` is what signals a change. */
+  history?: HistoryReader
+  historyVersion?: number
   alarms?: AlarmView[]
+  /** Compiled engineering definitions by tag — the one resolver's output.
+   *  Supplied in BOTH modes (the sim's own map in RUN, recompiled from the
+   *  document in EDIT) so a screen previews on the same ranges it will run on. */
+  defs?: Record<string, TagDef>
+  /** Per-tag data quality (RUN only). Absent in EDIT: nothing is measured. */
+  quality?: Record<string, QualityState>
+  /** Tags an operator has taken out of service (RUN only). */
+  oos?: Record<string, true>
   /** Worst standing-alarm priority per target screen (nav button dots). */
   navAlarms?: Record<string, 'high' | 'medium' | 'low'>
   /** Briefly pulse every widget carrying this tag (alarm click-through). */
@@ -56,7 +71,12 @@ interface WidgetGProps {
   theme: ThemeTokens
   values: Record<string, number>
   /** Only trend/sparkline widgets receive this (memo stays effective). */
-  hist?: TrendData
+  hist?: HistoryReader
+  histVersion?: number
+  defs?: Record<string, TagDef>
+  eng?: TagDef
+  quality?: Quality
+  oos: boolean
   alarm: 'none' | 'unacked' | 'acked'
   suppressed: boolean
   flash: boolean
@@ -66,27 +86,37 @@ interface WidgetGProps {
   oy: number
 }
 
-/** Edit-mode preview values so the screen reads as a design, not a void. */
-const PREVIEW_TREND = Array.from({ length: 40 }, (_, i) => 50 + Math.sin(i / 4.5) * 18 + (i % 3) * 2)
-const PREVIEW_T = Array.from({ length: 40 }, (_, i) => i * 3)
-// stable identities per tag so memoized widgets don't re-render while editing
-const previewHistCache = new Map<string, TrendData>()
-function previewHist(w: HmiWidget): TrendData {
+/**
+ * Edit-mode preview so the screen reads as a design, not a void.
+ *
+ * A REAL History with a shaped curve recorded into it, rather than a second
+ * data format: the trend then exercises exactly the retrieval path it uses at
+ * runtime, and there is no preview-only branch inside the widget to drift.
+ * Cached per tag so memoized widgets don't re-render while editing.
+ */
+const previewHistCache = new Map<string, HistoryReader>()
+function previewHist(w: HmiWidget): HistoryReader {
   const ref = w.tag ? `${w.tag}.PV` : 'PV'
   let hit = previewHistCache.get(ref)
   if (!hit) {
-    hit = { t: PREVIEW_T, series: { [ref]: PREVIEW_TREND } }
+    const h = new History()
+    for (let i = 0; i < 120; i++) {
+      h.record(i, (put) => put(ref, 50 + Math.sin(i / 9) * 18 + (i % 3) * 2))
+    }
+    hit = h
     previewHistCache.set(ref, hit)
   }
   return hit
 }
-function previewSim(w: HmiWidget): Record<string, number> {
+function previewSim(w: HmiWidget, eng?: TagDef): Record<string, number> {
   switch (w.type) {
     case 'tank': return { PV: 42 }
     case 'valve': return { OP: 40, OPEN: 1 }
     case 'pump': return { RUN: 0 }
     case 'display': case 'gauge': case 'trend': case 'bar': {
-      const min = Number(w.props?.min ?? 0), max = Number(w.props?.max ?? 100)
+      // the preview sits inside the SAME range the run will use, so a 0-10 bar
+      // tag previews at 4.5 bar rather than at 45 on an invented 0-100 scale
+      const { min, max } = measureOf(w, eng)
       return { PV: min + (max - min) * 0.45, ...(w.props?.controller === true ? { SP: (min + max) / 2 } : {}) }
     }
     default: return {}
@@ -101,14 +131,31 @@ const shallowEq = (a: Record<string, number>, b: Record<string, number>) => {
 /** Memoized widget group: a 5 Hz tick only re-renders widgets whose values,
  *  history, alarm state, or geometry actually changed. */
 const WidgetG = memo(
-  function WidgetG({ widget, theme, values, hist, alarm, suppressed, flash, selected, editing, ox, oy }: WidgetGProps) {
+  function WidgetG({ widget, theme, values, hist, histVersion, defs, eng, quality, oos, alarm, suppressed, flash, selected, editing, ox, oy }: WidgetGProps) {
     return (
       <g data-wid={widget.id} className="hmi-widget" transform={`translate(${widget.x + ox}, ${widget.y + oy})`}>
-        {renderWidget({ widget, theme, sim: values, hist, alarm })}
+        {renderWidget({ widget, theme, sim: values, hist, histVersion, defs, eng, quality, oos, alarm })}
+        {/* Abnormal indication is a RING, not a repaint: the equipment keeps
+            its own graphic so the operator can still read its state, and an
+            acknowledged alarm stops pulsing and dims. */}
         {alarm !== 'none' && (
           <rect x={-4} y={-4} width={widget.w + 8} height={widget.h + 8} fill="none"
-            stroke={alarm === 'unacked' ? theme.alarm : theme.alarmAck} strokeWidth={3}
+            stroke={alarm === 'unacked' ? theme.alarmHigh : theme.alarmAck}
+            strokeWidth={alarm === 'unacked' ? 2.5 : 1.5}
             className={alarm === 'unacked' ? 'hmi-blink' : undefined} />
+        )}
+        {/* Data-quality badge. Glyph FIRST so quality never depends on colour
+            alone, with the word in the tooltip for anyone who needs it spelled
+            out. `good` draws nothing — a calm screen says everything is fine
+            by staying quiet. */}
+        {quality !== undefined && quality !== 'good' && (
+          <g data-quality={quality} aria-label={`quality ${QUALITY_LABEL[quality]}`}>
+            <title>{QUALITY_LABEL[quality]}</title>
+            <rect x={-6} y={-6} width={13} height={13} rx={2}
+              fill={theme.panel} stroke={quality === 'bad' ? theme.alarm : theme.textDim} strokeWidth={1.2} />
+            <text x={0.5} y={4} textAnchor="middle" fontSize={9} fontWeight={700}
+              fill={quality === 'bad' ? theme.alarm : theme.text}>{QUALITY_GLYPH[quality]}</text>
+          </g>
         )}
         {suppressed && (
           <text x={widget.w - 2} y={-4} textAnchor="end" fontSize={11} fill={theme.textDim}
@@ -116,10 +163,11 @@ const WidgetG = memo(
         )}
         {flash && (
           <rect x={-8} y={-8} width={widget.w + 16} height={widget.h + 16} fill="none"
-            stroke="#2b6cb0" strokeWidth={4} rx={4} className="hmi-pulse" pointerEvents="none" />
+            stroke={theme.selection} strokeWidth={4} rx={2} className="hmi-pulse" pointerEvents="none" />
         )}
         {editing && selected && (
-          <rect x={-2} y={-2} width={widget.w + 4} height={widget.h + 4} fill="none" stroke="#2b6cb0" strokeDasharray="4 3" strokeWidth={1.5} />
+          <rect x={-2} y={-2} width={widget.w + 4} height={widget.h + 4} fill="none"
+            stroke={theme.selection} strokeDasharray="4 3" strokeWidth={1.5} />
         )}
       </g>
     )
@@ -132,9 +180,15 @@ const WidgetG = memo(
     prev.editing === next.editing &&
     prev.ox === next.ox &&
     prev.oy === next.oy &&
-    // identity only: the hist slab is rebuilt each tick, so trends re-render
-    // every tick (correct — samples scroll); other widgets pass undefined
+    // History has STABLE identity now, so the version is what moves. Widgets
+    // that draw no history receive neither and are not re-rendered by a
+    // sample landing — which is the whole point of passing it selectively.
     prev.hist === next.hist &&
+    prev.histVersion === next.histVersion &&
+    prev.defs === next.defs &&
+    prev.eng === next.eng &&
+    prev.quality === next.quality &&
+    prev.oos === next.oos &&
     prev.suppressed === next.suppressed &&
     prev.flash === next.flash &&
     shallowEq(prev.values, next.values),
@@ -156,7 +210,7 @@ function segmentPoints(points: { x: number; y: number }[], index: number, axis: 
   )
 }
 
-export default function HmiCanvas({ screen, selection, onSelect, mode, tool, onToolDone, armedPick, onPicked, view = null, onViewChange, onCursor, sim, flows, history, historyT, alarms, navAlarms, flashTag, onWidgetClick }: HmiCanvasProps) {
+export default function HmiCanvas({ screen, selection, onSelect, mode, tool, onToolDone, armedPick, onPicked, view = null, onViewChange, onCursor, sim, flows, history, historyVersion, alarms, defs, quality, oos, navAlarms, flashTag, onWidgetClick }: HmiCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const [drag, setDrag] = useState<DragState>(null)
   const [ghost, setGhost] = useState<{ dx: number; dy: number } | null>(null)
@@ -535,7 +589,7 @@ export default function HmiCanvas({ screen, selection, onSelect, mode, tool, onT
                 style={{ animationDuration: `${Math.max(0.35, Math.min(3, 8 / flow))}s` }} />
             )}
             {mode === 'edit' && selection.includes(p.id) && (
-              <polyline points={pts} fill="none" stroke="#2b6cb0" strokeWidth={wpx + 4} opacity={0.35} />
+              <polyline points={pts} fill="none" stroke={theme.selection} strokeWidth={wpx + 4} opacity={0.35} />
             )}
           </g>
         )
@@ -543,7 +597,12 @@ export default function HmiCanvas({ screen, selection, onSelect, mode, tool, onT
       {screen.widgets.map((raw) => {
         const w = drag?.kind === 'resize' && drag.id === raw.id && drag.live ? { ...raw, ...drag.live } : raw
         const o = offset(w.id)
-        const values: Record<string, number> = sim ? { ...(sim[w.tag ?? ''] ?? {}) } : previewSim(w)
+        const eng = defs?.[w.tag ?? '']
+        // the STRING, not the QualityState object: a fresh object every tick
+        // would re-render every widget and undo the memoization below
+        const q = quality?.[w.tag ?? '']?.q
+        const isOos = oos?.[w.tag ?? ''] === true
+        const values: Record<string, number> = sim ? { ...(sim[w.tag ?? ''] ?? {}) } : previewSim(w, eng)
         const signal = typeof w.props?.signal === 'string' ? w.props.signal : ''
         const sigRef = sim ? parseSignalRef(signal) : null
         if (sim && sigRef) {
@@ -559,11 +618,11 @@ export default function HmiCanvas({ screen, selection, onSelect, mode, tool, onT
         const alarm = live.some((a) => a.phase === 'active' || a.phase === 'cleared') ? 'unacked' as const : live.length > 0 ? 'acked' as const : 'none' as const
         const suppressed = recs.some((a) => a.sup)
         const needsHist = w.type === 'trend' || (w.type === 'display' && w.props?.spark === true)
-        const hist = !needsHist ? undefined
-          : sim && history && historyT ? { t: historyT, series: history }
-          : previewHist(w)
+        const hist = !needsHist ? undefined : sim && history ? history : previewHist(w)
+        const histVersion = !needsHist ? undefined : sim && history ? historyVersion : 0
         return (
-          <WidgetG key={w.id} widget={w} theme={theme} values={values} hist={hist}
+          <WidgetG key={w.id} widget={w} theme={theme} values={values} hist={hist} histVersion={histVersion}
+            defs={needsHist ? defs : undefined} eng={eng} quality={q} oos={isOos}
             alarm={alarm} suppressed={suppressed} flash={flashTag != null && w.tag === flashTag}
             selected={selection.includes(w.id)} editing={mode === 'edit'} ox={o.dx} oy={o.dy} />
         )
@@ -592,19 +651,20 @@ export default function HmiCanvas({ screen, selection, onSelect, mode, tool, onT
               // diamond = "this run drags sideways"; purely an affordance, the
               // whole segment is grabbable
               return <rect key={`s${i}`} x={m.x - 3 / hk} y={m.y - 3 / hk} width={6 / hk} height={6 / hk}
-                fill="#fff" stroke="#2b6cb0" strokeWidth={1.5 / hk} pointerEvents="none"
+                fill={theme.surfaceRaised} stroke={theme.selection} strokeWidth={1.5 / hk} pointerEvents="none"
                 transform={`rotate(45 ${m.x} ${m.y})`} />
             })}
             {pts.map((q, i) => (
               <circle key={i} data-vertex={i} data-vertex-pipe={selectedPipe.id} cx={q.x} cy={q.y} r={5 / hk}
-                fill="#fff" stroke="#2b6cb0" strokeWidth={2 / hk} style={{ cursor: 'move' }} />
+                fill={theme.surfaceRaised} stroke={theme.selection} strokeWidth={2 / hk} style={{ cursor: 'move' }} />
             ))}
           </g>
         )
       })()}
       {marqueeRect && (marqueeRect.w >= 4 || marqueeRect.h >= 4) && (
         <rect x={marqueeRect.x} y={marqueeRect.y} width={marqueeRect.w} height={marqueeRect.h}
-          fill="#2b6cb022" stroke="#2b6cb0" strokeDasharray="6 4" strokeWidth={1.5 / hk} pointerEvents="none" />
+          fill={theme.selection} fillOpacity={0.12} stroke={theme.selection}
+          strokeDasharray="6 4" strokeWidth={1.5 / hk} pointerEvents="none" />
       )}
       {mode === 'edit' && tool === 'select' && selection.length === 1 && (() => {
         const found = screen.widgets.find((x) => x.id === selection[0])
@@ -614,7 +674,7 @@ export default function HmiCanvas({ screen, selection, onSelect, mode, tool, onT
         return HANDLES.map((h) => {
           const p = handlePoint({ x: w.x + o.dx, y: w.y + o.dy, w: w.w, h: w.h }, h)
           return <rect key={h} data-handle={h} x={p.x - 4 / hk} y={p.y - 4 / hk} width={8 / hk} height={8 / hk}
-            fill="#2b6cb0" stroke="#fff" strokeWidth={1 / hk} style={{ cursor: `${h}-resize` }} />
+            fill={theme.selection} stroke={theme.surfaceRaised} strokeWidth={1 / hk} style={{ cursor: `${h}-resize` }} />
         })
       })()}
     </svg>

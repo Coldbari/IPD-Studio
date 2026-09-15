@@ -41,7 +41,8 @@ describe('operator command journal', () => {
   it('alarm ACK events still land alongside commands', () => {
     st().enterRun(screen)
     st().writeTag('P-1', 'RUN', 1)
-    for (let i = 0; i < 80; i++) st().tickOnce(0.2)
+    // 40 % -> the 90 % H limit is 25 m³ of a 50 m³ vessel: half an hour at 50 m³/h
+    for (let i = 0; i < 80; i++) st().tickOnce(30)
     expect(st().alarms.length).toBeGreaterThan(0)
     st().ack()
     expect(st().journal.some((e) => e.what === 'ACK')).toBe(true)

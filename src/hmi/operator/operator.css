@@ -1,0 +1,295 @@
+/* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+ * Copyright © 2026 Praharsh Nagpure — IPD Studio. Noncommercial use only;
+ * commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
+ *
+ * THE OPERATOR WORKSTATION, on the same design system as the rest of the HMI.
+ * Every value is a token from theme.ts. Nothing here is theme-specific: the
+ * pages follow whichever theme the workspace is in. */
+
+/* ── Page bar ────────────────────────────────────────────────────────────────
+ * Deliberately shallow. Navigation is a means, not a destination, and every
+ * pixel it takes is a pixel the process display does not have. */
+.op-nav {
+  display: flex; align-items: stretch; gap: 1px;
+  padding: 0 var(--hmi-space-md); background: var(--hmi-surface-sunken);
+  border-bottom: 1px solid var(--hmi-border); flex-wrap: wrap;
+}
+.op-nav button {
+  display: flex; align-items: center; gap: var(--hmi-space-md);
+  height: var(--hmi-control-md); padding: 0 var(--hmi-space-lg);
+  font-size: var(--hmi-font-base); font-weight: var(--hmi-weight-medium);
+  color: var(--hmi-text-secondary); background: none;
+  border: none; border-bottom: 2px solid transparent; cursor: pointer;
+}
+.op-nav button:hover { color: var(--hmi-text); background: var(--hmi-surface); }
+/* the active page is marked by a rule AND a weight change, not colour alone */
+.op-nav button.on { color: var(--hmi-text); border-bottom-color: var(--hmi-accent); font-weight: var(--hmi-weight-bold); }
+/* A count that rides a button. Neutral by default and separated from the word
+   it follows — a badge that touches its label reads as part of it ("Engineering9"),
+   which is the same defect that made a quality glyph read as part of a tag. */
+.op-count {
+  font-size: var(--hmi-font-xs); font-weight: var(--hmi-weight-bold);
+  margin-left: var(--hmi-space-sm);
+  padding: 0 var(--hmi-space-sm); border-radius: var(--hmi-radius-sm);
+  background: var(--hmi-surface-raised); color: var(--hmi-text-secondary);
+}
+/* On the page bar it is a STANDING ALARM count, which is an abnormal
+   condition and is the one place this carries an alarm tone. */
+.op-nav .op-count { background: var(--hmi-alarm-high); color: var(--hmi-text-on-accent); }
+.op-nav .op-spacer { flex: 1; }
+.op-nav .op-crumb {
+  display: flex; align-items: center; gap: var(--hmi-space-md);
+  padding: 0 var(--hmi-space-md); font-size: var(--hmi-font-sm); color: var(--hmi-text-muted);
+}
+.op-nav .op-crumb strong { color: var(--hmi-text-secondary); font-weight: var(--hmi-weight-medium); }
+
+/* ── Page body ───────────────────────────────────────────────────────────── */
+.op-page {
+  flex: 1; min-height: 0; overflow: auto; background: var(--hmi-app-bg);
+  color: var(--hmi-text); padding: var(--hmi-space-lg) var(--hmi-space-xl); font-size: var(--hmi-font-base);
+}
+.op-page h3 {
+  margin: 0 0 var(--hmi-space-md); font-size: var(--hmi-font-xs); font-weight: var(--hmi-weight-bold);
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--hmi-text-muted);
+  border-bottom: 1px solid var(--hmi-border); padding-bottom: var(--hmi-space-sm);
+}
+.op-page section { margin-bottom: var(--hmi-space-xxl); }
+.op-empty { color: var(--hmi-text-muted); padding: var(--hmi-space-md) 0; }
+
+/* ── KPI tiles ───────────────────────────────────────────────────────────────
+ * The headline numbers. A tile takes a coloured left rule only when it has
+ * something to say — a healthy plant is a row of quiet tiles. */
+.op-kpis { display: flex; flex-wrap: wrap; gap: var(--hmi-space-md); }
+.op-kpi {
+  min-width: 124px; flex: 0 1 auto;
+  padding: var(--hmi-space-md) var(--hmi-space-lg);
+  background: var(--hmi-surface); border: 1px solid var(--hmi-border);
+  border-left: 3px solid var(--hmi-border); border-radius: var(--hmi-radius-sm);
+}
+.op-kpi .k { font-size: var(--hmi-font-xs); letter-spacing: 0.05em; text-transform: uppercase; color: var(--hmi-text-muted); }
+.op-kpi .v {
+  font-size: var(--hmi-font-value); font-weight: var(--hmi-weight-bold);
+  line-height: var(--hmi-line, 1.25); font-variant-numeric: tabular-nums; margin-top: 2px;
+}
+.op-kpi .u { font-size: var(--hmi-font-sm); font-weight: var(--hmi-weight-normal); color: var(--hmi-text-muted); margin-left: 3px; }
+.op-kpi.attn { border-left-color: var(--hmi-alarm-medium); }
+.op-kpi.attn .v { color: var(--hmi-alarm-medium); }
+.op-kpi.bad { border-left-color: var(--hmi-alarm-high); }
+.op-kpi.bad .v { color: var(--hmi-alarm-high); }
+
+/* ── Cards ───────────────────────────────────────────────────────────────── */
+.op-cards { display: flex; flex-wrap: wrap; gap: var(--hmi-space-md); }
+.op-card {
+  min-width: 190px; flex: 1 1 210px; max-width: 320px; text-align: left;
+  padding: var(--hmi-space-md) var(--hmi-space-lg);
+  background: var(--hmi-surface); border: 1px solid var(--hmi-border);
+  border-left: 3px solid var(--hmi-border); border-radius: var(--hmi-radius-sm);
+  color: inherit; cursor: pointer; font: inherit;
+}
+.op-card:hover { border-color: var(--hmi-border-strong); border-left-color: var(--hmi-accent); }
+.op-card[data-attention="high"] { border-left-color: var(--hmi-alarm-high); }
+.op-card[data-attention="medium"] { border-left-color: var(--hmi-alarm-medium); }
+.op-card[data-attention="low"] { border-left-color: var(--hmi-alarm-low); }
+.op-card .t { font-weight: var(--hmi-weight-bold); margin-bottom: var(--hmi-space-xs); display: flex; gap: var(--hmi-space-md); align-items: baseline; }
+.op-card .m { color: var(--hmi-text-muted); font-size: var(--hmi-font-sm); }
+
+/* ── Tables ──────────────────────────────────────────────────────────────────
+ * Dense and scannable. Row striping is avoided on purpose: an abnormal row is
+ * the only thing that should draw the eye down a column. */
+.op-table { width: 100%; border-collapse: collapse; font-size: var(--hmi-font-base); }
+.op-table th {
+  text-align: left; font-size: var(--hmi-font-xs); letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--hmi-text-muted); font-weight: var(--hmi-weight-bold);
+  padding: var(--hmi-space-sm) var(--hmi-space-md);
+  border-bottom: 1px solid var(--hmi-border-strong); white-space: nowrap;
+  position: sticky; top: 0; background: var(--hmi-app-bg);
+}
+.op-table td { padding: var(--hmi-space-sm) var(--hmi-space-md); border-bottom: 1px solid var(--hmi-border); vertical-align: top; }
+.op-table tbody tr:hover { background: var(--hmi-surface); }
+.op-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.op-table .op-link { background: none; border: none; color: inherit; font: inherit; font-weight: var(--hmi-weight-medium); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 0; }
+.op-wrap { overflow-x: auto; }
+
+/* Alarm rows carry their priority as a left rule; resolved ones recede. */
+.op-table tr[data-prio="high"] td:first-child { box-shadow: inset 3px 0 0 var(--hmi-alarm-high); }
+.op-table tr[data-prio="medium"] td:first-child { box-shadow: inset 3px 0 0 var(--hmi-alarm-medium); }
+.op-table tr[data-prio="low"] td:first-child { box-shadow: inset 3px 0 0 var(--hmi-alarm-low); }
+.op-table tr[data-state="ACKNOWLEDGED"], .op-table tr[data-state="CLEARED"],
+.op-table tr[data-state="SHELVED"], .op-table tr[data-state="OUT OF SERVICE"],
+.op-table tr[data-state="SUPPRESSED"] { color: var(--hmi-text-muted); }
+/* a tripped or failed row is the exception that should catch the eye */
+.op-table tr[data-state="tripped"] td, .op-table tr[data-quality="bad"] td { color: var(--hmi-alarm-high); }
+.op-table tr[data-state="disabled"] td { color: var(--hmi-text-muted); font-style: italic; }
+
+/* ── Filters and controls ────────────────────────────────────────────────── */
+.op-filters { display: flex; flex-wrap: wrap; gap: var(--hmi-space-sm); margin-bottom: var(--hmi-space-lg); align-items: center; }
+.op-filters button, .op-act {
+  height: var(--hmi-control-sm); font-size: var(--hmi-font-sm); padding: 0 var(--hmi-space-lg);
+  color: var(--hmi-text-secondary); background: var(--hmi-surface);
+  border: 1px solid var(--hmi-border); border-radius: var(--hmi-radius-sm); cursor: pointer;
+}
+.op-filters button:hover, .op-act:hover { color: var(--hmi-text); border-color: var(--hmi-border-strong); }
+.op-filters button.on {
+  background: var(--hmi-accent); border-color: var(--hmi-accent);
+  color: var(--hmi-text-on-accent); font-weight: var(--hmi-weight-medium);
+}
+.op-filters .lbl { font-size: var(--hmi-font-xs); text-transform: uppercase; letter-spacing: 0.05em; color: var(--hmi-text-muted); margin: 0 var(--hmi-space-sm) 0 var(--hmi-space-lg); }
+.op-filters input {
+  height: var(--hmi-control-sm); background: var(--hmi-surface-sunken); color: var(--hmi-text);
+  border: 1px solid var(--hmi-border); border-radius: var(--hmi-radius-sm); padding: 0 var(--hmi-space-md); font-size: var(--hmi-font-sm);
+}
+
+.op-badge {
+  font-size: var(--hmi-font-xs); font-weight: var(--hmi-weight-bold);
+  padding: 0 var(--hmi-space-sm); border-radius: var(--hmi-radius-sm);
+  border: 1px solid currentcolor; white-space: nowrap;
+}
+.op-state { font-weight: var(--hmi-weight-bold); font-size: var(--hmi-font-sm); letter-spacing: 0.03em; white-space: nowrap; }
+.op-state[data-state="tripped"] { color: var(--hmi-alarm-high); }
+.op-state[data-state="running"], .op-state[data-state="starting"], .op-state[data-state="stopping"] { color: var(--hmi-process-active); }
+.op-state[data-state="disabled"] { color: var(--hmi-text-muted); font-style: italic; }
+
+/* ── Overview flowsheet ──────────────────────────────────────────────────── */
+.op-flow { display: flex; flex-direction: column; gap: var(--hmi-space-md); }
+.op-flow-path { display: flex; align-items: stretch; flex-wrap: wrap; gap: var(--hmi-space-xs); }
+.op-flow-arrow { display: flex; align-items: center; color: var(--hmi-text-muted); font-size: var(--hmi-font-md); padding: 0 var(--hmi-space-xs); }
+.op-flow-arrow[data-flowing="1"] { color: var(--hmi-pipe-flow); }
+.op-node {
+  min-width: 92px; padding: var(--hmi-space-sm) var(--hmi-space-md); text-align: left;
+  background: var(--hmi-surface); color: inherit; font: inherit;
+  border: 1px solid var(--hmi-border); border-top: 2px solid var(--hmi-border);
+  border-radius: var(--hmi-radius-sm); cursor: pointer;
+}
+.op-node:hover { border-color: var(--hmi-border-strong); }
+.op-node.term { background: none; border-style: dashed; cursor: default; color: var(--hmi-text-muted); }
+.op-node .nt { font-size: var(--hmi-font-sm); font-weight: var(--hmi-weight-bold); letter-spacing: 0.02em; }
+.op-node .nv { font-size: var(--hmi-font-sm); font-variant-numeric: tabular-nums; color: var(--hmi-text-secondary); }
+.op-node .ns { font-size: var(--hmi-font-xs); letter-spacing: 0.03em; color: var(--hmi-text-muted); }
+.op-node[data-state="running"], .op-node[data-state="starting"], .op-node[data-state="stopping"] { border-top-color: var(--hmi-process-active); }
+.op-node[data-state="running"] .ns { color: var(--hmi-process-active); }
+.op-node[data-state="tripped"] { border-top-color: var(--hmi-alarm-high); }
+.op-node[data-state="tripped"] .ns { color: var(--hmi-alarm-high); font-weight: var(--hmi-weight-bold); }
+.op-node[data-state="disabled"] .ns { font-style: italic; }
+.op-node[data-alarm="high"] { border-color: var(--hmi-alarm-high); }
+.op-node[data-alarm="medium"] { border-color: var(--hmi-alarm-medium); }
+.op-node[data-alarm="low"] { border-color: var(--hmi-alarm-low); }
+
+/* ── Trends ──────────────────────────────────────────────────────────────── */
+.op-trend { display: flex; gap: var(--hmi-space-lg); align-items: flex-start; flex-wrap: wrap; }
+.op-trend .picker {
+  flex: 0 0 200px; max-height: 420px; overflow-y: auto;
+  background: var(--hmi-surface); border: 1px solid var(--hmi-border);
+  border-radius: var(--hmi-radius-sm); padding: var(--hmi-space-md);
+}
+.op-trend .picker .grp {
+  font-size: var(--hmi-font-xs); text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--hmi-text-muted); padding: var(--hmi-space-md) var(--hmi-space-sm) var(--hmi-space-xs);
+  border-bottom: 1px solid var(--hmi-border); margin-bottom: var(--hmi-space-xs);
+}
+.op-trend .picker label { display: flex; gap: var(--hmi-space-md); align-items: baseline; padding: var(--hmi-space-xs) var(--hmi-space-sm); border-radius: var(--hmi-radius-sm); cursor: pointer; }
+.op-trend .picker label:hover { background: var(--hmi-surface-raised); }
+.op-trend .picker input { accent-color: var(--hmi-accent); }
+.op-trend .picker .hint { color: var(--hmi-text-muted); font-size: var(--hmi-font-xs); margin-left: auto; }
+.op-trend .plot { flex: 1 1 420px; min-width: 320px; }
+.op-legend { display: flex; flex-wrap: wrap; gap: var(--hmi-space-xl); margin-top: var(--hmi-space-md); font-size: var(--hmi-font-sm); }
+.op-legend .pen { display: flex; gap: var(--hmi-space-md); align-items: baseline; }
+.op-legend .pen strong { font-weight: var(--hmi-weight-bold); }
+.op-legend .pen .val { font-variant-numeric: tabular-nums; font-weight: var(--hmi-weight-medium); }
+.op-legend .sw { width: 12px; height: 3px; border-radius: 1px; flex: 0 0 auto; align-self: center; }
+
+/* ── Engineering diagnostics and reconciliation (Step I) ──────────────────
+   Step H settled the visual system; nothing here redesigns it. These are the
+   few elements the new surfaces need and the existing ones did not have: a
+   severity word, a second line under a finding, and the reconciliation rows.
+   Every value is a token. */
+
+.op-sev {
+  font-size: var(--hmi-font-xs);
+  font-weight: var(--hmi-weight-medium);
+  letter-spacing: 0.06em;
+}
+
+/* The explanation and the action under a finding. Recessive on purpose: the
+   finding is what an engineer scans, the rest is what they read once they
+   have stopped on one. */
+.op-sub {
+  font-size: var(--hmi-font-xs);
+  color: var(--hmi-text-muted);
+  line-height: var(--hmi-line-normal);
+  margin-top: var(--hmi-space-xs);
+  max-width: 72ch;
+}
+
+.op-filters select {
+  background: var(--hmi-surface-sunken);
+  color: var(--hmi-text);
+  border: var(--hmi-border-thin) solid var(--hmi-border);
+  border-radius: var(--hmi-radius-sm);
+  font: inherit;
+  font-size: var(--hmi-font-sm);
+  height: var(--hmi-control-sm);
+  padding: 0 var(--hmi-space-sm);
+}
+
+/* Reconciliation: one row per item, its status carried by a left rule AND a
+   word, never by colour alone. */
+.rc-item {
+  display: grid;
+  grid-template-columns: 92px 1fr auto;
+  gap: var(--hmi-space-md);
+  align-items: start;
+  padding: var(--hmi-space-md);
+  border-bottom: 1px solid var(--hmi-border);
+  border-left: var(--hmi-border-thick) solid transparent;
+}
+.rc-item[data-status='added'] { border-left-color: var(--hmi-process-active); }
+.rc-item[data-status='removed'] { border-left-color: var(--hmi-alarm-high); }
+.rc-item[data-status='changed'] { border-left-color: var(--hmi-alarm-medium); }
+.rc-item[data-status='unchanged'] { opacity: 0.62; }
+
+.rc-status {
+  font-size: var(--hmi-font-xs);
+  font-weight: var(--hmi-weight-medium);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hmi-text-secondary);
+}
+.rc-tag { font-weight: var(--hmi-weight-medium); }
+.rc-actions { display: flex; gap: var(--hmi-space-sm); }
+.rc-actions button {
+  background: var(--hmi-surface-sunken);
+  color: var(--hmi-text-secondary);
+  border: 1px solid var(--hmi-border);
+  border-radius: var(--hmi-radius-sm);
+  font: inherit;
+  font-size: var(--hmi-font-sm);
+  height: var(--hmi-control-sm);
+  padding: 0 var(--hmi-space-md);
+  cursor: pointer;
+}
+/* The FILLED state is reserved for a choice that will change something. Ignore
+   is the default on every row, so filling it too would put the strongest
+   weight on the rows where nothing is going to happen and make a screen of
+   defaults look like a screen of decisions. */
+.rc-actions button.on {
+  background: var(--hmi-accent);
+  color: var(--hmi-text-on-accent);
+  border-color: var(--hmi-accent);
+}
+.rc-actions button[data-action='ignore'].on {
+  background: var(--hmi-surface-raised);
+  color: var(--hmi-text-secondary);
+  border-color: var(--hmi-border-strong);
+}
+.rc-preview {
+  background: var(--hmi-surface-sunken);
+  border: 1px solid var(--hmi-border);
+  border-radius: var(--hmi-radius-sm);
+  padding: var(--hmi-space-md);
+  margin-top: var(--hmi-space-lg);
+  font-size: var(--hmi-font-sm);
+  color: var(--hmi-text-secondary);
+}
+.rc-preview ul { margin: var(--hmi-space-sm) 0 0; padding-left: var(--hmi-space-xl); }
+.rc-change { font-size: var(--hmi-font-xs); color: var(--hmi-text-muted); }
+.rc-change b { color: var(--hmi-text-secondary); font-weight: var(--hmi-weight-medium); }

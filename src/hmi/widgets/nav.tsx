@@ -14,7 +14,7 @@ export default function NavButton({ widget, theme, sim }: WidgetView) {
       <rect x={1} y={1} width={w - 2} height={h - 2} rx={6} fill={theme.panel} stroke={theme.equipStroke} strokeWidth={1.5} />
       {prio > 0 && (
         <circle cx={w - 24} cy={9} r={4} data-nav-alarm
-          fill={prio >= 3 ? '#ff4d4d' : prio >= 2 ? '#ffb020' : '#ffd94d'}
+          fill={prio >= 3 ? theme.alarmHigh : prio >= 2 ? theme.alarmMedium : theme.alarmLow}
           className={prio >= 3 ? 'hmi-blink' : undefined} />
       )}
       <text x={10} y={h / 2 + 4} fill={theme.text} fontSize={12} fontWeight={600}>

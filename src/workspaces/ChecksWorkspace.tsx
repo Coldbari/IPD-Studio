@@ -8,6 +8,7 @@ import { navigateWorkspace } from '../routes'
 import { useQa } from '../validate/live'
 import type { Severity } from '../validate/rules'
 import { locateCell } from '../canvas/locate'
+import { locateHmi } from '../hmi/locate'
 import { applyFix, describeFix, type FixSpec } from '../assist/fixes'
 import { showStatus } from '../feedback/notices'
 import AcceptFindingDialog, { type AcceptTarget } from '../panels/AcceptFindingDialog'
@@ -45,10 +46,23 @@ export default function ChecksWorkspace() {
   const report = useQa()
   const groups = report.groups.filter((g) => discipline === 'all' || g.rule.discipline === discipline)
 
-  const go = (sheetId?: string, targetId?: string) => {
-    if (!targetId) return
+  /**
+   * Take me to it.
+   *
+   * TWO DESTINATIONS, because a finding has two possible subjects. A drawing
+   * finding names a symbol on a sheet and lands in Draw; a finding about an
+   * operator screen names a widget on a screen and lands in the HMI workspace.
+   * Before Step I the second kind was a sentence with a dead button beside it.
+   */
+  const go = (f: { sheetId?: string; targetId?: string; hmi?: { screenId: string; widgetId?: string } }) => {
+    if (f.hmi) {
+      locateHmi(f.hmi.screenId, f.hmi.widgetId)
+      navigateWorkspace('hmi')
+      return
+    }
+    if (!f.targetId) return
     navigateWorkspace('draw')
-    locateCell(targetId, sheetId)
+    locateCell(f.targetId, f.sheetId)
   }
 
   // A fix can fail — the symbol may have moved on since the report was built.
@@ -116,8 +130,9 @@ export default function ChecksWorkspace() {
                   <div key={f.key} className="ws-issue">
                     <button
                       className="ws-issue-msg"
-                      disabled={!f.targetId}
-                      onClick={() => go(f.sheetId, f.targetId)}
+                      disabled={!f.targetId && !f.hmi}
+                      title={f.hmi ? 'Show this on its operator screen' : undefined}
+                      onClick={() => go(f)}
                     >
                       {f.message}
                     </button>

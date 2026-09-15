@@ -35,7 +35,7 @@ describe('nav widget alarm dot', () => {
     const w = { id: 'n', type: 'nav' as const, x: 0, y: 0, w: 120, h: 32, label: 'Feed' }
     const hot = renderToStaticMarkup(<svg>{<NavButton widget={w} theme={THEMES.classic} sim={{ __navPrio: 3 }} />}</svg>)
     expect(hot).toContain('data-nav-alarm')
-    expect(hot).toContain('#ff4d4d')
+    expect(hot).toContain(THEMES.classic.alarmHigh)
     const calm = renderToStaticMarkup(<svg>{<NavButton widget={w} theme={THEMES.classic} sim={{}} />}</svg>)
     expect(calm).not.toContain('data-nav-alarm')
   })

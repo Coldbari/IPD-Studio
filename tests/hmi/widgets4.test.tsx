@@ -26,7 +26,9 @@ describe('tank shape variants', () => {
     const lo = render(mk({ props: { shape: 'cone' } }), { PV: 10 })
     const hi = render(mk({ props: { shape: 'cone' } }), { PV: 90 })
     expect(lo).not.toEqual(hi)
-    expect(hi).toContain('90%')
+    // the unit is a <tspan> at its own size now, so compare the TEXT rather
+    // than the markup: "90" and "%" are adjacent on screen, not in the string
+    expect(hi.replace(/<[^>]*>/g, '')).toContain('90%')
   })
 })
 

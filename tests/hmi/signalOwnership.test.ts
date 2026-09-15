@@ -46,9 +46,30 @@ describe('a measurement widget', () => {
     const d = defOf(display({}))
     expect(d.min).toBe(0)
     expect(d.max).toBe(100)
-    expect(d.unit).toBeUndefined()
+    // LT-101 is a LEVEL tag by its ISA letter, so the default span and unit are
+    // the ones level is measured in. That is a reading of the tag the drawing
+    // already carries, not an engineering value invented for it — and
+    // model/signalData.ts still never lets it reach a record.
+    expect(d.unit).toBe('%')
     // Still no invented alarms on a measurement widget.
     expect(d.limits).toBeUndefined()
+  })
+
+  it('3b. a tag whose letters name nothing measurable gets no unit at all', () => {
+    const d = buildTagDefs([{ widgets: [widget({ id: 'w1', type: 'display', tag: 'XI-9' })] }])
+      .find((x) => x.name === 'XI-9')!
+    expect(d.unit).toBeUndefined()
+    expect(d.measures).toBeUndefined()
+  })
+
+  it('3c. ISA letters pick the quantity, and with it the default span', () => {
+    const spanOf = (tag: string) => {
+      const d = buildTagDefs([{ widgets: [widget({ id: 'w', type: 'display', tag })] }])[0]!
+      return { measures: d.measures, min: d.min, max: d.max, unit: d.unit }
+    }
+    expect(spanOf('PT-1')).toEqual({ measures: 'pressure', min: 0, max: 10, unit: 'bar' })
+    expect(spanOf('TT-1')).toEqual({ measures: 'temperature', min: 0, max: 150, unit: '°C' })
+    expect(spanOf('FT-1')).toEqual({ measures: 'flow', min: 0, max: 100, unit: 'm³/h' })
   })
 
   it('mixes per value — a registry limit and a legacy range coexist', () => {

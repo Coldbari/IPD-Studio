@@ -3,10 +3,12 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { THEMES } from '../../src/hmi/theme'
 import { renderWidget } from '../../src/hmi/widgets/index'
 import type { HmiWidget } from '../../src/hmi/model'
+import type { History } from '../../src/hmi/sim/history'
+import { historyOf } from './historyFixture'
 
 const mk = (over: Partial<HmiWidget>): HmiWidget =>
   ({ id: 'w1', type: 'display', x: 0, y: 0, w: 96, h: 40, ...over })
-const render = (widget: HmiWidget, sim: Record<string, number> = {}, hist?: { t: number[]; series: Record<string, number[]> }) =>
+const render = (widget: HmiWidget, sim: Record<string, number> = {}, hist?: History) =>
   renderToStaticMarkup(<svg>{renderWidget({ widget, theme: THEMES.classic, sim, hist })}</svg>)
 
 describe('indicator widgets', () => {
@@ -25,7 +27,7 @@ describe('indicator widgets', () => {
     expect(hi).toContain('rotate(120')
   })
   it('trend draws a polyline from history', () => {
-    const html = render(mk({ type: 'trend', w: 192, h: 96 }), {}, { t: [0, 0.2, 0.4], series: { PV: [10, 50, 90] } })
+    const html = render(mk({ type: 'trend', w: 192, h: 96 }), {}, historyOf({ PV: [10, 50, 90] }))
     expect(html).toContain('polyline')
   })
   it('button and switch render labels', () => {

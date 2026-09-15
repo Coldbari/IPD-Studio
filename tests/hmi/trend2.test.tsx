@@ -1,18 +1,23 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import Trend, { PEN_COLORS, trendWindow } from '../../src/hmi/widgets/trend'
+import Trend, { PEN_COLORS, axisLabel, splitRef } from '../../src/hmi/widgets/trend'
 import { THEMES } from '../../src/hmi/theme'
 import type { HmiWidget } from '../../src/hmi/model'
+import { historyOf } from './historyFixture'
 
-describe('trendWindow', () => {
-  const ts = [0, 1, 2, 3, 10, 11, 12] // non-uniform: a speed change happened
-  it('windows by time, not by sample count', () => {
-    expect(trendWindow(ts, 3, 12)).toBe(4) // [9..12] -> first t >= 9 is ts[4]=10
-    expect(trendWindow(ts, 100, 12)).toBe(0)
-    expect(trendWindow(ts, 0.5, 12)).toBe(6)
+// Windowing moved OUT of the widget: history owns which samples answer a
+// window (see tests/hmi/history.test.ts), the trend owns drawing them.
+describe('trend helpers', () => {
+  it('splits a signal reference at the last dot', () => {
+    expect(splitRef('LIC-101.OP')).toEqual({ tag: 'LIC-101', signal: 'OP' })
+    expect(splitRef('PT-1.PV')).toEqual({ tag: 'PT-1', signal: 'PV' })
+    expect(splitRef('PV')).toEqual({ tag: 'PV', signal: 'PV' })
   })
-  it('empty history yields an empty window', () => {
-    expect(trendWindow([], 60, 0)).toBe(0)
+  it('labels a short span in mm:ss and a long one in h:mm', () => {
+    expect(axisLabel(125, 60)).toBe('02:05')
+    expect(axisLabel(125, 300)).toBe('02:05')
+    expect(axisLabel(3725, 3600)).toBe('1:02')
+    expect(axisLabel(-5, 60)).toBe('00:00')
   })
 })
 
@@ -22,13 +27,10 @@ const widget: HmiWidget = {
   pens: [{ ref: 'LIC-1.SP' }],
 }
 
-const hist = {
-  t: [0, 0.2, 0.4, 0.6],
-  series: {
-    'FT-1.PV': [10, 20, 30, 40],
-    'LIC-1.SP': [50, 50, 55, 55],
-  },
-}
+const hist = historyOf({
+  'FT-1.PV': [10, 20, 30, 40],
+  'LIC-1.SP': [50, 50, 55, 55],
+})
 
 describe('multi-pen trend', () => {
   const html = renderToStaticMarkup(
@@ -44,7 +46,7 @@ describe('multi-pen trend', () => {
     expect(html).toContain('LIC-1.SP 55')
   })
   it('renders a time axis in mm:ss', () => {
-    expect(html).toContain('00:00')
+    expect(html).toContain('00:0')
   })
   it('a pen with no recorded series simply draws nothing', () => {
     const w2: HmiWidget = { ...widget, pens: [{ ref: 'GHOST.OP' }] }

@@ -14,6 +14,9 @@ test('one click: sample P&ID becomes a running HMI', async ({ page }) => {
   await expect(canvas.locator('polyline')).not.toHaveCount(0)
   await expect(page.getByTestId('hmi-reimport')).toBeVisible()
   await page.getByTestId('hmi-run-toggle').click()
+  // RUN lands on the dynamic Overview when no screen is starred as home;
+  // the mimic lives under PROCESS in the operator hierarchy.
+  await page.getByTestId('op-nav-process').click()
   await page.getByTestId('hmi-speed').click()
   // something on screen changes as the sim runs (flows/levels/drifting values)
   const text = () => canvas.textContent()
@@ -64,14 +67,21 @@ test('operate a hand-built screen: start pump, watch it fill, alarm, ack', async
   await page.keyboard.press('Enter')
   // run + operate
   await page.getByTestId('hmi-run-toggle').click()
+  // RUN lands on the dynamic Overview when no screen is starred as home;
+  // the mimic lives under PROCESS in the operator hierarchy.
+  await page.getByTestId('op-nav-process').click()
   const q = await world(348, 268)
   await page.mouse.click(q.x, q.y)
   await page.getByTestId('fp-start').click()
+  await page.getByTestId('fp-close').click()
+  // A hand-built vessel runs on the default 100 m³ against a 50 m³/h pump, so
+  // reaching the 90 % high alarm from 40 % is an HOUR of process time. That is
+  // what the training speeds are for: 1x -> 10x -> 60x -> 300x.
+  for (let i = 0; i < 3; i++) await page.getByTestId('hmi-speed').click()
+  await expect(page.getByTestId('hmi-speed')).toHaveText('300×')
   const levelText = () => canvas.locator('text', { hasText: '%' }).first().textContent()
   const before = await levelText()
   await expect.poll(levelText, { timeout: 15000 }).not.toBe(before)
-  await page.getByTestId('fp-close').click()
-  await page.getByTestId('hmi-speed').click()
   await expect(page.getByTestId('alarm-ack')).toBeVisible({ timeout: 60000 })
   await page.getByTestId('alarm-ack-all').click()
   // the journal recorded the operator's START as a command; filter to it
@@ -108,6 +118,9 @@ test('marquee select, duplicate, and navigate a running plant', async ({ page })
   await page.getByTitle('Add screen').click()
   await expect(page.locator('.hmi-tab.active')).toContainText('Screen 2')
   await page.getByTestId('hmi-run-toggle').click()
+  // RUN lands on the dynamic Overview when no screen is starred as home;
+  // the mimic lives under PROCESS in the operator hierarchy.
+  await page.getByTestId('op-nav-process').click()
   await page.locator('.hmi-tab', { hasText: 'Screen 1' }).click()
   await expect(canvas.locator('g.hmi-widget')).toHaveCount(4)
   // still running: navigation did not stop the sim
@@ -283,6 +296,9 @@ test('scenario injection: trip a pump from the Events menu', async ({ page }) =>
   })
   await page.getByTestId('rail-hmi').click()
   await page.getByTestId('hmi-run-toggle').click()
+  // RUN lands on the dynamic Overview when no screen is starred as home;
+  // the mimic lives under PROCESS in the operator hierarchy.
+  await page.getByTestId('op-nav-process').click()
   // start the pump, let it ramp
   await page.evaluate(() => {
     const pid = (window as unknown as { __pid: { useSimStore: { getState(): { writeTag(t: string, s: string, v: number): void } } } }).__pid
@@ -298,11 +314,14 @@ test('scenario injection: trip a pump from the Events menu', async ({ page }) =>
   await page.getByTestId('event-row').filter({ hasText: 'Trip P-1' }).click()
   await page.keyboard.press('Escape')
   await expect.poll(async () => (await sim())['P-1']!.RUN, { timeout: 4000 }).toBe(0) // breaker opened
-  // the faceplate shows FAULT and offers a reset
+  // the trip ANNUNCIATES — the audit found it stopped the pump silently
+  await expect(page.getByTestId('alarm-bar')).toContainText('P-1')
+  await expect(page.getByTestId('alarm-bar')).toContainText('TRIP')
+  // the faceplate shows TRIPPED and offers a reset
   const canvas = page.getByTestId('hmi-canvas')
   const b = (await canvas.boundingBox())!
   await page.mouse.click(b.x + (128 / 1600) * b.width, b.y + (118 / 1000) * b.height)
-  await expect(page.getByTestId('faceplate')).toContainText('FAULT')
+  await expect(page.getByTestId('faceplate')).toContainText('TRIPPED')
   await page.getByTestId('fp-fault-reset').click()
   await expect(page.getByTestId('faceplate')).toContainText('STOPPED')
   await page.getByTestId('fp-close').click()
@@ -391,6 +410,9 @@ test('alarm summary v2: shelve and out-of-service', async ({ page }) => {
   await page.getByTestId('prop-tag').fill('TK-1')
   await page.getByLabel('Start level %').fill('96')
   await page.getByTestId('hmi-run-toggle').click()
+  // RUN lands on the dynamic Overview when no screen is starred as home;
+  // the mimic lives under PROCESS in the operator hierarchy.
+  await page.getByTestId('op-nav-process').click()
   await expect(page.getByTestId('alarm-ack')).toBeVisible({ timeout: 15000 })
   await page.getByTestId('alarm-summary-toggle').click()
   const summary = page.getByTestId('alarm-summary')
@@ -435,6 +457,9 @@ test('multi-pen trend with a time axis', async ({ page }) => {
   await page.getByTestId('prop-tag').fill('LIC-1')
   await page.getByTestId('prop-pen-0').fill('LIC-1.SP')
   await page.getByTestId('hmi-run-toggle').click()
+  // RUN lands on the dynamic Overview when no screen is starred as home;
+  // the mimic lives under PROCESS in the operator hierarchy.
+  await page.getByTestId('op-nav-process').click()
   await page.waitForTimeout(1500)
   // legend shows both pens; the time axis renders mm:ss
   await expect(canvas).toContainText('LIC-1.SP')
@@ -467,4 +492,112 @@ test('build an HMI screen by hand and keep it across reload', async ({ page }) =
   await restoreIfOffered(page)
   await expect(page.getByTestId('hmi-canvas')).toBeVisible()
   await expect(page.getByTestId('hmi-canvas').locator('g.hmi-widget')).toHaveCount(2)
+})
+
+test('operator workstation: overview, equipment, trends, diagnostics, alarms, reset', async ({ page }) => {
+  page.on('dialog', (d) => void d.accept())
+  await page.goto('/app')
+  await page.waitForFunction(() => '__pid' in window)
+  // A plant with a pump, a throttling valve, a small vessel and its
+  // instruments — small enough to alarm quickly, real enough to be a process.
+  await page.evaluate(() => {
+    const doc = {
+      schemaVersion: 4,
+      meta: { name: 'Operator demo', author: '', created: '', modified: '' },
+      settings: { gridPx: 8, tagSeparator: '-' },
+      sheets: [{ id: 'sh1', name: 'S1', drawingNumber: '', revision: '0', sheetSize: 'A3', nodes: [], edges: [] }],
+      registry: { 'TK-101': { key: 'TK-101', kind: 'equipment', fields: { 'construction.volume': '5 m³' } } },
+      hmiScreens: [{
+        id: 'scr1', name: 'Feed area', theme: 'classic',
+        widgets: [
+          { id: 'p', type: 'pump', x: 100, y: 90, w: 56, h: 56, tag: 'P-101' },
+          { id: 'v', type: 'valve', x: 300, y: 95, w: 48, h: 32, tag: 'LV-101', props: { throttle: true } },
+          { id: 't', type: 'tank', x: 500, y: 40, w: 96, h: 128, tag: 'TK-101', props: { level0: 40, H: 60 } },
+          { id: 'lt', type: 'display', x: 700, y: 40, w: 96, h: 40, tag: 'LT-101', props: { bindTank: 'TK-101' } },
+          { id: 'pt', type: 'display', x: 700, y: 100, w: 96, h: 40, tag: 'PT-101', props: { bindPipe: 'e2' } },
+        ],
+        pipes: [
+          { id: 'e1', points: [{ x: 0, y: 118 }, { x: 110, y: 118 }] },
+          { id: 'e2', points: [{ x: 150, y: 118 }, { x: 310, y: 111 }] },
+          { id: 'e3', points: [{ x: 340, y: 111 }, { x: 510, y: 100 }] },
+        ],
+      }],
+    }
+    const pid = (window as unknown as { __pid: { useStore: { getState(): { loadIntoStore(d: unknown): void } } } }).__pid
+    pid.useStore.getState().loadIntoStore(doc)
+  })
+  const write = (tag: string, sig: string, v: number) => page.evaluate(([t, s, n]) => {
+    const pid = (window as unknown as { __pid: { useSimStore: { getState(): { writeTag(a: string, b: string, c: number): void } } } }).__pid
+    pid.useSimStore.getState().writeTag(t as string, s as string, n as number)
+  }, [tag, sig, v])
+
+  await page.getByTestId('rail-hmi').click()
+  await page.getByTestId('hmi-run-toggle').click()
+
+  // 1-3. No home screen is starred, so RUN lands on the dynamic Overview
+  await expect(page.getByTestId('op-overview')).toBeVisible()
+  await expect(page.getByTestId('kpi-status')).toContainText('STOPPED')
+  await expect(page.getByTestId('kpi-running')).toContainText('0 / 1')
+
+  // 4-6. Start the pump and open the valve; the overview follows the plant
+  await write('P-101', 'RUN', 1)
+  await write('LV-101', 'OP', 100)
+  await expect.poll(async () => (await page.getByTestId('kpi-running').textContent())?.trim(), { timeout: 8000 })
+    .toContain('1 / 1')
+  await expect(page.getByTestId('kpi-status')).toContainText('RUNNING')
+
+  await page.getByTestId('op-nav-equipment').click()
+  await expect(page.getByTestId('op-equipment')).toBeVisible()
+  await expect(page.locator('[data-testid="equip-row"][data-tag="P-101"]')).toHaveAttribute('data-state', 'running')
+
+  // 7. The process mimic is still there, with its screen named in the crumb
+  await page.getByTestId('op-nav-process').click()
+  await expect(page.getByTestId('hmi-canvas')).toBeVisible()
+  await expect(page.getByTestId('op-crumb')).toContainText('Feed area')
+
+  // 8-10. Trends draw from the recorded history, at the canonical spans
+  await page.getByTestId('op-nav-trends').click()
+  await page.getByTestId('trend-pick-LT-101.PV').check()
+  await page.getByTestId('trend-span-300').click()
+  await expect(page.getByTestId('op-trend-chart')).toBeVisible()
+  await expect.poll(async () => page.locator('[data-testid="op-trend-chart"] polyline').count(), { timeout: 10000 })
+    .toBeGreaterThan(0)
+
+  // 11-12. Diagnostics shows the live reading and its quality
+  await page.getByTestId('op-nav-diagnostics').click()
+  const ltRow = page.locator('[data-testid="diag-row"][data-tag="LT-101"]')
+  await expect(ltRow).toHaveAttribute('data-quality', 'good')
+  await expect(ltRow).toHaveAttribute('data-source', 'SIMULATION')
+  const firstPv = await ltRow.getByTestId('diag-pv').textContent()
+  await page.getByTestId('hmi-speed').click() // 10x, so the level moves
+  await expect.poll(async () => ltRow.getByTestId('diag-pv').textContent(), { timeout: 15000 }).not.toBe(firstPv)
+
+  // 13-15. The vessel fills past its high limit: a real process alarm
+  await page.getByTestId('op-nav-alarms').click()
+  const alarmRow = page.locator('[data-testid="alarm-row"][data-tag="TK-101"]')
+  await expect(alarmRow.first()).toBeVisible({ timeout: 30000 })
+  await expect(alarmRow.first()).toHaveAttribute('data-state', 'ACTIVE')
+  await expect(page.getByTestId('op-nav-alarm-count')).toBeVisible()
+
+  // 16-17. Click-through lands on the process screen showing that tag
+  await alarmRow.first().getByTestId('alarm-jump').click()
+  await expect(page.getByTestId('hmi-canvas')).toBeVisible()
+  await expect(page.getByTestId('op-crumb')).toContainText('Feed area')
+
+  // 18-19. Acknowledge from the alarm page; the state changes
+  await page.getByTestId('op-nav-alarms').click()
+  await alarmRow.first().getByTestId('alarm-ack').click()
+  await expect(alarmRow.first()).toHaveAttribute('data-state', 'ACKNOWLEDGED')
+
+  // 20-21. Back to the overview; the summary reflects the acknowledgement
+  await page.getByTestId('op-nav-overview').click()
+  await expect(page.getByTestId('kpi-unacked')).toContainText('0')
+
+  // 22-23. RESET returns the runtime to its configured initial state
+  await page.getByTestId('hmi-reset').click()
+  await expect(page.getByTestId('kpi-status')).toContainText('STOPPED')
+  await expect(page.getByTestId('kpi-running')).toContainText('0 / 1')
+  await expect(page.getByTestId('kpi-alarms')).toContainText('0')
+  await expect(page.getByTestId('op-no-alarms')).toBeVisible()
+  await page.getByTestId('hmi-run-toggle').click()
 })

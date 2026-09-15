@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { renderWidget } from '../../src/hmi/widgets/index'
 import { THEMES } from '../../src/hmi/theme'
 import type { HmiWidget } from '../../src/hmi/model'
+import { historyOf } from './historyFixture'
 
 const theme = THEMES.classic
 const render = (widget: HmiWidget, sim: Record<string, number> = {}) =>
@@ -58,7 +59,7 @@ describe('upgraded gauge and trend', () => {
     const html = renderToStaticMarkup(
       <svg>{renderWidget({
         widget: { id: 't1', type: 'trend', x: 0, y: 0, w: 192, h: 96, tag: 'LT-1', props: { H: 80, min: 0, max: 100 } },
-        theme, sim: { PV: 52, SP: 60 }, hist: { t: [0, 0.2, 0.4, 0.6], series: { 'LT-1.PV': [40, 45, 50, 52] } },
+        theme, sim: { PV: 52, SP: 60 }, hist: historyOf({ 'LT-1.PV': [40, 45, 50, 52] }),
       })}</svg>)
     expect(html).toContain('100') // max label
     expect(html).toContain(theme.sp)

@@ -1,89 +1,280 @@
 /* SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
  * Copyright © 2026 Praharsh Nagpure — IPD Studio. Noncommercial use only;
- * commercial use requires a paid license (see COMMERCIAL-LICENSE.md). */
+ * commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
+ *
+ * THE HMI SHELL. Every value here comes from the design system in theme.ts
+ * via the custom properties applied to `.hmi`. There are no colour literals:
+ * the two exceptions are pure black/white alphas used as neutral scrims,
+ * which carry no meaning and work under both themes. */
 
 .hmi {
   height: 100%;
   display: grid;
   grid-template-areas: "toolbar toolbar toolbar" "palette center props" "status status status";
-  grid-template-rows: 40px 1fr 24px;
+  grid-template-rows: var(--hmi-control-md) 1fr 22px;
   grid-template-columns: 200px 1fr 280px;
+  background: var(--hmi-app-bg);
+  color: var(--hmi-text);
+  font-size: var(--hmi-font-base);
 }
 .hmi.run-mode { grid-template-columns: 0 1fr 0; }
-.hmi-toolbar { grid-area: toolbar; display: flex; align-items: center; gap: 6px; padding: 0 10px; background: #182c44; color: #dce8f4; }
-.hmi-toolbar button { background: #24405f; color: inherit; border: 1px solid #35567c; border-radius: 4px; padding: 3px 10px; cursor: pointer; }
-.hmi-toolbar button:hover { background: #2d4f75; }
-.hmi-toolbar button.active { background: #2b6cb0; border-color: #2b6cb0; }
+.hmi :focus-visible { outline: 2px solid var(--hmi-focus); outline-offset: 1px; }
+
+/* ── Toolbar ─────────────────────────────────────────────────────────────── */
+.hmi-toolbar {
+  grid-area: toolbar; display: flex; align-items: center; gap: var(--hmi-space-sm);
+  padding: 0 var(--hmi-space-lg); background: var(--hmi-surface-sunken);
+  color: var(--hmi-text); border-bottom: 1px solid var(--hmi-border);
+}
+.hmi-toolbar strong { font-size: var(--hmi-font-md); letter-spacing: 0.01em; }
+.hmi-toolbar button {
+  height: var(--hmi-control-sm); display: inline-flex; align-items: center; gap: 4px;
+  background: var(--hmi-surface-raised); color: inherit; border: 1px solid var(--hmi-border);
+  border-radius: var(--hmi-radius-sm); padding: 0 10px; font-size: var(--hmi-font-sm); cursor: pointer;
+}
+.hmi-toolbar button:hover:not(:disabled) { border-color: var(--hmi-border-strong); }
+.hmi-toolbar button:disabled { opacity: 0.45; cursor: default; }
+.hmi-toolbar button.active { background: var(--hmi-accent); border-color: var(--hmi-accent); color: var(--hmi-text-on-accent); }
 .hmi-toolbar .grow { flex: 1; }
-.hmi-toolbar .demo-note { font-size: 10px; opacity: 0.65; }
-.hmi-side { grid-area: palette; overflow-y: auto; background: #f4f6f9; border-right: 1px solid #d5d5d5; }
+.hmi-toolbar .demo-note { font-size: var(--hmi-font-xs); color: var(--hmi-text-muted); }
+
+/* ── Frame ───────────────────────────────────────────────────────────────── */
+.hmi-side { grid-area: palette; overflow-y: auto; background: var(--hmi-surface); border-right: 1px solid var(--hmi-border); }
 .hmi.run-mode .hmi-side, .hmi.run-mode .hmi-props { display: none; }
-.hmi-props { grid-area: props; overflow-y: auto; background: #f4f6f9; border-left: 1px solid #d5d5d5; padding: 10px; font-size: 12px; }
+.hmi-props {
+  grid-area: props; overflow-y: auto; background: var(--hmi-surface);
+  border-left: 1px solid var(--hmi-border); padding: var(--hmi-space-lg); font-size: var(--hmi-font-base);
+}
+.hmi-props h4 { margin: 0 0 var(--hmi-space-md); font-size: var(--hmi-font-md); }
+.hmi-props h5 { color: var(--hmi-text-secondary); font-size: var(--hmi-font-sm); text-transform: uppercase; letter-spacing: 0.05em; }
+.hmi-props input, .hmi-props select {
+  height: var(--hmi-control-sm); background: var(--hmi-surface-raised); color: var(--hmi-text);
+  border: 1px solid var(--hmi-border); border-radius: var(--hmi-radius-sm); padding: 0 4px; font-size: var(--hmi-font-base);
+}
 .hmi-center { grid-area: center; display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
-.hmi-canvas-wrap { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: auto; background: #0a1826; }
+.hmi-canvas-wrap { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: auto; background: var(--hmi-bg); }
 .hmi-canvas-wrap svg { max-width: 100%; max-height: 100%; outline: none; }
-.hmi-status { grid-area: status; display: flex; align-items: center; gap: 12px; padding: 0 10px; font-size: 11px; background: #f0f0f4; border-top: 1px solid #d5d5d5; }
-.hmi-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #dce8f4; background: #0a1826; }
-.hmi-empty button { font-size: 14px; padding: 8px 18px; background: #24405f; color: inherit; border: 1px solid #35567c; border-radius: 6px; cursor: pointer; }
+.hmi-status {
+  grid-area: status; display: flex; align-items: center; gap: var(--hmi-space-lg);
+  padding: 0 var(--hmi-space-lg); font-size: var(--hmi-font-xs); color: var(--hmi-text-secondary);
+  background: var(--hmi-surface-sunken); border-top: 1px solid var(--hmi-border);
+}
+.hmi-empty {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--hmi-space-lg); color: var(--hmi-text-secondary); background: var(--hmi-bg);
+}
+.hmi-empty button {
+  font-size: var(--hmi-font-md); padding: var(--hmi-space-md) var(--hmi-space-xl);
+  background: var(--hmi-surface-raised); color: var(--hmi-text);
+  border: 1px solid var(--hmi-border); border-radius: var(--hmi-radius-md); cursor: pointer;
+}
 .hmi-empty button:disabled { opacity: 0.5; cursor: default; }
-.hmi-tabs { display: flex; gap: 2px; padding: 2px 6px; background: #10243a; }
-.hmi-tab { padding: 3px 12px; font-size: 12px; color: #9db4cc; background: #16324e; border-radius: 4px 4px 0 0; cursor: pointer; display: flex; gap: 6px; align-items: center; }
-.hmi-tab.active { background: #2b6cb0; color: #fff; }
-.hmi-tab .sheet-close { background: none; border: none; color: inherit; cursor: pointer; padding: 0 2px; }
-.hmi-pal-item { display: flex; align-items: center; gap: 8px; padding: 4px 6px; margin: 3px 0; background: #fff; border: 1px solid #d5d5d5; border-radius: 5px; cursor: grab; font-size: 12px; }
-.hmi-pal-item:hover { border-color: #2b6cb0; box-shadow: 0 1px 4px #2b6cb030; }
-.hmi-faceplate { position: absolute; right: 16px; top: 56px; width: 268px; background: #1d314e; color: #e8f0fa; border: 1px solid #35567c; border-radius: 8px; padding: 12px; box-shadow: 0 8px 24px #0008; z-index: 20; }
-.hmi-faceplate header { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
-.hmi-faceplate .fp-row { display: flex; gap: 6px; margin-top: 8px; }
-.hmi-faceplate button { flex: 1; background: #24405f; color: inherit; border: 1px solid #35567c; border-radius: 4px; padding: 5px; cursor: pointer; }
-.hmi-faceplate button.active { background: #2b6cb0; }
-.hmi-faceplate .fp-state { font-size: 16px; font-weight: 700; margin: 6px 0; }
+
+/* ── Screen tabs ─────────────────────────────────────────────────────────── */
+.hmi-tabs { display: flex; gap: 1px; padding: var(--hmi-space-xs) var(--hmi-space-md) 0; background: var(--hmi-surface-sunken); }
+.hmi-tab {
+  padding: var(--hmi-space-sm) var(--hmi-space-lg); font-size: var(--hmi-font-sm);
+  color: var(--hmi-text-secondary); background: var(--hmi-surface);
+  border: 1px solid var(--hmi-border); border-bottom: none;
+  border-radius: var(--hmi-radius-sm) var(--hmi-radius-sm) 0 0;
+  cursor: pointer; display: flex; gap: var(--hmi-space-md); align-items: center;
+}
+.hmi-tab.active { background: var(--hmi-surface-raised); color: var(--hmi-text); border-top: 2px solid var(--hmi-accent); }
+.hmi-tab .sheet-close { background: none; border: none; color: inherit; cursor: pointer; padding: 0 var(--hmi-space-xs); }
+.hmi-pal-item {
+  display: flex; align-items: center; gap: var(--hmi-space-md);
+  padding: var(--hmi-space-sm) var(--hmi-space-md); margin: var(--hmi-space-xs) 0;
+  background: var(--hmi-surface-raised); border: 1px solid var(--hmi-border);
+  border-radius: var(--hmi-radius-sm); cursor: grab; font-size: var(--hmi-font-base); color: var(--hmi-text);
+}
+.hmi-pal-item:hover { border-color: var(--hmi-accent); }
+
+/* ── Faceplate ───────────────────────────────────────────────────────────── */
+.hmi-faceplate {
+  /* BOTTOM-anchored: the top of the process area carries the alarm banner and
+     the page bar, and a plate that covers the alarm summary is the one thing a
+     faceplate must never do. Dragging switches it to explicit top/left. */
+  position: absolute; right: var(--hmi-space-xl); bottom: var(--hmi-space-xl); width: 264px;
+  max-height: calc(100% - 2 * var(--hmi-space-xl)); overflow-y: auto;
+  background: var(--hmi-surface); color: var(--hmi-text);
+  border: 1px solid var(--hmi-border-strong); border-radius: var(--hmi-radius-md);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 35%); z-index: 20; font-size: var(--hmi-font-base);
+}
+.hmi-faceplate .fp-head {
+  display: flex; align-items: baseline; gap: var(--hmi-space-md);
+  padding: var(--hmi-space-md) var(--hmi-space-lg);
+  background: var(--hmi-surface-sunken); border-bottom: 1px solid var(--hmi-border);
+  border-radius: var(--hmi-radius-md) var(--hmi-radius-md) 0 0; cursor: grab; touch-action: none;
+}
+.hmi-faceplate .fp-tag { font-size: var(--hmi-font-lg); font-weight: var(--hmi-weight-bold); letter-spacing: 0.02em; }
+.hmi-faceplate .fp-desc { font-size: var(--hmi-font-sm); color: var(--hmi-text-muted); }
+.hmi-faceplate .fp-x {
+  margin-left: auto; background: none; border: none; color: var(--hmi-text-muted);
+  cursor: pointer; font-size: var(--hmi-font-lg); line-height: 1; padding: 0 var(--hmi-space-xs);
+}
+.hmi-faceplate .fp-x:hover { color: var(--hmi-text); }
+.hmi-faceplate .fp-band {
+  display: flex; align-items: center; gap: var(--hmi-space-md);
+  padding: var(--hmi-space-md) var(--hmi-space-lg); border-bottom: 1px solid var(--hmi-border);
+}
+.hmi-faceplate .fp-state { font-size: var(--hmi-font-lg); font-weight: var(--hmi-weight-bold); letter-spacing: 0.04em; }
+.hmi-faceplate .fp-sec { padding: var(--hmi-space-md) var(--hmi-space-lg); border-bottom: 1px solid var(--hmi-border); }
+.hmi-faceplate .fp-sec:last-child { border-bottom: none; }
+.hmi-faceplate .fp-sec > h6 {
+  margin: 0 0 var(--hmi-space-md); font-size: var(--hmi-font-xs); font-weight: var(--hmi-weight-medium);
+  text-transform: uppercase; letter-spacing: 0.07em; color: var(--hmi-text-muted);
+}
+.hmi-faceplate .fp-kv { display: flex; align-items: baseline; justify-content: space-between; gap: var(--hmi-space-md); padding: var(--hmi-space-xs) 0; }
+.hmi-faceplate .fp-kv .k { font-size: var(--hmi-font-sm); color: var(--hmi-text-secondary); }
+.hmi-faceplate .fp-kv .v { font-variant-numeric: tabular-nums; font-size: var(--hmi-font-md); font-weight: var(--hmi-weight-medium); }
+.hmi-faceplate .fp-kv .v .u { font-size: var(--hmi-font-sm); font-weight: var(--hmi-weight-normal); color: var(--hmi-text-muted); margin-left: 3px; }
+.hmi-faceplate .fp-row { display: flex; gap: var(--hmi-space-sm); margin-top: var(--hmi-space-md); }
+.hmi-faceplate .fp-row:first-child { margin-top: 0; }
+.hmi-faceplate button.fp-btn {
+  flex: 1; height: var(--hmi-control-md); background: var(--hmi-surface-raised); color: var(--hmi-text);
+  border: 1px solid var(--hmi-border); border-radius: var(--hmi-radius-sm);
+  font-size: var(--hmi-font-base); font-weight: var(--hmi-weight-medium); cursor: pointer;
+}
+.hmi-faceplate button.fp-btn:hover:not(:disabled) { border-color: var(--hmi-border-strong); }
+.hmi-faceplate button.fp-btn:disabled { opacity: 0.4; cursor: default; }
+/* the SELECTED operating mode, unmissable — never a small coloured dot */
+.hmi-faceplate button.fp-btn.on {
+  background: var(--hmi-accent); border-color: var(--hmi-accent);
+  color: var(--hmi-text-on-accent); font-weight: var(--hmi-weight-bold);
+}
+.hmi-faceplate button.fp-btn.danger { border-color: var(--hmi-alarm-high); }
+.hmi-faceplate input[type="number"], .hmi-faceplate input[type="range"] {
+  background: var(--hmi-surface-sunken); color: var(--hmi-text);
+  border: 1px solid var(--hmi-border); border-radius: var(--hmi-radius-sm);
+  height: var(--hmi-control-sm); font-size: var(--hmi-font-base);
+}
+.hmi-faceplate input[type="range"] { accent-color: var(--hmi-accent); padding: 0; }
+
+/* ── Alarm banner ────────────────────────────────────────────────────────── */
 .hmi-alarmwrap { display: flex; flex-direction: column; }
-.hmi-alarmbar { display: flex; align-items: center; gap: 8px; padding: 5px 10px; background: #43111d; border-bottom: 2px solid #ff4d4d; color: #fff; font-size: 12px; flex-wrap: wrap; }
-.hmi-alarmbar .al-count { font-weight: 700; color: #ff8f8f; }
-.al-prio { font-size: 11px; font-weight: 700; }
-.al-prio-high { color: #ff4d4d; }
-.al-prio-medium { color: #ffb020; }
-.al-prio-low { color: #ffd94d; }
-.al-chip .al-prio-high, .al-row .al-prio-high { color: #ffd3d3; }
-.al-th { font-size: 10px; padding: 1px 5px; }
-.al-section { margin: 8px 0 2px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.75; }
-.al-shelve { background: #0006; color: #fff; border: 1px solid #fff5; border-radius: 3px; font-size: 11px; }
+.hmi-alarmbar {
+  display: flex; align-items: center; gap: var(--hmi-space-md);
+  padding: var(--hmi-space-sm) var(--hmi-space-lg); background: var(--hmi-surface-sunken);
+  border-bottom: 2px solid var(--hmi-alarm-high); color: var(--hmi-text);
+  font-size: var(--hmi-font-sm); flex-wrap: wrap;
+}
+.hmi-alarmbar .al-count { font-weight: var(--hmi-weight-bold); color: var(--hmi-alarm-high); }
+/* Priority: a SHAPE and a colour, so it survives colour-blindness. */
+.al-prio { font-size: var(--hmi-font-sm); font-weight: var(--hmi-weight-bold); }
+.al-prio-high { color: var(--hmi-alarm-high); }
+.al-prio-medium { color: var(--hmi-alarm-medium); }
+.al-prio-low { color: var(--hmi-alarm-low); }
+.al-th { font-size: var(--hmi-font-xs); padding: 1px var(--hmi-space-sm); }
+.al-section {
+  margin: var(--hmi-space-md) 0 var(--hmi-space-xs); font-size: var(--hmi-font-xs);
+  font-weight: var(--hmi-weight-bold); text-transform: uppercase; letter-spacing: 0.05em; color: var(--hmi-text-muted);
+}
+.al-shelve, .al-chip button, .al-all {
+  background: var(--hmi-surface-raised); color: var(--hmi-text); border: 1px solid var(--hmi-border);
+  border-radius: var(--hmi-radius-sm); font-size: var(--hmi-font-sm); padding: 1px var(--hmi-space-md); cursor: pointer;
+}
 .al-tag { background: none; border: none; color: inherit; cursor: pointer; padding: 0; text-decoration: underline; font-size: inherit; }
-.hmi-alarmpanel { max-height: 180px; overflow-y: auto; background: #2a0d15; color: #f2dede; font-size: 12px; padding: 4px 10px; border-bottom: 1px solid #6c3040; }
-.hmi-alarmpanel .al-row { display: flex; gap: 10px; align-items: center; padding: 2px 0; border-bottom: 1px solid #ffffff12; }
-.hmi-alarmpanel .al-row.acked { opacity: 0.65; }
-.hmi-alarmpanel .al-row button:not(.al-tag) { background: #0006; color: #fff; border: 1px solid #fff5; border-radius: 3px; cursor: pointer; font-size: 11px; padding: 1px 8px; }
-.hmi-alarmpanel .al-empty { opacity: 0.7; margin: 4px 0; }
-.al-what { font-weight: 700; width: 48px; }
-.al-what-alarm { color: #ff8f8f; }
-.al-what-rtn { color: #7fd4a0; }
-.al-what-ack { color: #9db4cc; }
-.al-what-cmd { color: #8fb8ff; }
-.al-all.al-on { background: #2b6cb0; border-color: #2b6cb0; }
-.al-chip { display: inline-flex; gap: 6px; align-items: center; padding: 2px 8px; border-radius: 4px; background: #b02a2a; white-space: nowrap; }
-.al-chip.cleared { background: #8a6d00; }
-.al-chip.acked { background: #6c3040; opacity: 0.9; }
-.al-chip .al-time { opacity: 0.75; }
-.al-chip button, .al-all { background: #0006; color: #fff; border: 1px solid #fff5; border-radius: 3px; cursor: pointer; font-size: 11px; padding: 1px 8px; }
-.al-more { opacity: 0.8; }
+.hmi-alarmpanel {
+  max-height: 200px; overflow-y: auto; background: var(--hmi-surface); color: var(--hmi-text);
+  font-size: var(--hmi-font-base); padding: var(--hmi-space-sm) var(--hmi-space-lg);
+  border-bottom: 1px solid var(--hmi-border);
+}
+.hmi-alarmpanel .al-row { display: flex; gap: var(--hmi-space-lg); align-items: center; padding: var(--hmi-space-xs) 0; border-bottom: 1px solid var(--hmi-border); }
+/* acknowledged and cleared RECEDE — they are no longer asking for action */
+.hmi-alarmpanel .al-row.acked { opacity: 0.6; }
+.hmi-alarmpanel .al-row button:not(.al-tag) {
+  background: var(--hmi-surface-raised); color: var(--hmi-text); border: 1px solid var(--hmi-border);
+  border-radius: var(--hmi-radius-sm); cursor: pointer; font-size: var(--hmi-font-sm); padding: 1px var(--hmi-space-md);
+}
+.hmi-alarmpanel .al-empty { color: var(--hmi-text-muted); margin: var(--hmi-space-sm) 0; }
+.al-what { font-weight: var(--hmi-weight-bold); width: 48px; }
+.al-what-alarm { color: var(--hmi-alarm-high); }
+.al-what-rtn { color: var(--hmi-process-active); }
+.al-what-ack { color: var(--hmi-text-muted); }
+.al-what-cmd { color: var(--hmi-selection); }
+.al-all.al-on { background: var(--hmi-accent); border-color: var(--hmi-accent); color: var(--hmi-text-on-accent); }
+.al-chip {
+  display: inline-flex; gap: var(--hmi-space-md); align-items: center;
+  padding: 1px var(--hmi-space-md); border-radius: var(--hmi-radius-sm);
+  border-left: 3px solid var(--hmi-alarm-high); background: var(--hmi-surface-raised); white-space: nowrap;
+}
+.al-chip.cleared { border-left-color: var(--hmi-alarm-medium); }
+.al-chip.acked { border-left-color: var(--hmi-alarm-ack); opacity: 0.75; }
+.al-chip .al-time { color: var(--hmi-text-muted); }
+.al-more { color: var(--hmi-text-muted); }
+
+/* ── Tag / signal combo box ──────────────────────────────────────────────── */
 .hmi-combo { position: relative; display: inline-block; }
 .hmi-combo input { width: 130px; }
-.hmi-combo-list { position: absolute; right: 0; top: 100%; z-index: 30; width: 220px; max-height: 210px; overflow-y: auto; margin: 2px 0 0; padding: 2px; list-style: none; background: #fff; border: 1px solid #c8ccd4; border-radius: 5px; box-shadow: 0 6px 16px #0003; font-size: 12px; }
-.hmi-combo-group { padding: 4px 6px 1px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #889; }
-.hmi-combo-item { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 3px 6px; border-radius: 3px; cursor: pointer; }
-.hmi-combo-item.hi { background: #dbeafe; }
-.hmi-combo-item .hint { color: #889; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 110px; }
-.hmi-notice { color: #1d4f8a; background: #dbeafe; border-radius: 3px; padding: 0 8px; }
+.hmi-combo-list {
+  position: absolute; right: 0; top: 100%; z-index: 30; width: 220px; max-height: 210px; overflow-y: auto;
+  margin: var(--hmi-space-xs) 0 0; padding: var(--hmi-space-xs); list-style: none;
+  background: var(--hmi-surface-raised); color: var(--hmi-text);
+  border: 1px solid var(--hmi-border-strong); border-radius: var(--hmi-radius-md);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 30%); font-size: var(--hmi-font-base);
+}
+.hmi-combo-group { padding: var(--hmi-space-sm) var(--hmi-space-md) 1px; font-size: var(--hmi-font-xs); text-transform: uppercase; letter-spacing: 0.05em; color: var(--hmi-text-muted); }
+.hmi-combo-item { display: flex; justify-content: space-between; align-items: baseline; gap: var(--hmi-space-md); padding: var(--hmi-space-xs) var(--hmi-space-md); border-radius: var(--hmi-radius-sm); cursor: pointer; }
+.hmi-combo-item.hi { background: var(--hmi-accent); color: var(--hmi-text-on-accent); }
+.hmi-combo-item .hint { color: var(--hmi-text-muted); font-size: var(--hmi-font-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 110px; }
+.hmi-combo-item.hi .hint { color: inherit; }
+.hmi-notice { color: var(--hmi-text); background: var(--hmi-accent); border-radius: var(--hmi-radius-sm); padding: 0 var(--hmi-space-md); }
+
 /* imported P&ID symbols shrink with scale-to-fit; keep their line weight readable */
 g[data-hmi-symbol] path, g[data-hmi-symbol] circle, g[data-hmi-symbol] rect,
 g[data-hmi-symbol] line, g[data-hmi-symbol] polyline, g[data-hmi-symbol] polygon,
 g[data-hmi-symbol] ellipse { vector-effect: non-scaling-stroke; }
+
+/* ── Motion ──────────────────────────────────────────────────────────────────
+ * ANIMATION POLICY: motion means the process is doing something. A running
+ * machine turns slowly, flow moves along a line at the rate it is flowing, and
+ * an unacknowledged alarm pulses gently. Nothing else moves, and everything
+ * here stops entirely for an operator who has asked for reduced motion. */
 @keyframes hmi-spin { to { transform: rotate(360deg); } }
-.hmi-spin { animation: hmi-spin 1.2s linear infinite; }
+.hmi-spin { animation: hmi-spin 2.4s linear infinite; }
 @keyframes hmi-dash { to { stroke-dashoffset: -24; } }
 .hmi-flow { animation: hmi-dash 1s linear infinite; }
-@keyframes hmi-blink { 50% { opacity: 0.35; } }
-.hmi-blink { animation: hmi-blink 0.9s step-start infinite; }
+@keyframes hmi-blink { 50% { opacity: 0.55; } }
+.hmi-blink { animation: hmi-blink 1.4s ease-in-out infinite; }
 @keyframes hmi-pulsering { 0% { opacity: 1; } 100% { opacity: 0; } }
 .hmi-pulse { animation: hmi-pulsering 0.7s ease-out 3; opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .hmi-spin, .hmi-flow, .hmi-blink, .hmi-pulse { animation: none; }
+  .hmi-blink { opacity: 1; }
+}
+
+/* ── Dialogs inside the HMI workspace ─────────────────────────────────────
+   The app shell's one modal is a white card, which is right everywhere the
+   editor chrome is light and wrong on a dark operator ground: a white sheet
+   floating over a dark mimic, with HMI-token content inside it, reads as two
+   different applications. Scoped to `.hmi` so nothing outside changes, and
+   every value is a token, so it follows the per-screen theme like the rest of
+   the workspace. */
+.hmi .datasheet-box {
+  background: var(--hmi-surface);
+  color: var(--hmi-text);
+  border: var(--hmi-border-thin) solid var(--hmi-border);
+  border-radius: var(--hmi-radius-md);
+}
+.hmi .datasheet-head {
+  background: var(--hmi-surface-sunken);
+  border-bottom: var(--hmi-border-thin) solid var(--hmi-border);
+  color: var(--hmi-text);
+}
+.hmi .datasheet-head strong { color: var(--hmi-text); }
+.hmi .datasheet-head button {
+  background: transparent;
+  color: var(--hmi-text-secondary);
+  border: var(--hmi-border-thin) solid var(--hmi-border);
+  border-radius: var(--hmi-radius-sm);
+}
+.hmi .datasheet-head button:hover { color: var(--hmi-text); border-color: var(--hmi-border-strong); }
+.hmi .datasheet-body { color: var(--hmi-text); }
+.hmi .datasheet-body button {
+  background: var(--hmi-surface-sunken);
+  color: var(--hmi-text-secondary);
+  border: var(--hmi-border-thin) solid var(--hmi-border);
+  border-radius: var(--hmi-radius-sm);
+}
+.hmi .datasheet-body button:hover:not(:disabled) { color: var(--hmi-text); border-color: var(--hmi-border-strong); }
+.hmi .datasheet-body label { color: var(--hmi-text-secondary); }

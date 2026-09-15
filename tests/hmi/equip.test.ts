@@ -11,6 +11,7 @@ import { THEMES } from '../../src/hmi/theme'
 import { SECTIONS } from '../../src/hmi/HmiPalette'
 import { getSymbol } from '../../src/symbols/registry'
 import '../../src/symbols/lib/index'
+import { DEFAULTS } from '../../src/hmi/sim/units'
 
 const rng = () => 0.5
 const screen = (widgets: HmiWidget[], pipes: HmiScreen['pipes'] = []): HmiScreen =>
@@ -21,7 +22,12 @@ const equip = (tag: string, x = 200, y = 200): HmiWidget =>
 describe('equip tag model', () => {
   it('a tagged equip widget is a motor', () => {
     const defs = buildTagDefs(screen([equip('K-101')]))
-    expect(defs).toEqual([{ name: 'K-101', kind: 'motor', min: 0, max: 1 }])
+    // a driven machine now carries its DUTY: rated flow and head, from the
+    // engineering record where there is one and a stated default where not
+    expect(defs).toEqual([{
+      name: 'K-101', kind: 'motor', min: 0, max: 1,
+      ratedFlow: DEFAULTS.pumpFlowM3h, head: DEFAULTS.pumpHeadBar,
+    }])
   })
 
   it('starts stopped and ramps up over ~2s once RUN is set', () => {

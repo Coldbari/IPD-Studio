@@ -6,10 +6,10 @@ import type { Rule, RuleFinding } from '../rules'
 import { finding } from '../rules'
 import { labelForField } from '../../model/fields'
 import { requiredFor } from '../../model/standard'
-import { collectHmiBindings } from '../../model/references'
 import { recordFieldValue } from '../../model/hierarchy'
 import { danglingNozzlePorts, duplicateNozzleNumbers, duplicateNozzlePorts } from '../../model/nozzle'
 import { portIdsOfKey } from '../../model/projectIndex'
+import { findingsFor } from './diagnostics'
 
 export const orphanRecord: Rule = {
   id: 'orphan-record',
@@ -60,39 +60,20 @@ export const orphanRecord: Rule = {
 export const orphanedBinding: Rule = {
   id: 'orphaned-binding',
   title: 'HMI widgets bound to tags that are not on any sheet',
+  // Warning, not critical, and deliberately unchanged by Step I. A house
+  // standard can gate document issue on critical findings, and an operator
+  // screen must never stop a P&ID being issued. The SAME findings are ERRORs
+  // on the HMI Diagnostics page, where the question is whether the running
+  // plant works rather than whether the drawing can go out.
   severity: 'warning',
   discipline: 'data',
   why: 'The widget still draws, reads nothing, and never says so. This is what a deleted or renamed instrument leaves behind on an operator screen.',
-  run(ix) {
-    const out: RuleFinding[] = []
-    for (const b of collectHmiBindings(ix.doc)) {
-      // liveKeys is a Set — one O(1) test per binding, no registry rescan.
-      if (ix.liveKeys.has(b.tag)) continue
-      const slot = b.where === 'hmi-pen' ? `pen${b.path.penIndex}` : b.path.field ?? 'tag'
-      out.push(
-        finding(orphanedBinding, b.tag, `${b.label} reads ${b.tag}, which nothing on any sheet carries`, {
-          // Per-binding identity, so each is accepted or repaired on its own.
-          // Widget ids are stable for the life of a screen; a re-import
-          // rebuilds the bindings anyway, so an acceptance has nothing to
-          // survive.
-          key: `${orphanedBinding.id}:${b.tag}@${b.path.screenId}/${b.path.widgetId}/${slot}`,
-          fix: {
-            label: 'Clear the binding',
-            spec: {
-              kind: 'clear-binding',
-              screenId: b.path.screenId,
-              widgetId: b.path.widgetId,
-              where: b.where,
-              tag: b.tag,
-              ...(b.path.field ? { field: b.path.field } : {}),
-              ...(b.path.penIndex !== undefined ? { penIndex: b.path.penIndex } : {}),
-            },
-          },
-        }),
-      )
-    }
-    return out
-  },
+  // Detection moved to `model/diagnostics.ts` in Step I, where it is the
+  // MISSING TAG category. The keys, the message, the per-binding identity and
+  // the offered fix are byte-for-byte what this rule has always produced — an
+  // acceptance recorded before Step I still matches — and there is now one
+  // implementation feeding both the report and the Diagnostics page.
+  run: (ix) => findingsFor(ix, 'orphaned-binding'),
 }
 
 export const requiredFieldEmpty: Rule = {

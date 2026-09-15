@@ -18,25 +18,28 @@ const st = () => useSimStore.getState()
 beforeEach(() => st().exitRun())
 
 describe('signal-keyed history', () => {
-  it('records PV for every tag and SP/OP for controllers, aligned with historyT', () => {
+  const win = (ref: string) => st().history.getSeries(ref, 0, 1e9)
+
+  it('records PV for every tag and SP/OP for controllers', () => {
     st().enterRun(screen)
-    for (let i = 0; i < 5; i++) st().tickOnce(0.2)
-    const h = st().history
-    expect(h['LT-1.PV']).toHaveLength(5)
-    expect(h['LIC-1.PV']).toHaveLength(5)
-    expect(h['LIC-1.SP']).toHaveLength(5)
-    expect(h['LIC-1.OP']).toHaveLength(5)
-    expect(st().historyT).toHaveLength(5)
-    expect(st().historyT[4]).toBeCloseTo(1.0)
+    // the fine tier samples once a SECOND, so five 0.2 s ticks are one sample —
+    // capacity is time, not tick count
+    for (let i = 0; i < 25; i++) st().tickOnce(0.2)
+    expect(win('LT-1.PV').v.length).toBeGreaterThan(1)
+    expect(win('LIC-1.PV').v.length).toBeGreaterThan(1)
+    expect(win('LIC-1.SP').v.length).toBeGreaterThan(1)
+    expect(win('LIC-1.OP').v.length).toBeGreaterThan(1)
     // motors have no PV — no phantom series
-    expect(h['P-1.PV']).toBeUndefined()
-    expect(h['P-1.RUN']).toBeUndefined()
+    expect(win('P-1.PV').v).toHaveLength(0)
+    expect(win('P-1.RUN').v).toHaveLength(0)
+    expect(st().history.refs()).not.toContain('P-1.RUN')
   })
 
-  it('history keys survive a speed change with a truthful time axis', () => {
+  it('timestamps are SIMULATION time, so a speed change stays truthful', () => {
     st().enterRun(screen)
-    st().tickOnce(0.2)
-    st().tickOnce(1.0) // operator flipped to 5×
-    expect(st().historyT).toEqual([0.2, 1.2])
+    st().tickOnce(1)   // 1x
+    st().tickOnce(60)  // operator flipped to 300x: sixty process-seconds
+    expect(win('LT-1.PV').t).toEqual([1, 61])
+    expect(st().history.latestT).toBe(61)
   })
 })

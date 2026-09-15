@@ -66,7 +66,8 @@ describe('plant-wide sim model', () => {
     tags['HV-D']!.OPEN = 1 // operator lines up the drain (calm start ships it closed)
     tags['LIC-1']!.SP = 50
     const rng = makeRng(7)
-    for (let i = 0; i < 60 * 5; i++) tags = tick(model, tags, 0.2, rng).tags
+    // 60 m³ vessel from 20 % to 50 % is 18 m³ — process-hours, not seconds
+    for (let i = 0; i < Math.round((3 * 3600) / 2); i++) tags = tick(model, tags, 2, rng).tags
     expect(Math.abs(tags['LT-1']!.PV! - 50)).toBeLessThan(6)
   })
 })

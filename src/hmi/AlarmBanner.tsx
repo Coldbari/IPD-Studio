@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import { useSimStore } from './simStore'
 import type { AlarmPriority, AlarmRecord, JournalEntry } from './sim/alarms'
+import { alarmMessage } from './sim/alarms'
 import { commandText } from './sim/commands'
 import { useStore } from '../store/store'
 
@@ -105,7 +106,8 @@ export default function AlarmBanner({ onJump }: { onJump?(tag: string): void }) 
         {nBy('medium') > 0 && <span className="al-prio al-prio-medium">▲ {nBy('medium')}</span>}
         {nBy('low') > 0 && <span className="al-prio al-prio-low">● {nBy('low')}</span>}
         {shown.map((a, i) => (
-          <span key={a.id} className={`al-chip ${a.phase}${a.phase !== 'acked' ? ' hmi-blink' : ''}`}>
+          <span key={a.id} title={alarmMessage(a)}
+            className={`al-chip ${a.phase}${a.phase !== 'acked' ? ' hmi-blink' : ''}`}>
             <PrioIcon priority={a.priority} />
             <span className="al-time">{mmss(a.since)}</span>
             <button className="al-tag" title="Show this tag's screen" onClick={() => jumpTo(a.tag)}><strong>{a.tag}</strong></button>
@@ -127,7 +129,7 @@ export default function AlarmBanner({ onJump }: { onJump?(tag: string): void }) 
       </div>
       {open === 'summary' && (
         <div className="hmi-alarmpanel" data-testid="alarm-summary">
-          <div className="al-row" style={{ borderBottom: '1px solid #ffffff2a' }}>
+          <div className="al-row" style={{ borderBottom: '1px solid var(--hmi-border-strong)' }}>
             {(['all', 'high', 'medium', 'low'] as const).map((f) => (
               <button key={f} className={`al-all${pFilter === f ? ' al-on' : ''}`}
                 data-testid={`sum-${f}`} onClick={() => setPFilter(f)}>
@@ -147,6 +149,12 @@ export default function AlarmBanner({ onJump }: { onJump?(tag: string): void }) 
               <span style={{ width: 24 }}>{a.level}</span>
               <span className="al-time" style={{ width: 44 }}>{a.value !== undefined ? a.value.toFixed(1) : '—'}</span>
               <span className="al-phase">{a.phase.toUpperCase()}</span>
+              {/* WHY it is in alarm, in words: "52.4 bar above 50 bar" says in
+                  one glance what a bare value and a level letter make the
+                  operator assemble for themselves. */}
+              <span data-testid="al-msg" style={{ fontSize: 11, opacity: 0.85, whiteSpace: 'nowrap' }}>
+                {alarmMessage(a)}
+              </span>
               <span style={{ flex: 1 }} />
               <ShelveSelect id={a.id} />
               <button title={`Take ${a.tag} out of service (suppresses all its alarms)`}
@@ -196,7 +204,7 @@ export default function AlarmBanner({ onJump }: { onJump?(tag: string): void }) 
       )}
       {open === 'journal' && (
         <div className="hmi-alarmpanel" data-testid="alarm-journal">
-          <div className="al-row" style={{ borderBottom: '1px solid #ffffff2a' }}>
+          <div className="al-row" style={{ borderBottom: '1px solid var(--hmi-border-strong)' }}>
             {(['all', 'alarms', 'commands'] as const).map((f) => (
               <button key={f} className={`al-all${jFilter === f ? ' al-on' : ''}`}
                 data-testid={`journal-${f}`} onClick={() => setJFilter(f)}>

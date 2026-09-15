@@ -5,6 +5,8 @@
 import type { Rule } from '../rules'
 import { finding } from '../rules'
 import { edgesOf, neighboursOf } from '../../model/projectIndex'
+import { processFor } from '../../model/processData'
+import { DEFAULTS } from '../../hmi/sim/units'
 
 const RELIEF_SYMBOLS = new Set(['psv', 'pse', 'pvsv', 'psv.pilot', 'vacuum-breaker', 'breather', 'flame-arrestor'])
 
@@ -66,4 +68,47 @@ export const lineNoService: Rule = {
   },
 }
 
-export const PROCESS_RULES: Rule[] = [noRelief, lineNoService]
+/**
+ * A vessel the simulation is running on an ASSUMED capacity.
+ *
+ * Capacity used to be taken from the widget's pixel area, so every vessel
+ * silently had one and resizing the drawing changed it. It now comes from
+ * `construction.volume` on the engineering record, and where nobody has stated
+ * one the simulator uses a documented default — but it says so here rather
+ * than letting an assumption pass for engineering data.
+ *
+ * INFO, not a warning. A drawing that nobody has specified yet is normal, and
+ * a check that fires on every vessel of every new project is a check people
+ * switch off. What matters is that the assumption is visible when someone asks
+ * why a tank fills at the rate it does.
+ */
+export const tankCapacityDefaulted: Rule = {
+  id: 'tank-capacity-defaulted',
+  title: 'Vessels simulating on a default capacity',
+  severity: 'info',
+  discipline: 'process',
+  why: 'The simulation integrates level as volume over capacity. Without a stated volume it uses an assumed one, and the fill rates it shows are that assumption rather than your plant.',
+  run(ix) {
+    const out = []
+    const seen = new Set<string>()
+    for (const screen of ix.doc.hmiScreens ?? []) {
+      for (const w of screen.widgets) {
+        if (w.type !== 'tank' || !w.tag || seen.has(w.tag)) continue
+        seen.add(w.tag)
+        if (processFor(ix.doc.registry, w.tag).volumeM3 !== undefined) continue
+        // a legacy widget prop is still an answer, just not one on the record
+        if (typeof w.props?.capacity === 'number') continue
+        out.push(
+          finding(
+            tankCapacityDefaulted,
+            w.tag,
+            `${w.tag} has no stated volume — the simulation is using ${DEFAULTS.tankVolumeM3} m³. Set Volume on its engineering record.`,
+          ),
+        )
+      }
+    }
+    return out
+  },
+}
+
+export const PROCESS_RULES: Rule[] = [noRelief, lineNoService, tankCapacityDefaulted]

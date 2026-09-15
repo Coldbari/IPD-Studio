@@ -21,14 +21,16 @@ const screen: HmiScreen = {
   ],
 }
 
-const run = (mut?: (tags: ReturnType<typeof initTags>) => void, seconds = 10) => {
+/** Horizons are PROCESS SECONDS. `tick` sub-steps anything over a second, so
+ *  a coarse `dt` integrates identically and just takes fewer calls. */
+const run = (mut?: (tags: ReturnType<typeof initTags>) => void, seconds = 10, dt = 0.2) => {
   const model = buildSimModel(screen)
   let tags = initTags(model)
   if (mut) mut(tags)
   let flows: Record<string, number> = {}
   const rng = makeRng(1)
-  for (let i = 0; i < seconds * 5; i++) {
-    const r = tick(model, tags, 0.2, rng)
+  for (let i = 0; i < Math.round(seconds / dt); i++) {
+    const r = tick(model, tags, dt, rng)
     tags = r.tags
     flows = r.branchFlows
   }
@@ -65,14 +67,15 @@ describe('engine tick', () => {
     expect(tags['TK-9']!.PV).toBe(40)
   })
   it('opening the drain valve empties the tank by gravity', () => {
-    // 5 s: tank has drained 40% -> 10% and the drain branch is still flowing
-    // (by 10 s it would be empty and the flow correctly stops)
-    const { tags, flows } = run((t) => { t['HV-1']!.OPEN = 1 }, 5)
+    // 20 m³/h of gravity drain out of a 100 m³ vessel is 20 %/h, so half an
+    // hour takes 40 % down to about 30 % — real units, real timescales.
+    const { tags, flows } = run((t) => { t['HV-1']!.OPEN = 1 }, 1800, 2)
     expect(Object.values(flows).some((f) => f > 0)).toBe(true)
     expect(tags['TK-1']!.PV).toBeLessThan(40)
   })
   it('running pump with open valves fills the tank; closed HV holds level up', () => {
-    const { tags } = run((t) => { t['P-1']!.RUN = 1; t['LV-1']!.OP = 100; t['HV-1']!.OPEN = 0 })
+    // 50 m³/h into 100 m³ is 50 %/h: half an hour takes 40 % past 60 %.
+    const { tags } = run((t) => { t['P-1']!.RUN = 1; t['LV-1']!.OP = 100; t['HV-1']!.OPEN = 0 }, 1800, 2)
     expect(tags['TK-1']!.PV).toBeGreaterThan(55)
   })
   it('closed throttling valve blocks the fill branch', () => {

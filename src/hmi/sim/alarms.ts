@@ -4,9 +4,12 @@
 
 import type { TagDef } from './tags'
 import type { Tags } from './engine'
+import { qualityOf } from './quality'
 
-/** Limit levels plus DEV — a device alarm (valve position deviation). */
-export type AlarmLevel = 'LL' | 'L' | 'H' | 'HH' | 'DEV'
+/** Limit levels, plus the device alarms: a valve not following its command
+ *  (DEV), a drive taken out by its protection (TRIP), and an instrument whose
+ *  reading is not valid (BAD). */
+export type AlarmLevel = 'LL' | 'L' | 'H' | 'HH' | 'DEV' | 'TRIP' | 'BAD'
 /** ISA-18.2-flavored lifecycle: pending (on-delay running, never annunciated)
  *  -> active (unacked) -> acked; return-to-normal turns active into cleared
  *  (still listed until acked) and drops acked. */
@@ -26,12 +29,45 @@ export interface AlarmRecord {
   priority: AlarmPriority
   /** PV at the moment the alarm tripped. */
   value?: number
+  /** The threshold that was crossed. Present on limit alarms only — a trip
+   *  has no setpoint to have exceeded. Stored rather than looked up so the
+   *  banner prints what the alarm ACTUALLY tripped against, even if an
+   *  engineer edits the limit afterwards. */
+  limit?: number
+  /** The tag's engineering unit, so "52.4 > 50.0" can read "52.4 bar >
+   *  50.0 bar". */
+  unit?: string
   sup?: Suppression
+}
+
+/**
+ * The operator-language line for an alarm.
+ *
+ * DERIVED, not stored. A `message` field would be a second copy of facts the
+ * record already holds, and the copy is the one that goes stale.
+ */
+export function alarmMessage(a: AlarmRecord): string {
+  const u = a.unit ? ` ${a.unit}` : ''
+  const n = (v: number | undefined) => (v === undefined ? '—' : String(Math.round(v * 10) / 10))
+  switch (a.level) {
+    case 'HH':
+    case 'H': return `${n(a.value)}${u} above ${n(a.limit)}${u}`
+    case 'LL':
+    case 'L': return `${n(a.value)}${u} below ${n(a.limit)}${u}`
+    case 'DEV': return `Position ${n(a.value)} % from command — valve not following`
+    case 'TRIP': return 'Tripped — drive stopped, reset required'
+    case 'BAD': return 'Reading not valid — instrument fault'
+  }
 }
 
 /** Defaults: HH/LL high, H/L medium. A per-tag priority override moves the
  *  H/L pair; HH/LL always sit one step above it (never below medium). */
 export function priorityOf(level: AlarmLevel, def?: Pick<TagDef, 'priority'>): AlarmPriority {
+  // Device alarms are not graded by the tag's H/L priority: that override is a
+  // judgement about how close to a limit matters, and it has nothing to say
+  // about a drive losing its breaker.
+  if (level === 'TRIP') return 'high'
+  if (level === 'DEV' || level === 'BAD') return 'medium'
   const base = def?.priority ?? 'medium'
   if (level === 'HH' || level === 'LL') return base === 'low' ? 'medium' : 'high'
   return base
@@ -124,7 +160,8 @@ export function evalAlarms(
         let rec: AlarmRecord
         if (!existing || existing.phase === 'cleared') {
           rec = {
-            id, tag: d.name, level, priority: priorityOf(level, d), value: pv,
+            id, tag: d.name, level, priority: priorityOf(level, d), value: pv, limit,
+            ...(d.unit ? { unit: d.unit } : {}),
             phase: delay > 0 ? 'pending' : 'active', since: t,
           }
         } else if (existing.phase === 'pending' && t - existing.since >= delay) {
@@ -157,9 +194,64 @@ export function evalAlarms(
  *  stroke band) before a DEV alarm annunciates. */
 const DEV_DELAY = 5
 
-/** Valve deviation alarms: the command and the position apart for longer
- *  than a normal stroke — a stuck or slipping valve. Same lifecycle and
- *  suppression semantics as limit alarms. */
+/**
+ * Raise / hold / clear one device alarm.
+ *
+ * Factored out because there are now three of them (DEV, TRIP, BAD) and the
+ * lifecycle is the interesting part: an alarm that is already standing keeps
+ * its original record — and therefore its timestamp and its value at trip —
+ * rather than being recreated every tick.
+ */
+function deviceLifecycle(
+  out: AlarmRecord[],
+  byId: Map<string, AlarmRecord>,
+  id: string,
+  seed: () => Omit<AlarmRecord, 'phase' | 'since'>,
+  active: boolean,
+  t: number,
+  supKind: Suppression | undefined,
+): void {
+  const existing = byId.get(id)
+  if (active) {
+    let rec: AlarmRecord =
+      existing && existing.phase !== 'cleared' ? existing : { ...seed(), phase: 'active', since: t }
+    if ((rec.sup ?? undefined) !== supKind) {
+      const { sup: _old, ...rest } = rec
+      rec = supKind ? { ...rest, sup: supKind } : (rest as AlarmRecord)
+    }
+    out.push(rec)
+    return
+  }
+  if (!existing || supKind) return
+  if (existing.phase === 'active') {
+    const { sup: _s, ...rest } = existing
+    out.push({ ...(rest as AlarmRecord), phase: 'cleared' })
+  } else if (existing.phase === 'cleared') {
+    out.push(existing)
+  }
+  // 'acked' + back to normal -> drop silently, exactly as limit alarms do
+}
+
+/** Defs that measure something, and can therefore have a reading that is
+ *  not valid. A valve and a motor have states, not readings. */
+const MEASURES = new Set(['tank', 'display', 'controller'])
+
+/**
+ * Device alarms: the abnormal CONDITIONS of equipment, as opposed to a
+ * process value crossing a limit.
+ *
+ *  - DEV  — command and position apart for longer than a stroke: a valve that
+ *           is stuck or slipping, and cannot hide.
+ *  - TRIP — a drive taken out by its protection. The audit found this missing
+ *           entirely: tripping a pump stopped it and journaled the command,
+ *           but annunciated nothing, so the one event an operator most needs
+ *           to see never reached the banner.
+ *  - BAD  — an instrument whose reading is not valid. A diagnostic alarm in
+ *           the ISA-18.2 sense: it says the measurement cannot be trusted,
+ *           which is different from the process being in trouble.
+ *
+ * Same lifecycle and suppression semantics as limit alarms throughout.
+ */
 export function deviceAlarms(
   defs: TagDef[],
   tags: Tags,
@@ -169,32 +261,27 @@ export function deviceAlarms(
 ): AlarmRecord[] {
   const byId = new Map(prev.map((a) => [a.id, a]))
   const out: AlarmRecord[] = []
+  const supOf = (id: string, tag: string): Suppression | undefined =>
+    sup.shelvedIds?.has(id) ? 'shelved' : sup.oosTags?.has(tag) ? 'oos' : undefined
+  const raise = (d: TagDef, level: AlarmLevel, active: boolean, extra: () => { value?: number }) => {
+    const id = `${d.name}:${level}`
+    deviceLifecycle(
+      out, byId, id,
+      () => ({ id, tag: d.name, level, priority: priorityOf(level, d), ...extra() }),
+      active, t, supOf(id, d.name),
+    )
+  }
   for (const d of defs) {
-    if (d.kind !== 'valve') continue
     const tg = tags[d.name]
     if (!tg) continue
-    const id = `${d.name}:DEV`
-    const existing = byId.get(id)
-    const supKind: Suppression | undefined =
-      sup.shelvedIds?.has(id) ? 'shelved' : sup.oosTags?.has(d.name) ? 'oos' : undefined
-    const isIn = (tg.DEVT ?? 0) >= DEV_DELAY
-    if (isIn) {
-      let rec: AlarmRecord = existing && existing.phase !== 'cleared'
-        ? existing
-        : { id, tag: d.name, level: 'DEV', phase: 'active', since: t, priority: 'medium', value: Math.abs((tg.OP ?? 0) - (tg.POS ?? 0)) }
-      if ((rec.sup ?? undefined) !== supKind) {
-        const { sup: _old, ...rest } = rec
-        rec = supKind ? { ...rest, sup: supKind } : (rest as AlarmRecord)
-      }
-      out.push(rec)
-    } else if (existing) {
-      if (supKind) continue
-      if (existing.phase === 'active') {
-        const { sup: _s, ...rest } = existing
-        out.push({ ...(rest as AlarmRecord), phase: 'cleared' })
-      } else if (existing.phase === 'cleared') {
-        out.push(existing)
-      }
+    if (d.kind === 'valve') {
+      raise(d, 'DEV', (tg.DEVT ?? 0) >= DEV_DELAY, () => ({ value: Math.abs((tg.OP ?? 0) - (tg.POS ?? 0)) }))
+    }
+    if (d.kind === 'motor') {
+      raise(d, 'TRIP', (tg.FAULT ?? 0) >= 0.5, () => ({}))
+    }
+    if (MEASURES.has(d.kind)) {
+      raise(d, 'BAD', qualityOf(d, tg).q === 'bad', () => ({}))
     }
   }
   return out

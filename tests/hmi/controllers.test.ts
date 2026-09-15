@@ -23,6 +23,13 @@ const screen: HmiScreen = {
   ],
 }
 
+/**
+  * Horizons are in PROCESS SECONDS and they are long, because the physics is
+  * now dimensional: a 100 m³ vessel on a 50 m³/h pump moves about 0.014 %/s, so
+  * a level loop settles over process-hours rather than the process-seconds the
+  * old dimensionless model implied. `tick` sub-steps anything over a second,
+  * so a 2 s step integrates exactly as 0.2 s did and simply takes fewer calls.
+  */
 const runFor = (seconds: number, mut?: (t: ReturnType<typeof initTags>) => void) => {
   const model = buildSimModel(screen)
   let tags = initTags(model)
@@ -30,21 +37,26 @@ const runFor = (seconds: number, mut?: (t: ReturnType<typeof initTags>) => void)
   tags['HV-101']!.OPEN = 1 // operator lines up the drain (calm start ships it closed)
   if (mut) mut(tags)
   const rng = makeRng(2)
-  for (let i = 0; i < seconds * 5; i++) tags = tick(model, tags, 0.2, rng).tags
+  const dt = 2
+  for (let i = 0; i < Math.round(seconds / dt); i++) tags = tick(model, tags, dt, rng).tags
   return { tags, model }
 }
 
 describe('auto-wired control loops', () => {
   it('wires LIC-101 to LT-101 (PV) and LV-101 (OP)', () => {
     const { model } = runFor(1)
-    expect(model.controllers).toEqual([{ tag: 'LIC-101', pvTag: 'LT-101', outTag: 'LV-101', action: 1 }])
+    expect(model.controllers).toEqual([
+      { tag: 'LIC-101', pvTag: 'LT-101', outTag: 'LV-101', outKind: 'valve', action: 1 },
+    ])
   })
   it('holds level at SP against a constant drain (AUTO)', () => {
-    const { tags } = runFor(240)
+    // 100 m³ from 30 % to 50 % is 20 m³; at a net 30 m³/h that is ~40 minutes
+    // of filling before the loop even reaches setpoint.
+    const { tags } = runFor(3 * 3600)
     expect(Math.abs(tags['TK-101']!.PV! - 50)).toBeLessThan(4)
   })
   it('tracks an SP change', () => {
-    const { tags } = runFor(300, (t) => { t['LIC-101']!.SP = 70 })
+    const { tags } = runFor(5 * 3600, (t) => { t['LIC-101']!.SP = 70 })
     expect(Math.abs(tags['TK-101']!.PV! - 70)).toBeLessThan(5)
   })
   it('outlet-valve level loops are direct-acting: drain modulates to hold level against inflow', () => {
@@ -75,7 +87,7 @@ describe('auto-wired control loops', () => {
     tags['P-201']!.RUN = 1
     tags['FV-201']!.OP = 30   // fixed 3 u/s inflow < max 4 u/s gravity drain
     const rng = makeRng(4)
-    for (let i = 0; i < 180 * 5; i++) tags = tick(model, tags, 0.2, rng).tags
+    for (let i = 0; i < Math.round((4 * 3600) / 2); i++) tags = tick(model, tags, 2, rng).tags
     expect(Math.abs(tags['TK-201']!.PV! - 50)).toBeLessThan(4)
   })
   it('MAN mode passes operator OP through to the valve', () => {

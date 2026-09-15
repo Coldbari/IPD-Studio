@@ -81,7 +81,7 @@ export default function ScreenTabs() {
           </p>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button onClick={() => setDeleting(null)}>Cancel</button>
-            <button data-testid="screen-delete-confirm" style={{ background: '#c53030', color: '#fff', border: 'none', borderRadius: 4, padding: '4px 14px' }}
+            <button data-testid="screen-delete-confirm" style={{ background: 'var(--hmi-alarm-high)', color: 'var(--hmi-text-on-accent)', border: 'none', borderRadius: 2, padding: '4px 14px' }}
               onClick={() => { deleteScreen(doomed.id); setDeleting(null) }}>Delete</button>
           </div>
         </Modal>

@@ -7,6 +7,7 @@ import { WIDGET_DEFAULT_SIZE } from './model'
 import { THEMES } from './theme'
 import { renderWidget } from './widgets/index'
 import { useStore } from '../store/store'
+import { History } from './sim/history'
 
 export const HMI_DRAG_MIME = 'application/x-hmi-widget'
 
@@ -54,6 +55,14 @@ const PREVIEW_SIM: Partial<Record<WidgetType, Record<string, number>>> = {
 }
 const TREND_PREVIEW = [30, 35, 42, 40, 48, 55, 52, 60, 58, 66, 63, 70]
 
+/** The palette thumbnail's history, recorded once through the real path so
+ *  the preview exercises the same retrieval the runtime does. */
+const PALETTE_TREND = (() => {
+  const h = new History()
+  TREND_PREVIEW.forEach((v, i) => h.record(i * 3, (put) => put('PV', v)))
+  return h
+})()
+
 function ItemPreview({ item }: { item: PaletteItem }) {
   const { type } = item
   const size = WIDGET_DEFAULT_SIZE[type]
@@ -71,7 +80,7 @@ function ItemPreview({ item }: { item: PaletteItem }) {
   return (
     <svg width={54} height={36} viewBox={`${-pad} ${-pad} ${size.w + 2 * pad} ${size.h + 2 * pad}`}
       style={{ background: THEMES.classic.bg, borderRadius: 4, flex: '0 0 auto' }} aria-hidden>
-      {renderWidget({ widget, theme: THEMES.classic, sim: PREVIEW_SIM[type] ?? {}, hist: type === 'trend' ? { t: TREND_PREVIEW.map((_, i) => i * 3), series: { PV: TREND_PREVIEW } } : undefined })}
+      {renderWidget({ widget, theme: THEMES.classic, sim: PREVIEW_SIM[type] ?? {}, hist: type === 'trend' ? PALETTE_TREND : undefined })}
     </svg>
   )
 }
@@ -82,7 +91,7 @@ export default function HmiPalette() {
     <div style={{ padding: 8 }}>
       {SECTIONS.map((sec) => (
         <div key={sec.title}>
-          <h4 style={{ margin: '8px 0 4px', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6, color: '#667' }}>{sec.title}</h4>
+          <h4 style={{ margin: '8px 0 4px', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6, color: 'var(--hmi-text-muted)' }}>{sec.title}</h4>
           {sec.items.map((it) => (
             <div
               key={`${it.type}:${it.label}`}

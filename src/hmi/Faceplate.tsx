@@ -6,18 +6,64 @@ import { useEffect, useRef, useState } from 'react'
 import { useSimStore } from './simStore'
 import type { HmiWidget } from './model'
 import type { AlarmLevel } from './sim/alarms'
+import { alarmMessage } from './sim/alarms'
+import { fmtQ, measureOf } from './widgets/shared'
+import type { SeriesWindow } from './sim/history'
+import { QUALITY_LABEL, hasNumber } from './sim/quality'
+import type { Quality } from './sim/quality'
+import { EQUIP_LABEL, equipmentState } from './sim/state'
+import type { ThemeTokens } from './theme'
+import { SCALE, THEMES } from './theme'
+
 
 /** Remembered for the session so the plate reopens where the operator put it. */
 let fpPos: { left: number; top: number } | null = null
 
-const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
-
 type Limits = Partial<Record<AlarmLevel, number>>
 
-/** Vertical scale bar with embedded limit ticks and an optional SP caret —
- *  the classic DCS faceplate element. */
-function VBar({ label, value, min, max, unit, limits, sp, color }: {
+const SPARK_SPAN_S = 300
+
+/**
+ * THE FACEPLATE.
+ *
+ * One structure for every object — header (tag, description, state), the
+ * process values that matter for THAT object, the controls, then status and
+ * alarms — with the CONTENT adapted per type. A pump's plate does not carry a
+ * setpoint and a transmitter's does not carry a start button, because a field
+ * that is never relevant is a field an operator learns to ignore.
+ *
+ * Everything is drawn from the design system. This file previously held twenty
+ * hardcoded colour literals and ignored the screen theme entirely, so a plate
+ * stayed dark-blue on an ISA-101 grey screen.
+ */
+
+// ── Shared pieces ───────────────────────────────────────────────────────────
+
+/** A labelled process value. The NUMBER is the important thing on the line;
+ *  the unit rides with it, always, at a readable size. */
+function Value({ label, value, unit, digits = 1, quality, tone }: {
+  label: string
+  value: number | undefined
+  unit?: string
+  digits?: number
+  quality?: Quality
+  tone?: string
+}) {
+  return (
+    <div className="fp-kv" data-testid={`fp-v-${label.toLowerCase().replace(/\s+/g, '-')}`}>
+      <span className="k">{label}</span>
+      <span className="v" style={tone ? { color: tone } : undefined}>
+        {fmtQ(value, quality, digits)}
+        {unit && <span className="u">{unit}</span>}
+      </span>
+    </div>
+  )
+}
+
+/** Vertical scale with the alarm limits drawn on it and the setpoint marked —
+ *  the classic faceplate element, in theme colours. */
+function VBar({ label, value, min, max, unit, limits, sp, color, quality, theme }: {
   label: string
   value: number
   min: number
@@ -26,64 +72,102 @@ function VBar({ label, value, min, max, unit, limits, sp, color }: {
   limits?: Limits
   sp?: number
   color: string
+  quality?: Quality
+  theme: ThemeTokens
 }) {
-  const H = 108, W = 30, X = 28, Y = 12
+  const H = 96, W = 26, X = 26, Y = 10
   const frac = (v: number) => clamp((v - min) / (max - min || 1), 0, 1)
   const y = (v: number) => Y + (1 - frac(v)) * H
   return (
     <div style={{ textAlign: 'center' }}>
-      <svg width={X + W + 26} height={H + 24}>
-        <rect x={X} y={Y} width={W} height={H} fill="#0006" rx={3} />
-        <rect x={X} y={y(value)} width={W} height={Y + H - y(value)} fill={color} opacity={0.9} rx={2} />
+      <svg width={X + W + 24} height={H + 22} aria-label={`${label} ${value.toFixed(1)}${unit ?? ''}`}>
+        <rect x={X} y={Y} width={W} height={H} fill={theme.surfaceSunken} stroke={theme.border} />
+        {hasNumber(quality) && (
+          <rect x={X + 1} y={y(value)} width={W - 2} height={Y + H - y(value)} fill={color} />
+        )}
         {(['LL', 'L', 'H', 'HH'] as const).map((k) => {
           const lim = limits?.[k]
           if (lim === undefined) return null
           const crit = k === 'HH' || k === 'LL'
+          const c = crit ? theme.alarmHigh : theme.alarmMedium
           return (
             <g key={k}>
-              <line x1={X - 5} x2={X + W + 5} y1={y(lim)} y2={y(lim)}
-                stroke={crit ? '#ff4d4d' : '#ffb020'} strokeWidth={1.4} />
-              <text x={X + W + 7} y={y(lim) + 3} fontSize={8}
-                fill={crit ? '#ff8f8f' : '#ffcf70'}>{k}</text>
+              <line x1={X - 4} x2={X + W + 4} y1={y(lim)} y2={y(lim)} stroke={c} strokeWidth={1.5} />
+              <text x={X + W + 6} y={y(lim) + 3} fontSize={SCALE.font.xs - 2} fill={c}>{k}</text>
             </g>
           )
         })}
-        {sp !== undefined && <path d={`M${X - 4} ${y(sp)} l-8 -5 v10 Z`} fill="#ffd166" />}
-        <text x={X - 8} y={Y + 6} fontSize={8} fill="#9db4cc" textAnchor="end">{Math.round(max)}</text>
-        <text x={X - 8} y={Y + H} fontSize={8} fill="#9db4cc" textAnchor="end">{Math.round(min)}</text>
+        {sp !== undefined && <path d={`M${X - 3} ${y(sp)} l-7 -4 v8 Z`} fill={theme.sp} />}
+        <text x={X - 6} y={Y + 5} fontSize={SCALE.font.xs - 2} fill={theme.textMuted} textAnchor="end">{Math.round(max)}</text>
+        <text x={X - 6} y={Y + H} fontSize={SCALE.font.xs - 2} fill={theme.textMuted} textAnchor="end">{Math.round(min)}</text>
       </svg>
-      <div style={{ fontSize: 10, opacity: 0.8 }}>{label}</div>
-      <div style={{ fontSize: 13, fontWeight: 700 }}>
-        {value.toFixed(1)}{unit && <span style={{ fontSize: 9, fontWeight: 400, marginLeft: 2 }}>{unit}</span>}
+      <div style={{ fontSize: SCALE.font.xs, color: theme.textMuted, letterSpacing: '0.05em' }}>{label}</div>
+      <div style={{ fontSize: SCALE.font.md, fontWeight: SCALE.weight.bold, fontVariantNumeric: 'tabular-nums' }}>
+        {fmtQ(value, quality)}
+        {unit && <span style={{ fontSize: SCALE.font.sm, fontWeight: SCALE.weight.normal, color: theme.textMuted, marginLeft: 2 }}>{unit}</span>}
       </div>
     </div>
   )
 }
 
-/** 60-sample mini-trend from the live history buffer. */
-function Spark({ history, min, max }: { history: number[]; min: number; max: number }) {
-  const recent = history.slice(-60)
-  if (recent.length < 2) return null
-  const W = 216, H = 36
-  const pts = recent.map((v, i) => {
-    const x = (i / (recent.length - 1)) * W
+/** Five minutes of recorded history, on a real process-time axis. */
+function Spark({ window: win, min, max, theme }: { window: SeriesWindow; min: number; max: number; theme: ThemeTokens }) {
+  if (win.v.length < 2) return null
+  const W = 216, H = 32
+  const t0 = win.t[0]!
+  const tSpan = win.t[win.t.length - 1]! - t0 || 1
+  const pts = win.v.map((v, i) => {
+    const x = ((win.t[i]! - t0) / tSpan) * W
     const yv = 2 + (H - 4) * (1 - clamp((v - min) / (max - min || 1), 0, 1))
     return `${x.toFixed(1)},${yv.toFixed(1)}`
   }).join(' ')
   return (
-    <svg width={W} height={H} style={{ display: 'block', margin: '6px auto 0', background: '#0004', borderRadius: 4 }}>
-      <polyline points={pts} fill="none" stroke="#38a8e8" strokeWidth={1.5} />
+    <svg width={W} height={H} style={{ display: 'block', marginTop: SCALE.space.md, background: theme.surfaceSunken }}
+      aria-hidden>
+      <polyline points={pts} fill="none" stroke={theme.liquid} strokeWidth={1.5}
+        {...(win.allGood ? {} : { strokeDasharray: '3 2' })} />
     </svg>
   )
 }
 
-/** DCS-style operate popup — draggable, complete for every bindable widget. */
-export default function Faceplate({ widget, onClose }: { widget: HmiWidget; onClose(): void }) {
+/** Quality, as a compact badge that is absent when the value is simply live. */
+function QualityBadge({ q, why, theme }: { q: Quality; why: string; theme: ThemeTokens }) {
+  if (q === 'good') return null
+  const tone = q === 'bad' ? theme.bad : q === 'forced' ? theme.forced : theme.stale
+  return (
+    <span className="op-badge" data-testid="fp-quality" data-quality={q}
+      style={{ color: tone }} title={why}>{QUALITY_LABEL[q]}</span>
+  )
+}
+
+function Section({ title, children, testId }: { title?: string; children: React.ReactNode; testId?: string }) {
+  return (
+    <div className="fp-sec" data-testid={testId}>
+      {title && <h6>{title}</h6>}
+      {children}
+    </div>
+  )
+}
+
+// ── The plate ───────────────────────────────────────────────────────────────
+
+export default function Faceplate({ widget, onClose, theme: themeName = 'classic' }: {
+  widget: HmiWidget
+  onClose(): void
+  theme?: 'classic' | 'hp'
+}) {
+  const theme = THEMES[themeName]
   const tag = widget.tag ?? ''
   const t = useSimStore((s) => s.tags[tag]) ?? {}
+  const eng = useSimStore((s) => s.defs[tag])
+  const qual = useSimStore((s) => s.quality[tag])
+  const oos = useSimStore((s) => tag in s.oos)
   const alarms = useSimStore((s) => s.alarms)
-  const history = useSimStore((s) => s.history[`${tag}.PV`])
+  const history = useSimStore((s) => s.history)
+  useSimStore((s) => s.historyVersion)
   const flow = useSimStore((s) => s.equipFlows[tag])
+  const branchFlows = useSimStore((s) => s.branchFlows)
+  const topology = useSimStore((s) => s.topology)
   const write = useSimStore((s) => s.writeTag)
   const ack = useSimStore((s) => s.ack)
   const [pos, setPos] = useState(fpPos)
@@ -122,16 +206,12 @@ export default function Faceplate({ widget, onClose }: { widget: HmiWidget; onCl
 
   const props = widget.props ?? {}
   const isController = props.controller === true
-  const min = num(props.min) ?? 0
-  const max = num(props.max) ?? 100
-  const unit = typeof props.unit === 'string' ? props.unit : widget.type === 'tank' ? '%' : undefined
-  const tankDefaults: Limits | undefined = widget.type === 'tank' ? { LL: 5, L: 10, H: 90, HH: 95 } : undefined
-  const own: Limits = { LL: num(props.LL), L: num(props.L), H: num(props.H), HH: num(props.HH) }
-  const limits: Limits | undefined =
-    Object.values(own).some((v) => v !== undefined) ? own : tankDefaults
+  const { min, max, unit: engUnit, limits } = measureOf(widget, eng)
+  const unit = engUnit || (widget.type === 'tank' ? '%' : undefined)
+  const q = qual?.q ?? 'good'
 
-  // dispatch on the signals the tag actually serves — no widget type gets an
-  // empty body (the audit found bar/symbol faceplates rendered header-only)
+  /** Which plate this is — decided by the SIGNALS the tag actually serves, so
+   *  a symbol standing in for a pump still gets a pump's controls. */
   const kind = isController ? 'controller'
     : t.RUN !== undefined ? 'motor'
     : t.OPEN !== undefined ? 'onoff'
@@ -140,111 +220,242 @@ export default function Faceplate({ widget, onClose }: { widget: HmiWidget; onCl
   const auto = (t.MODE ?? 1) >= 0.5
   const myAlarms = alarms.filter((a) => a.tag === tag && !a.sup && a.phase !== 'pending')
   const nSup = alarms.filter((a) => a.tag === tag && a.sup).length
+  const state = equipmentState(t, { oos })
+  const isTank = widget.type === 'tank'
+  const description = widget.label ?? (isTank ? 'Vessel' : kind === 'motor' ? 'Driver' : kind === 'controller' ? 'Controller' : kind === 'measure' ? 'Transmitter' : 'Valve')
+
+  /** Header banner tone: abnormal is the only thing that gets a colour. */
+  const stateTone = state === 'tripped' ? theme.alarmHigh
+    : state === 'disabled' ? theme.textMuted
+    : state === 'running' || state === 'starting' || state === 'stopping' ? theme.processActive
+    : theme.textSecondary
 
   return (
-    <div className="hmi-faceplate" data-testid="faceplate" ref={boxRef}
-      style={pos ? { left: pos.left, top: pos.top, right: 'auto' } : undefined}>
-      <header onPointerDown={onHeaderDown} style={{ cursor: 'grab', touchAction: 'none' }}>
-        <strong>{tag}</strong> <span style={{ opacity: 0.7 }}>{widget.label ?? widget.type}</span>
-        <button data-testid="fp-close" onClick={onClose} style={{ marginLeft: 'auto', flex: '0 0 auto' }}>×</button>
+    <div className="hmi-faceplate" data-testid="faceplate" data-kind={kind} ref={boxRef}
+      role="dialog" aria-label={`${tag} faceplate`}
+      style={pos ? { left: pos.left, top: pos.top, right: 'auto', bottom: 'auto' } : undefined}>
+
+      {/* HEADER — identity first, then what it is, then what it is doing. */}
+      <header className="fp-head" onPointerDown={onHeaderDown}>
+        <span className="fp-tag">{tag}</span>
+        <span className="fp-desc">{description}</span>
+        <button className="fp-x" data-testid="fp-close" aria-label="Close faceplate" onClick={onClose}>×</button>
       </header>
 
-      {kind === 'motor' && (
-        <>
-          <p className="fp-state" style={(t.FAULT ?? 0) >= 0.5 ? { color: '#ff6b6b' } : undefined}>
-            {(t.FAULT ?? 0) >= 0.5 ? 'FAULT'
-              : (t.RUN ?? 0) >= 0.5 ? ((t.RAMP ?? 1) < 1 ? 'STARTING' : 'RUNNING') : 'STOPPED'}
-          </p>
-          <div className="fp-row">
-            <button data-testid="fp-start" onClick={() => write(tag, 'RUN', 1)}>Start</button>
-            <button data-testid="fp-stop" onClick={() => write(tag, 'RUN', 0)}>Stop</button>
-            {(t.FAULT ?? 0) >= 0.5 && (
-              <button data-testid="fp-fault-reset" onClick={() => write(tag, 'FAULT', 0)}>Reset fault</button>
-            )}
-          </div>
-        </>
-      )}
-
-      {kind === 'onoff' && (
-        <>
-          <p className="fp-state">{(t.OPEN ?? 0) >= 0.5 ? 'OPEN' : 'CLOSED'}</p>
-          <div className="fp-row">
-            <button data-testid="fp-open" onClick={() => write(tag, 'OPEN', 1)}>Open</button>
-            <button data-testid="fp-shut" onClick={() => write(tag, 'OPEN', 0)}>Close</button>
-          </div>
-        </>
-      )}
-
-      {kind === 'throttle' && (
-        <>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 4 }}>
-            <VBar label="Position" value={t.POS ?? t.OP ?? 0} min={0} max={100} unit="%" color="#26c281" />
-            {t.POS !== undefined && Math.abs((t.OP ?? 0) - t.POS) > 1 && (
-              <VBar label="Command" value={t.OP ?? 0} min={0} max={100} unit="%" color="#9b8cff" />
-            )}
-          </div>
-          <input data-testid="fp-op" type="range" min={0} max={100} value={t.OP ?? 0}
-            onChange={(e) => write(tag, 'OP', Number(e.target.value))} style={{ width: '100%' }} />
-          <div className="fp-row">
-            <button onClick={() => write(tag, 'OP', 100)}>Open</button>
-            <button onClick={() => write(tag, 'OP', 0)}>Close</button>
-          </div>
-        </>
-      )}
-
-      {kind === 'controller' && (
-        <>
-          <div style={{ display: 'flex', justifyContent: 'space-around' }}>
-            <VBar label="PV" value={t.PV ?? 0} min={min} max={max} unit={unit} limits={limits} sp={t.SP} color="#38a8e8" />
-            <VBar label="SP" value={t.SP ?? 0} min={min} max={max} unit={unit} color="#ffd166" />
-            <VBar label="OUT" value={t.OP ?? 0} min={0} max={100} unit="%" color="#9b8cff" />
-          </div>
-          <div className="fp-row">
-            <button data-testid="fp-auto" className={auto ? 'active' : ''} onClick={() => write(tag, 'MODE', 1)}>AUTO</button>
-            <button data-testid="fp-man" className={auto ? '' : 'active'} onClick={() => write(tag, 'MODE', 0)}>MAN</button>
-          </div>
-          <div className="fp-row" style={{ alignItems: 'center' }}>
-            <span style={{ fontSize: 11, flex: '0 0 auto' }}>SP</span>
-            <button style={{ flex: '0 0 auto' }} onClick={() => write(tag, 'SP', clamp((t.SP ?? 50) - 1, min, max))}>−</button>
-            <input data-testid="fp-sp" type="number" style={{ width: 64 }} value={Math.round((t.SP ?? 50) * 10) / 10}
-              onChange={(e) => write(tag, 'SP', clamp(Number(e.target.value), min, max))} />
-            <button style={{ flex: '0 0 auto' }} onClick={() => write(tag, 'SP', clamp((t.SP ?? 50) + 1, min, max))}>+</button>
-          </div>
-          <input data-testid="fp-op" type="range" min={0} max={100} value={t.OP ?? 0} disabled={auto}
-            title={auto ? 'Output entry needs MAN mode' : 'Output %'}
-            onChange={(e) => write(tag, 'OP', Number(e.target.value))} style={{ width: '100%' }} />
-        </>
-      )}
-
-      {kind === 'measure' && (
-        <>
-          <div style={{ display: 'flex', justifyContent: 'center' }}>
-            <VBar label="PV" value={t.PV ?? 0} min={min} max={max} unit={unit} limits={limits} color="#38a8e8" />
-          </div>
-          {history && <Spark history={history} min={min} max={max} />}
-        </>
-      )}
-
-      {flow !== undefined && kind !== 'measure' && kind !== 'controller' && (
-        <p style={{ fontSize: 11, margin: '8px 0 0', opacity: 0.85 }}>Flow through: <strong>{flow.toFixed(1)}</strong></p>
-      )}
-
-      {nSup > 0 && <p style={{ fontSize: 10, margin: '6px 0 0', opacity: 0.7 }}>⊘ {nSup} alarm{nSup === 1 ? '' : 's'} suppressed</p>}
-      {myAlarms.length > 0 && (
-        <div style={{ marginTop: 8, borderTop: '1px solid #35567c', paddingTop: 6 }} data-testid="fp-alarms">
-          {myAlarms.map((a) => (
-            <div key={a.id} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 11, padding: '1px 0' }}>
-              <span className={`al-prio al-prio-${a.priority}`}>
-                {a.priority === 'high' ? '■' : a.priority === 'medium' ? '▲' : '●'}
-              </span>
-              <span>{a.level}</span>
-              <span style={{ opacity: 0.8 }}>{a.phase.toUpperCase()}</span>
-              <span style={{ flex: 1 }} />
-              {a.phase !== 'acked' && <button style={{ flex: '0 0 auto' }} onClick={() => ack(a.id)}>Ack</button>}
-            </div>
-          ))}
+      {(kind === 'motor' || kind === 'onoff' || kind === 'throttle') && (
+        <div className="fp-band">
+          <span className="fp-state" data-state={state} style={{ color: stateTone }}>
+            {kind === 'motor' ? EQUIP_LABEL[state]
+              : kind === 'onoff' ? ((t.OPEN ?? 0) >= 0.5 ? 'OPEN' : 'CLOSED')
+              : `${(t.POS ?? t.OP ?? 0).toFixed(0)} % OPEN`}
+          </span>
+          {oos && <span className="op-badge" data-testid="fp-oos" style={{ color: theme.textMuted }}>OUT OF SERVICE</span>}
         </div>
       )}
+
+      {/* PUMP / DRIVER */}
+      {kind === 'motor' && (
+        <>
+          <Section title="Process" testId="fp-values">
+            <Value label="Speed" value={(t.RAMP ?? 0) * 100} unit="%" digits={0} />
+            {flow !== undefined && <Value label="Flow" value={flow} unit="m³/h" />}
+          </Section>
+          <Section title="Command">
+            <div className="fp-row">
+              <button className={`fp-btn${state === 'running' || state === 'starting' ? ' on' : ''}`}
+                data-testid="fp-start" onClick={() => write(tag, 'RUN', 1)}>START</button>
+              <button className={`fp-btn${state === 'stopped' || state === 'stopping' ? ' on' : ''}`}
+                data-testid="fp-stop" onClick={() => write(tag, 'RUN', 0)}>STOP</button>
+            </div>
+            {state === 'tripped' && (
+              <div className="fp-row">
+                <button className="fp-btn danger" data-testid="fp-fault-reset"
+                  onClick={() => write(tag, 'FAULT', 0)}>RESET TRIP</button>
+              </div>
+            )}
+          </Section>
+        </>
+      )}
+
+      {/* HAND VALVE */}
+      {kind === 'onoff' && (
+        <Section title="Command">
+          <div className="fp-row">
+            <button className={`fp-btn${(t.OPEN ?? 0) >= 0.5 ? ' on' : ''}`}
+              data-testid="fp-open" onClick={() => write(tag, 'OPEN', 1)}>OPEN</button>
+            <button className={`fp-btn${(t.OPEN ?? 0) < 0.5 ? ' on' : ''}`}
+              data-testid="fp-shut" onClick={() => write(tag, 'OPEN', 0)}>CLOSE</button>
+          </div>
+        </Section>
+      )}
+
+      {/* CONTROL VALVE — command, position and the gap between them. */}
+      {kind === 'throttle' && (
+        <>
+          <Section title="Process" testId="fp-values">
+            <Value label="Command" value={t.OP} unit="%" digits={0} />
+            <Value label="Position" value={t.POS ?? t.OP} unit="%" digits={0} />
+            {t.POS !== undefined && Math.abs((t.OP ?? 0) - t.POS) > 1 && (
+              <Value label="Deviation" value={Math.abs((t.OP ?? 0) - t.POS)} unit="%" digits={0}
+                tone={(t.DEVT ?? 0) > 0 ? theme.alarmMedium : undefined} />
+            )}
+            {flow !== undefined && <Value label="Flow" value={flow} unit="m³/h" />}
+          </Section>
+          <Section title="Output">
+            <input data-testid="fp-op" type="range" min={0} max={100} value={t.OP ?? 0}
+              aria-label="Valve output per cent"
+              onChange={(e) => write(tag, 'OP', Number(e.target.value))} style={{ width: '100%' }} />
+            <div className="fp-row">
+              <button className="fp-btn" onClick={() => write(tag, 'OP', 100)}>OPEN</button>
+              <button className="fp-btn" onClick={() => write(tag, 'OP', 0)}>CLOSE</button>
+            </div>
+          </Section>
+        </>
+      )}
+
+      {/* CONTROLLER — PV, SP, OUT, and a mode nobody can misread. */}
+      {kind === 'controller' && (
+        <>
+          <Section testId="fp-values">
+            <div style={{ display: 'flex', justifyContent: 'space-around' }}>
+              <VBar label="PV" value={t.PV ?? 0} min={min} max={max} unit={unit} limits={limits}
+                sp={t.SP} color={theme.liquid} quality={q} theme={theme} />
+              <VBar label="SP" value={t.SP ?? 0} min={min} max={max} unit={unit} color={theme.sp} theme={theme} />
+              <VBar label="OUT" value={t.OP ?? 0} min={0} max={100} unit="%" color={theme.op} theme={theme} />
+            </div>
+          </Section>
+          <Section title="Mode">
+            <div className="fp-row" role="group" aria-label="Controller mode">
+              <button className={`fp-btn${auto ? ' on' : ''}`} data-testid="fp-auto"
+                aria-pressed={auto} onClick={() => write(tag, 'MODE', 1)}>AUTO</button>
+              <button className={`fp-btn${auto ? '' : ' on'}`} data-testid="fp-man"
+                aria-pressed={!auto} onClick={() => write(tag, 'MODE', 0)}>MANUAL</button>
+            </div>
+          </Section>
+          <Section title="Setpoint and output">
+            <div className="fp-row" style={{ alignItems: 'center' }}>
+              <span className="k" style={{ flex: '0 0 auto', fontSize: SCALE.font.sm }}>SP</span>
+              <button className="fp-btn" style={{ flex: '0 0 auto', width: 30 }} aria-label="Decrease setpoint"
+                onClick={() => write(tag, 'SP', clamp((t.SP ?? 50) - 1, min, max))}>−</button>
+              <input data-testid="fp-sp" type="number" aria-label="Setpoint" style={{ width: 64 }}
+                value={Math.round((t.SP ?? 50) * 10) / 10}
+                onChange={(e) => write(tag, 'SP', clamp(Number(e.target.value), min, max))} />
+              <button className="fp-btn" style={{ flex: '0 0 auto', width: 30 }} aria-label="Increase setpoint"
+                onClick={() => write(tag, 'SP', clamp((t.SP ?? 50) + 1, min, max))}>+</button>
+            </div>
+            <input data-testid="fp-op" type="range" min={0} max={100} value={t.OP ?? 0} disabled={auto}
+              aria-label="Controller output per cent"
+              title={auto ? 'Output entry needs MANUAL mode' : 'Output %'}
+              onChange={(e) => write(tag, 'OP', Number(e.target.value))} style={{ width: '100%', marginTop: SCALE.space.md }} />
+            <div className="fp-kv"><span className="k">Output</span>
+              <span className="v">{(t.OP ?? 0).toFixed(1)}<span className="u">%</span></span></div>
+          </Section>
+        </>
+      )}
+
+      {/* TANK — what it holds and the conditions inside it. */}
+      {kind === 'measure' && isTank && (() => {
+        const cap = eng?.capacity
+        const level = t.PV ?? 0
+        const flows = tankFlowsFromStore(tag, branchFlows, topology)
+        return (
+          <Section title="Process" testId="fp-values">
+            <Value label="Level" value={level} unit={unit} quality={q} />
+            {cap !== undefined && <Value label="Volume" value={(cap * level) / 100} unit="m³" />}
+            {t.P !== undefined && <Value label="Pressure" value={t.P} unit="bar" digits={2} />}
+            {t.T !== undefined && <Value label="Temperature" value={t.T} unit="°C" />}
+            {flows.inlet > 0 && <Value label="Inlet flow" value={flows.inlet} unit="m³/h" />}
+            {flows.outlet > 0 && <Value label="Outlet flow" value={flows.outlet} unit="m³/h" />}
+          </Section>
+        )
+      })()}
+
+      {/* TRANSMITTER — the reading, what it means, and whether to trust it. */}
+      {kind === 'measure' && !isTank && (
+        <>
+          <Section testId="fp-values">
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <VBar label="PV" value={t.PV ?? 0} min={min} max={max} unit={unit} limits={limits}
+                color={theme.liquid} quality={q} theme={theme} />
+            </div>
+            <Spark window={history.getSeries(`${tag}.PV`, history.latestT - SPARK_SPAN_S, history.latestT, 216)}
+              min={min} max={max} theme={theme} />
+          </Section>
+          <Section title="Signal">
+            <div className="fp-kv" data-testid="fp-range">
+              <span className="k">Range</span>
+              <span className="v">{min}–{max}{unit && <span className="u">{unit}</span>}</span>
+            </div>
+            <div className="fp-kv">
+              <span className="k">Quality</span>
+              <span className="v" style={{ fontSize: SCALE.font.sm }}>
+                {QUALITY_LABEL[q]}{qual && qual.q !== 'good' && <> <QualityBadge q={q} why={qual.why} theme={theme} /></>}
+              </span>
+            </div>
+            <div className="fp-kv">
+              <span className="k">Source</span>
+              <span className="v" style={{ fontSize: SCALE.font.sm }}>{q === 'forced' ? 'OPERATOR' : 'SIMULATION'}</span>
+            </div>
+          </Section>
+        </>
+      )}
+
+      {/* STATUS — quality for anything that reads a value, then alarms. */}
+      {(kind === 'controller' || (kind === 'measure' && isTank)) && qual && qual.q !== 'good' && (
+        <Section>
+          <div className="fp-kv">
+            <span className="k">Quality</span>
+            <span className="v"><QualityBadge q={q} why={qual.why} theme={theme} /></span>
+          </div>
+        </Section>
+      )}
+
+      <Section title="Alarms" testId="fp-alarm-section">
+        {myAlarms.length === 0 && (
+          <div className="fp-kv"><span className="k">Status</span><span className="v" style={{ fontSize: SCALE.font.sm }}>NONE</span></div>
+        )}
+        {myAlarms.length > 0 && (
+          <div data-testid="fp-alarms">
+            {myAlarms.map((a) => (
+              <div key={a.id} className="fp-kv" style={{ alignItems: 'center' }}>
+                <span className="k" style={{ display: 'flex', gap: SCALE.space.sm, alignItems: 'baseline' }}>
+                  <span className={`al-prio al-prio-${a.priority}`}>
+                    {a.priority === 'high' ? '■' : a.priority === 'medium' ? '▲' : '●'}
+                  </span>
+                  <strong>{a.level}</strong>
+                  <span style={{ color: theme.textMuted }}>{alarmMessage(a)}</span>
+                </span>
+                {a.phase !== 'acked'
+                  ? <button className="fp-btn" style={{ flex: '0 0 auto', width: 52 }} onClick={() => ack(a.id)}>ACK</button>
+                  : <span style={{ fontSize: SCALE.font.xs, color: theme.textMuted }}>ACKED</span>}
+              </div>
+            ))}
+          </div>
+        )}
+        {nSup > 0 && (
+          <div className="fp-kv"><span className="k">Suppressed</span>
+            <span className="v" style={{ fontSize: SCALE.font.sm }}>{nSup}</span></div>
+        )}
+      </Section>
     </div>
   )
+}
+
+/** Inlet and outlet for a vessel, summed from the branch flows the engine
+ *  solved. The topology projection says which branches touch it. */
+function tankFlowsFromStore(
+  tag: string,
+  branchFlows: Record<string, number>,
+  topology: { branchId: string; nodes: { kind: string; tag?: string }[] }[],
+): { inlet: number; outlet: number } {
+  let inlet = 0
+  let outlet = 0
+  for (const p of topology) {
+    const f = branchFlows[p.branchId] ?? 0
+    const first = p.nodes[0]
+    const last = p.nodes[p.nodes.length - 1]
+    if (last && last.kind === 'tank' && last.tag === tag) inlet += f
+    if (first && first.kind === 'tank' && first.tag === tag) outlet += f
+  }
+  return { inlet, outlet }
 }

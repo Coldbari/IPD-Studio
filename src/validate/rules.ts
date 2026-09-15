@@ -51,6 +51,16 @@ export interface RuleFinding {
   /** Node or edge id, so the report can jump to it. */
   targetId?: string
   sheetId?: string
+  /**
+   * Where this finding lives on an OPERATOR SCREEN, when it is about one.
+   *
+   * Separate from `targetId`/`sheetId` because it is a different coordinate
+   * system with a different destination: those take you to a symbol on a sheet
+   * in the Draw workspace, this takes you to a widget on a screen in the HMI
+   * workspace. Collapsing them into one id would make a report unable to say
+   * which of the two it meant.
+   */
+  hmi?: { screenId: string; widgetId?: string; pipeId?: string }
   fix?: Fix
 }
 

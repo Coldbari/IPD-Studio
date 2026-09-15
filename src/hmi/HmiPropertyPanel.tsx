@@ -12,6 +12,8 @@ import { keyOfNode } from '../model/registry'
 import { navigateWorkspace } from '../routes'
 import { locateCell } from '../canvas/locate'
 import type { ProjectDoc } from '../model/types'
+import { TREND_SPANS } from './sim/history'
+import { DEFAULT_SPAN_S } from './widgets/trend'
 
 /** One armed pick-on-canvas request: the next canvas click binds, not selects. */
 export interface ArmedPick { kind: 'tank' | 'pipe'; widgetId: string }
@@ -32,8 +34,9 @@ function BtnRow({ children }: { children: React.ReactNode }) {
 }
 
 const btnStyle: React.CSSProperties = {
-  flex: '1 0 auto', fontSize: 11, padding: '3px 6px', background: '#fff',
-  border: '1px solid #c8ccd4', borderRadius: 4, cursor: 'pointer',
+  flex: '1 0 auto', fontSize: 11, padding: '3px 6px', background: 'var(--hmi-surface-raised)',
+  color: 'var(--hmi-text)', border: '1px solid var(--hmi-border)',
+  borderRadius: 'var(--hmi-radius-sm)', cursor: 'pointer',
 }
 
 function NumProp({ w, k, label }: { w: HmiWidget; k: string; label: string }) {
@@ -79,8 +82,9 @@ function OverriddenProp({ label, value, testId }: { label: string; value: number
         data-testid={testId}
         title="Set on the engineering record, which is what the run and every deliverable use"
         style={{
-          width: 70, textAlign: 'right', fontSize: 12, color: '#5a6270',
-          background: '#eef1f5', border: '1px solid #d7dbe2', borderRadius: 3, padding: '2px 5px',
+          width: 70, textAlign: 'right', fontSize: 12, color: 'var(--hmi-text-secondary)',
+          background: 'var(--hmi-surface-sunken)', border: '1px solid var(--hmi-border)',
+          borderRadius: 'var(--hmi-radius-sm)', padding: '2px 5px',
         }}
       >
         {value}
@@ -119,7 +123,7 @@ function AlarmLimits({ w }: { w: HmiWidget }) {
     <>
       <h5 style={{ margin: '10px 0 2px' }}>Alarm limits</h5>
       {owned && (
-        <p data-testid="alarm-owned-note" style={{ margin: '0 0 6px', fontSize: 11, color: '#5a6270', lineHeight: 1.45 }}>
+        <p data-testid="alarm-owned-note" style={{ margin: '0 0 6px', fontSize: 11, color: 'var(--hmi-text-secondary)', lineHeight: 1.45 }}>
           Set on the engineering record for <b>{w.tag}</b> — that is what the run, the I/O list and every
           export use. {w.tag && (
             <button
@@ -143,6 +147,43 @@ function AlarmLimits({ w }: { w: HmiWidget }) {
       ) : (
         <PriorityProp w={w} />
       )}
+    </>
+  )
+}
+
+/**
+ * RANGE AND UNIT — the engineering record owns these too.
+ *
+ * The same rule `AlarmLimits` above applies to LL/L/H/HH, for the same reason
+ * and with the same failure if it is not applied: `signal.range` and
+ * `signal.units` are what `sim/tags.ts` compiles into the TagDef, and since
+ * Step A that TagDef is also what every gauge, bar, trend and faceplate draws
+ * with. An editable Min/Max here while the record states a range would accept
+ * the number, store it, and change nothing anywhere.
+ *
+ * The range is owned as a PAIR: `parseRange` only yields min and max together,
+ * so there is no state in which one is stated and the other is not.
+ */
+function RangeAndUnit({ w }: { w: HmiWidget }) {
+  const doc = useStore((s) => s.doc)
+  const eng = engineeringFor(doc.registry, w.tag)
+  const rangeOwned = eng.min !== undefined && eng.max !== undefined
+  const unitOwned = eng.units !== undefined
+  return (
+    <>
+      {(rangeOwned || unitOwned) && (
+        <p data-testid="range-owned-note" style={{ margin: '6px 0', fontSize: 11, color: 'var(--hmi-text-secondary)', lineHeight: 1.45 }}>
+          {rangeOwned && unitOwned ? 'Range and unit are' : rangeOwned ? 'The range is' : 'The unit is'} set on the
+          engineering record for <b>{w.tag}</b> — the run, the mimic and the faceplate all read it from there.
+        </p>
+      )}
+      {unitOwned
+        ? <OverriddenProp label="Unit" value={eng.units!} testId="prop-unit-owned" />
+        : <StrProp w={w} k="unit" label="Unit" placeholder="%" />}
+      {rangeOwned
+        ? <><OverriddenProp label="Min" value={eng.min!} testId="prop-min-owned" />
+            <OverriddenProp label="Max" value={eng.max!} testId="prop-max-owned" /></>
+        : <><NumProp w={w} k="min" label="Min" /><NumProp w={w} k="max" label="Max" /></>}
     </>
   )
 }
@@ -241,10 +282,10 @@ function BindRow({ w, k, label, armedPick, onArmPick }: {
   return (
     <Row label={label}>
       <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-        <span style={{ fontSize: 11, maxWidth: 64, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: bound ? '#1a1a1a' : '#889' }}>
+        <span style={{ fontSize: 11, maxWidth: 64, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: bound ? 'var(--hmi-text)' : 'var(--hmi-text-muted)' }}>
           {bound ? (k === 'bindPipe' ? 'pipe ✓' : bound) : '—'}
         </span>
-        <button style={{ ...btnStyle, ...(armed ? { background: '#dbeafe', border: '1px solid #2b6cb0' } : {}) }}
+        <button style={{ ...btnStyle, ...(armed ? { background: 'var(--hmi-accent)', color: 'var(--hmi-text-on-accent)', border: '1px solid var(--hmi-accent)' } : {}) }}
           data-testid={`pick-${k}`}
           title={`Click a ${kind} on the canvas to bind this widget`}
           onClick={() => onArmPick?.(armed ? null : { kind, widgetId: w.id })}>
@@ -279,7 +320,7 @@ export default function HmiPropertyPanel({ selection, onSelect, armedPick, onArm
     return (
       <div>
         <h4>{selection.length} selected</h4>
-        <p style={{ fontSize: 11, color: '#667', margin: '4px 0' }}>
+        <p style={{ fontSize: 11, color: 'var(--hmi-text-muted)', margin: '4px 0' }}>
           {selectedWidgets.length} widget{selectedWidgets.length === 1 ? '' : 's'}, {selection.length - selectedWidgets.length} pipe{selection.length - selectedWidgets.length === 1 ? '' : 's'}
         </p>
         {selectedWidgets.length > 0 && <ArrangeTools ids={selectedWidgets.map((x) => x.id)} onSelect={onSelect} />}
@@ -296,7 +337,7 @@ export default function HmiPropertyPanel({ selection, onSelect, armedPick, onArm
           <input type="number" style={{ width: 70 }} value={pipe.width ?? 4}
             onChange={(e) => updateHmiPipe(pipe.id, { width: Number(e.target.value) || 4 })} />
         </Row>
-        <p style={{ fontSize: 11, color: '#667' }}>Drag the round handles on the canvas to adjust the run.</p>
+        <p style={{ fontSize: 11, color: 'var(--hmi-text-muted)' }}>Drag the round handles on the canvas to adjust the run.</p>
       </div>
     )
   }
@@ -311,7 +352,7 @@ export default function HmiPropertyPanel({ selection, onSelect, armedPick, onArm
             <option value="hp">hp (ISA-101 gray)</option>
           </select>
         </Row>
-        <p style={{ fontSize: 11, color: '#667' }}>
+        <p style={{ fontSize: 11, color: 'var(--hmi-text-muted)' }}>
           Select a widget to edit its bindings. Drag on empty canvas to rubber-band select; Shift+click adds; Ctrl+A selects all; Ctrl+D duplicates.
         </p>
       </div>
@@ -379,11 +420,11 @@ export default function HmiPropertyPanel({ selection, onSelect, armedPick, onArm
       {w.type === 'trend' && (
         <>
           <Row label="Span">
-            <select data-testid="prop-span" value={String(w.props?.span ?? 120)}
+            <select data-testid="prop-span" value={String(w.props?.span ?? DEFAULT_SPAN_S)}
               onChange={(e) => updateWidget(w.id, { props: { ...w.props, span: Number(e.target.value) } })}>
-              <option value="60">1 min</option>
-              <option value="120">2 min</option>
-              <option value="240">4 min</option>
+              {TREND_SPANS.map((s) => (
+                <option key={s} value={s}>{s < 3600 ? `${s / 60} min` : `${s / 3600} hr`}</option>
+              ))}
             </select>
           </Row>
           <h5 style={{ margin: '10px 0 2px' }}>Extra pens</h5>
@@ -399,14 +440,14 @@ export default function HmiPropertyPanel({ selection, onSelect, armedPick, onArm
                 }} />
             </Row>
           ))}
-          <p style={{ fontSize: 10, color: '#889', margin: '2px 0' }}>
+          <p style={{ fontSize: 10, color: 'var(--hmi-text-muted)', margin: '2px 0' }}>
             Pen 1 is the widget's own tag. Extra pens take any TAG.SIGNAL — SP and OP of controllers too.
           </p>
         </>
       )}
       {(w.type === 'display' || w.type === 'gauge' || w.type === 'trend' || w.type === 'bar') && (
         <>
-          <StrProp w={w} k="unit" label="Unit" placeholder="%" /><NumProp w={w} k="min" label="Min" /><NumProp w={w} k="max" label="Max" />
+          <RangeAndUnit w={w} />
           <h5 style={{ margin: '10px 0 2px' }}>Value source</h5>
           <Row label="Controller">
             <input type="checkbox" data-testid="prop-controller" checked={w.props?.controller === true}
@@ -424,13 +465,13 @@ export default function HmiPropertyPanel({ selection, onSelect, armedPick, onArm
               {typeof w.props?.bindTank !== 'string' && typeof w.props?.bindPipe !== 'string' && (
                 <NumProp w={w} k="base" label="Idle value" />
               )}
-              <p style={{ fontSize: 10, color: '#889', margin: '2px 0' }}>
+              <p style={{ fontSize: 10, color: 'var(--hmi-text-muted)', margin: '2px 0' }}>
                 Bound values read the live plant model; unbound ones wander near the idle value.
               </p>
             </>
           )}
           {w.props?.controller === true && (
-            <p style={{ fontSize: 10, color: '#889', margin: '2px 0' }}>
+            <p style={{ fontSize: 10, color: 'var(--hmi-text-muted)', margin: '2px 0' }}>
               Controllers pair with their loop by tag (LIC-101 finds LT-101 / LV-101) and expose SP, OP and AUTO/MAN.
             </p>
           )}

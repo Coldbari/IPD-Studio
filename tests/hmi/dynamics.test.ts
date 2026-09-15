@@ -4,6 +4,12 @@ import { buildSimModel, initTags, tick } from '../../src/hmi/sim/engine'
 import type { Tags } from '../../src/hmi/sim/engine'
 import { deviceAlarms } from '../../src/hmi/sim/alarms'
 import { makeRng } from '../../src/hmi/sim/noise'
+import { DEFAULTS } from '../../src/hmi/sim/units'
+
+/** P-1 has no engineering record, so it runs on the stated default duty.
+ *  Asserting against THAT rather than a literal keeps these tests about the
+ *  ramp shape instead of about one particular pump rating. */
+const RATED = DEFAULTS.pumpFlowM3h
 
 // source -> pump -> valve -> tank
 const screen: HmiScreen = {
@@ -38,9 +44,9 @@ describe('pump spin-up', () => {
     const early = run(tags, 0.4)
     const earlyFlow = Object.values(early.branchFlows)[0]!
     expect(earlyFlow).toBeGreaterThan(0)
-    expect(earlyFlow).toBeLessThan(5)
+    expect(earlyFlow).toBeLessThan(RATED / 2) // still spinning up
     const late = run(early.tags, 2.5)
-    expect(Object.values(late.branchFlows)[0]).toBeCloseTo(10)
+    expect(Object.values(late.branchFlows)[0]).toBeCloseTo(RATED) // at rated duty
   })
 })
 
@@ -80,7 +86,7 @@ describe('pump trip', () => {
     tags['HV-1']!.OP = 100
     tags['HV-1']!.POS = 100
     let out = run(tags, 3)
-    expect(Object.values(out.branchFlows)[0]).toBeCloseTo(10)
+    expect(Object.values(out.branchFlows)[0]).toBeCloseTo(RATED)
     out.tags['P-1']!.FAULT = 1
     out = run(out.tags, 0.4)
     expect(out.tags['P-1']!.RUN).toBe(0) // breaker opened
@@ -93,7 +99,7 @@ describe('pump trip', () => {
     out.tags['P-1']!.FAULT = 0
     out.tags['P-1']!.RUN = 1
     out = run(out.tags, 2.5)
-    expect(Object.values(out.branchFlows)[0]).toBeCloseTo(10)
+    expect(Object.values(out.branchFlows)[0]).toBeCloseTo(RATED)
   })
 })
 

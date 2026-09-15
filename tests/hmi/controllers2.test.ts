@@ -20,14 +20,16 @@ describe('bumpless MAN → AUTO transfer', () => {
     const model = buildSimModel(screen)
     const rng = makeRng(1)
     let tags = initTags(model)
-    // long AUTO stretch with PV stuck below SP: output saturates high
-    for (let i = 0; i < 200; i++) tags = tick(model, tags, 0.2, rng).tags
+    // Long AUTO stretch with PV stuck below SP: the output winds to its rail.
+    // It takes process-minutes now rather than process-seconds — a level loop's
+    // integral time is 600 s, which is the point of retuning it for real units.
+    for (let i = 0; i < 900; i++) tags = tick(model, tags, 1, rng).tags
     expect(tags['LIC-1']!.OP).toBe(100)
 
     // operator takes MANUAL and strokes the output down to 20
     tags['LIC-1'] = { ...tags['LIC-1']!, MODE: 0, OP: 20 }
     for (let i = 0; i < 5; i++) tags = tick(model, tags, 0.2, rng).tags
-    expect(tags['LV-1']!.OP).toBe(20)
+    expect(tags['LV-1']!.OP).toBe(20)  // MAN passes the operator's output straight through
 
     // back to AUTO: the very next tick must hold ~the operator's OP
     tags['LIC-1'] = { ...tags['LIC-1']!, MODE: 1 }
