@@ -362,6 +362,35 @@ describe('port name', () => {
     expect(row.portNames).toEqual([])
   })
 
+  it('collects the AUTHORITATIVE names across placements with different symbols', () => {
+    // One tag, drawn once as a pump and once as a vessel — a legitimate
+    // duplicate the `duplicate-tag` rule reports on its own. `discharge` is
+    // named by the pump's catalogue and does not exist on the vessel, so the
+    // vessel contributes nothing rather than a positional guess.
+    const doc = docOf(
+      [
+        sheetOf('s1', [pump('a', 'P-101')], [], 'Sheet 1'),
+        sheetOf('s2', [vessel('b', 'P-101')], [], 'Sheet 2'),
+      ],
+      { 'P-101': record('P-101', [newNozzle('N1', { portId: 'discharge' })]) },
+    )
+    const row = schedule(doc)[0]!
+    expect(row.portNames).toEqual(['Discharge'])
+    expect(row.symbols).toEqual(['Centrifugal Pump', 'Vertical Vessel'])
+  })
+
+  it('stays blank when NEITHER symbol names the port', () => {
+    const doc = docOf(
+      [
+        sheetOf('s1', [vessel('a', 'TK-101')], [], 'Sheet 1'),
+        sheetOf('s2', [tank('b', 'TK-101')], [], 'Sheet 2'),
+      ],
+      { 'TK-101': record('TK-101', [newNozzle('N1', { portId: 'n' })]) },
+    )
+    // Both have a port `n`; neither catalogue says what it is for.
+    expect(schedule(doc)[0]!.portNames).toEqual([])
+  })
+
   it('is blank when the nozzle has no port at all', () => {
     expect(schedule(oneVessel([newNozzle('N1')]))[0]!.portNames).toEqual([])
   })

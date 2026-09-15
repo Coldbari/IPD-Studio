@@ -17,11 +17,12 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import '../../src/symbols/lib/index'
-import { useStore } from '../../src/store/store'
+import { resumeHistory, useStore } from '../../src/store/store'
 import { createEmptyDoc } from '../../src/model/doc'
 import { buildIndex } from '../../src/model/projectIndex'
 import { nozzlesOf } from '../../src/model/nozzle'
 import InspectorEngineering from '../../src/panels/InspectorEngineering'
+import { NOZZLE_SCHEDULE_COLUMNS, nozzleScheduleRows } from '../../src/export/csv'
 import type { PlantNode } from '../../src/model/types'
 
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
@@ -151,6 +152,58 @@ describe('the Engineering tab manages a nozzle schedule', () => {
     expect(q(host, 'eng-nozzles')).not.toBeNull()
     const select = q(host, `nozzle-${nozzles('TK-101')[0]!.id}-port`) as HTMLSelectElement
     expect([...select.options].map((o) => o.value)).toEqual([''])
+  })
+
+  it('lets an engineer type NOTES, which nothing else could reach before', async () => {
+    const node = vessel()
+    st().addNozzle('TK-101', 'equipment', 'N1')
+    const { host } = await mount(<InspectorEngineering node={node} />)
+    await type(q(host, 'nozzle-N1-notes'), 'Reinforcing pad, see vessel GA')
+    expect(nozzles('TK-101')[0]!.notes).toBe('Reinforcing pad, see vessel GA')
+  })
+
+  it('carries the note through to the Nozzle schedule', async () => {
+    const node = vessel()
+    st().addNozzle('TK-101', 'equipment', 'N1')
+    const { host } = await mount(<InspectorEngineering node={node} />)
+    await type(q(host, 'nozzle-N1-notes'), 'Blanked for now')
+    const row = nozzleScheduleRows(doc())[0]!
+    expect(row.cells[NOZZLE_SCHEDULE_COLUMNS.indexOf('Notes')]).toBe('Blanked for now')
+  })
+
+  it('CLEARS the note when it is emptied, leaving no blank string behind', async () => {
+    const node = vessel()
+    const { id } = st().addNozzle('TK-101', 'equipment', 'N1', { notes: 'temporary' })
+    const { host } = await mount(<InspectorEngineering node={node} />)
+    await type(q(host, 'nozzle-N1-notes'), '')
+    // Absent, not '': a saved document must not claim an engineer typed nothing.
+    expect('notes' in nozzles('TK-101')[0]!).toBe(false)
+    expect(nozzles('TK-101')[0]!.id).toBe(id)
+  })
+
+  it('leaves every other field of the nozzle alone', async () => {
+    const node = vessel()
+    st().addNozzle('TK-101', 'equipment', 'N1', { size: '6"', rating: '150#', facing: 'RF', service: 'CW' })
+    const { host } = await mount(<InspectorEngineering node={node} />)
+    await type(q(host, 'nozzle-N1-notes'), 'note')
+    expect(nozzles('TK-101')[0]).toMatchObject({
+      number: 'N1', size: '6"', rating: '150#', facing: 'RF', service: 'CW', notes: 'note',
+    })
+  })
+
+  it('undoes a note the way every other nozzle field undoes', async () => {
+    const node = vessel()
+    st().addNozzle('TK-101', 'equipment', 'N1')
+    const { host } = await mount(<InspectorEngineering node={node} />)
+    // An earlier case may have left the burst paused — the panel resumes on
+    // blur, and no test above blurs.
+    resumeHistory()
+    const input = q(host, 'nozzle-N1-notes')
+    await type(input, 'first')
+    await act(async () => { (input as HTMLInputElement).dispatchEvent(new FocusEvent('focusout', { bubbles: true })) })
+    expect(nozzles('TK-101')[0]!.notes).toBe('first')
+    st().undo()
+    expect(nozzles('TK-101')[0]!.notes).toBeUndefined()
   })
 
   it('fills nothing in from a connected line', async () => {

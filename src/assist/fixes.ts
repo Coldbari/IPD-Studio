@@ -77,7 +77,7 @@ export function describeFix(spec: FixSpec, doc: ProjectDoc): { title: string; bl
     case 'purge-record':
       return {
         title: `Discard the engineering record for ${spec.key}`,
-        blastRadius: `Deletes ${Object.keys(doc.registry?.[spec.key]?.fields ?? {}).length} stored field(s). Nothing on any sheet carries this key.`,
+        blastRadius: `${recordContents(doc.registry?.[spec.key])} Nothing on any sheet carries this key.`,
         affectedIds: [],
       }
     case 'clear-loop': {
@@ -134,6 +134,7 @@ export function describeFix(spec: FixSpec, doc: ProjectDoc): { title: string; bl
 }
 
 import type { PlantEdge, PlantNode, ProjectDoc } from '../model/types'
+import type { EngineeringRecord } from '../model/registry'
 import { isPortEnd } from '../model/types'
 import { portWorld } from '../canvas/alignment'
 import { isDuplicateTag, nextLoopNumber } from '../isa/autonumber'
@@ -154,6 +155,44 @@ const stale = (tag: string): FixResult => ({
   changedIds: [],
   message: `That binding no longer reads ${tag} — nothing was changed.`,
 })
+
+/**
+ * What discarding a record actually throws away, said out loud before it is.
+ *
+ * This used to count `fields` and nothing else, which was true when `fields`
+ * was all a record held. It now also holds a nozzle schedule, a unit assignment
+ * and a loop assignment — so a vessel with eight nozzles and no filled fields
+ * read "Deletes 0 stored field(s)" at the moment somebody confirmed deleting
+ * all eight. A destructive action that understates itself is worse than one
+ * with no description at all, because the description is believed.
+ *
+ * EMPTY FIELDS ARE NOT COUNTED. A record minted only to carry a status has one
+ * key holding an empty string; reporting that as a stored field is the same
+ * kind of noise in the other direction.
+ *
+ * Every clause is omitted when there is nothing to say, so the sentence never
+ * reads "0 nozzles" — and a record holding nothing at all says so plainly
+ * rather than listing four absences.
+ */
+function recordContents(record: EngineeringRecord | undefined): string {
+  if (!record) return 'This record is already gone.'
+  const fields = Object.values(record.fields).filter((v) => v.trim() !== '').length
+  const nozzles = record.nozzles?.length ?? 0
+  const parts: string[] = []
+  if (fields) parts.push(`${fields} stored field${fields === 1 ? '' : 's'}`)
+  if (nozzles) parts.push(`${nozzles} nozzle${nozzles === 1 ? '' : 's'}`)
+  if (record.unitId) parts.push('its unit assignment')
+  if (record.loopId) parts.push('its loop assignment')
+  if (parts.length === 0) return 'This record holds no engineering data.'
+  return `Deletes ${listSentence(parts)}.`
+}
+
+/** `a`, `a and b`, `a, b and c` — the way the rest of the product writes a
+ *  list into a sentence rather than a bulleted one. */
+function listSentence(parts: readonly string[]): string {
+  if (parts.length <= 1) return parts[0] ?? ''
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+}
 
 export function applyFix(fix: FixSpec): FixResult {
   if (fix.kind === 'purge-record') {

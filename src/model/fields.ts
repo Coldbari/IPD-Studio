@@ -7,6 +7,19 @@ import { DATASHEET_SECTIONS } from './datasheet'
 import { HIERARCHY_FIELD_LABELS } from './hierarchy'
 import { LOOP_FIELD_LABELS } from './loop'
 
+/**
+ * The free-text field that WAS the nozzle schedule, before there was one.
+ *
+ * Retired exactly as `LEGACY_AREA_FIELD` was: the key never moves, the value is
+ * never migrated or deleted, and the column still exports — what changes is the
+ * label, so it no longer competes with the structured schedule that now sits
+ * beside it in the same panel. "Nozzle schedule" naming a text box next to the
+ * real one is two answers to one question.
+ *
+ * Nothing writes it. An engineer who has typed into it keeps every word.
+ */
+export const LEGACY_CONNECTIONS_FIELD = 'construction.connections'
+
 export interface FieldDef {
   key: string
   label: string
@@ -107,7 +120,7 @@ export const FIELD_CATALOG: Record<EntityKind, FieldSection[]> = {
         { key: 'construction.material', label: 'Material' },
         { key: 'construction.volume', label: 'Volume / area' },
         { key: 'construction.insulation', label: 'Insulation' },
-        { key: 'construction.connections', label: 'Nozzle schedule' },
+        { key: LEGACY_CONNECTIONS_FIELD, label: 'Connections (legacy text)' },
       ],
     },
   ],

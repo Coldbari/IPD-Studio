@@ -2,9 +2,9 @@
 // Copyright © 2026 Praharsh Nagpure — IPD Studio. Noncommercial use only;
 // commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactElement } from 'react'
 import type { PlantNode } from '../model/types'
-import { FIELD_CATALOG } from '../model/fields'
+import { FIELD_CATALOG, LEGACY_CONNECTIONS_FIELD } from '../model/fields'
 import { RECORD_STATUSES, keyOfNode, kindOfNode, type EntityKind, type RecordStatus } from '../model/registry'
 import { pauseHistory, resumeHistory, useStore } from '../store/store'
 import { expandLetters } from '../isa/tag'
@@ -22,6 +22,39 @@ const STATUS_LABEL: Record<RecordStatus, string> = {
   'in-review': 'In review',
   approved: 'Approved',
   issued: 'Issued',
+}
+
+/**
+ * The hint under a field that is kept, still exported, and no longer the answer.
+ *
+ * TWO of them now, which is why this is a lookup rather than a branch. Both
+ * follow the same rule: the key never moves and no value is ever migrated or
+ * deleted, because the text an engineer typed is the only record of what they
+ * meant. What is withdrawn is the INVITATION to type more into it — the field
+ * dims, and the sentence says where the structured answer lives instead.
+ *
+ * `null` for every other field, which is also what decides the dimmed styling,
+ * so a legacy field cannot be dimmed without saying why.
+ */
+function legacyNote(fieldKey: string): ReactElement | null {
+  if (fieldKey === LEGACY_AREA_FIELD) {
+    return (
+      <p className="prop-hint eng-legacy-note" data-testid="eng-legacy-area-note">
+        Legacy free text, kept so nothing typed before is lost. Use <b>Unit</b> above for new
+        work — it is structured, filters, and survives a code change.
+      </p>
+    )
+  }
+  if (fieldKey === LEGACY_CONNECTIONS_FIELD) {
+    return (
+      <p className="prop-hint eng-legacy-note" data-testid="eng-legacy-connections-note">
+        Legacy free text, kept so nothing typed before is lost. This is <b>not</b> the nozzle
+        schedule — use <b>Nozzles</b> below, where each nozzle is its own record with a number,
+        a size and a connection point, and prints in the Nozzle schedule.
+      </p>
+    )
+  }
+  return null
 }
 
 /**
@@ -52,7 +85,7 @@ function NozzleSection({ node, recordKey, kind }: { node: PlantNode; recordKey: 
   // asked for.
   const ports = useMemo(() => portsOfNode(node).map((p) => p.id), [node.symbolId, node.extraPorts])
 
-  const field = (nozzle: Nozzle, name: 'size' | 'rating' | 'facing' | 'service', label: string) => (
+  const field = (nozzle: Nozzle, name: 'size' | 'rating' | 'facing' | 'service' | 'notes', label: string) => (
     <label className="eng-field" key={name}>
       <span>{label}</span>
       <input
@@ -121,6 +154,11 @@ function NozzleSection({ node, recordKey, kind }: { node: PlantNode; recordKey: 
           {field(nozzle, 'rating', 'Rating')}
           {field(nozzle, 'facing', 'Facing')}
           {field(nozzle, 'service', 'Service')}
+          {/* Free text, and the last field deliberately: it is where an
+              engineer says what the four above cannot. Blank clears it — the
+              store deletes the key rather than storing '', so a round trip is
+              unchanged. */}
+          {field(nozzle, 'notes', 'Notes')}
         </div>
       ))}
       <div className="tag-row">
@@ -313,21 +351,16 @@ export default function InspectorEngineering({ node }: { node: PlantNode }) {
                 <span>{f.label}</span>
                 <input
                   data-testid={`eng-${f.key}`}
-                  className={f.key === LEGACY_AREA_FIELD ? 'eng-legacy' : undefined}
+                  className={legacyNote(f.key) ? 'eng-legacy' : undefined}
                   value={valueOf(f.key)}
                   onChange={(e) => { setRecordField(key, kind, f.key, e.target.value); pauseHistory() }}
                   onBlur={resumeHistory}
                 />
               </label>
-              {/* The one field that is deliberately still here and deliberately
+              {/* The fields that are deliberately still here and deliberately
                   no longer the answer. Existing values are untouched and still
                   export; what changes is that nobody is invited to add more. */}
-              {f.key === LEGACY_AREA_FIELD && (
-                <p className="prop-hint eng-legacy-note" data-testid="eng-legacy-area-note">
-                  Legacy free text, kept so nothing typed before is lost. Use <b>Unit</b> above for new
-                  work — it is structured, filters, and survives a code change.
-                </p>
-              )}
+              {legacyNote(f.key)}
             </div>
           ))}
         </section>

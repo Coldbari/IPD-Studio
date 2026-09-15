@@ -250,6 +250,20 @@ export const nozzlePortMissing: Rule = {
         out.push(
           finding(nozzlePortMissing, `${key}/${nozzle.number}`, `${key} nozzle ${nozzle.number} points at connection point ${nozzle.portId}, which this symbol does not have`, {
             ...anchorOf(ix, key),
+            // ACCEPTANCE IS KEYED ON THE ULID, not on the number above.
+            //
+            // The two are different jobs. `entityKey` names the object for a
+            // person — it prints in the conformance report's Object column, and
+            // a ULID there is unreadable. This key is what an acceptance is
+            // filed under, and a number is what an engineer RENUMBERS: keying
+            // on it means renumbering N1 to N9 strands the acceptance and
+            // re-opens a finding about an unchanged breakage. The nozzle has a
+            // stable identity, so the acceptance uses it.
+            //
+            // The two rules either side of this one keep number- and port-based
+            // keys deliberately: each is ABOUT the value it keys on, so
+            // changing that value genuinely is a different finding.
+            key: `${nozzlePortMissing.id}:${key}/${nozzle.id}`,
           }),
         )
       }
