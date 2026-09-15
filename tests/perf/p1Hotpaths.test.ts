@@ -30,6 +30,7 @@ import { captureQaEvidence, fingerprintStandard } from '../../src/model/provenan
 import { evaluateConformance, issueBlockers } from '../../src/model/conformance'
 import { conformanceCsv } from '../../src/export/csv'
 import { standardOf } from '../../src/model/standard'
+import { projectHealth } from '../../src/model/health'
 import { qaFor, resetQaCache } from '../../src/validate/engine'
 import { runRules } from '../../src/validate/engine'
 import { ALL_RULES } from '../../src/validate/rules/index'
@@ -178,6 +179,20 @@ test.skipIf(!process.env.PERF)('P1 hot paths', () => {
 
   bench('buildIndex', 20, () => { buildIndex(doc) })
   bench('buildHierarchy', 200, () => { buildHierarchy(doc) })
+
+  /*
+   * P3-5 — what the Project health projection costs.
+   *
+   * Off an index and a QA report the caller already has, because the Project
+   * workspace reads the memoised report every other panel reads. One pass over
+   * the records, one over the nodes, one over the sheets; `projectCost` is
+   * itself memoised per document. It is not on a drawing path — no canvas
+   * gesture opens this screen — and it is cheaper than any of the reports
+   * below, which is the point: the dashboard aggregates work already done.
+   */
+  const healthIx = buildIndex(doc)
+  const healthQa = runRules(healthIx, {})
+  bench('projectHealth (index + QA reused)', 200, () => { projectHealth(healthIx, healthQa) })
 
   /*
    * P3 PROGRAM 1 — what deriving piping runs costs inside `buildIndex`.

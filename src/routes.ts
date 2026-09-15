@@ -14,9 +14,15 @@ export type Route = 'home' | 'app'
  * linkable, survives the back button, and can be a lazy chunk of its own —
  * `draw` must not pay for the tables or the HMI simulator.
  */
-export type Workspace = 'draw' | 'data' | 'checks' | 'standards' | 'hmi'
+export type Workspace = 'draw' | 'data' | 'checks' | 'standards' | 'hmi' | 'project'
 
-export const WORKSPACES: readonly Workspace[] = ['draw', 'data', 'checks', 'standards', 'hmi']
+/**
+ * Order is the navigation contract: the rail binds Ctrl+1…Ctrl+N by POSITION.
+ * `project` is APPENDED rather than placed first, where an overview screen
+ * would otherwise belong, so every existing shortcut keeps the workspace it
+ * has always opened. Muscle memory is not worth a tidier list.
+ */
+export const WORKSPACES: readonly Workspace[] = ['draw', 'data', 'checks', 'standards', 'hmi', 'project']
 
 export function routeFor(pathname: string): Route {
   return /^\/app(\/|$)/.test(pathname) ? 'app' : 'home'

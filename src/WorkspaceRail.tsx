@@ -23,6 +23,7 @@ const ENTRIES: Record<Workspace, Entry> = {
   checks: { icon: '✓', label: 'Checks', hint: 'Every validation finding and suggestion, full screen' },
   standards: { icon: '§', label: 'Standards', hint: 'The company rules this project is checked against' },
   hmi: { icon: '⊞', label: 'HMI', hint: 'HMI Studio — operator screens and simulation' },
+  project: { icon: '◎', label: 'Project', hint: 'Where the project stands — counts, engineering completeness, quality, estimate and revisions' },
 }
 
 export default function WorkspaceRail({ active }: { active: Workspace }) {

@@ -25,6 +25,7 @@ const DataWorkspace = lazy(() => import('./workspaces/DataWorkspace'))
 const ChecksWorkspace = lazy(() => import('./workspaces/ChecksWorkspace'))
 const StandardsPage = lazy(() => import('./workspaces/StandardsPage'))
 const HmiWorkspace = lazy(() => import('./hmi/HmiWorkspace'))
+const ProjectWorkspace = lazy(() => import('./workspaces/ProjectWorkspace'))
 
 /**
  * The editor shell. The rail and the command palette live out here so they
@@ -44,6 +45,7 @@ function Workspaces() {
             {workspace === 'checks' && <ChecksWorkspace />}
             {workspace === 'standards' && <StandardsPage />}
             {workspace === 'hmi' && <HmiWorkspace onExit={() => navigateWorkspace('draw')} />}
+            {workspace === 'project' && <ProjectWorkspace />}
           </Suspense>
         )}
       </div>
