@@ -47,7 +47,8 @@
 import type { HmiPipe, HmiScreen, HmiWidget } from '../../model'
 import { DEFAULTS } from '../units'
 import type { Registry } from '../../../model/registry'
-import { operatingPressure } from '../../../model/processData'
+import { boundarySignal, operatingPressure } from '../../../model/processData'
+import type { BoundarySignal, BoundarySignalError } from '../../../model/processData'
 import { HEATER_SYMBOLS, TERMINAL_SYMBOLS } from '../tags'
 import type { EquipmentKind, PortResolution, PortRole, ProcessPort } from './ports'
 import { INLET_ROLE, OUTLET_ROLE, declaredRole, portId, portsOf, roleFromGeometry } from './ports'
@@ -154,6 +155,17 @@ export interface ProcessNode {
    * value names a boundary condition — see `BoundaryKind`.
    */
   boundary: BoundaryKind
+  /**
+   * A TAGGED TERMINAL's declared runtime behaviour, compiled once from its
+   * engineering record.
+   *
+   * `undefined` for a STATIC terminal, which is every terminal that does not
+   * declare otherwise. A string is a record that declares a signal this model
+   * cannot use — carried so the Checks engine can report it, and treated as
+   * static meanwhile, because a boundary that cannot be evaluated must not
+   * become a boundary that cannot be solved.
+   */
+  signal?: BoundarySignal | BoundarySignalError
   /**
    * The pressure this boundary holds, bar absolute, for the conditions that do
    * not depend on runtime state.
@@ -439,6 +451,11 @@ export function buildProcessModel(screens: HmiScreen | HmiScreen[], registry?: R
         const terminalBarA = kind === 'terminal' && w.tag
           ? operatingPressure(registry?.[w.tag]?.fields?.['design.operatingPressure'])
           : undefined
+        // compiled ONCE, like everything else on the topology: a signal is a
+        // declaration, and only its VALUE moves during a run
+        const terminalSignal = kind === 'terminal' && w.tag
+          ? boundarySignal(registry?.[w.tag]?.fields)
+          : undefined
         addNode({
           id: p.id,
           kind: kind === 'vessel' ? 'vessel' : kind === 'terminal' ? 'boundary' : 'junction',
@@ -448,6 +465,7 @@ export function buildProcessModel(screens: HmiScreen | HmiScreen[], registry?: R
           ...(kind === 'terminal'
             ? { pressureBar: terminalBarA ?? DEFAULTS.atmosphericPressureBar }
             : {}),
+          ...(terminalSignal !== undefined ? { signal: terminalSignal } : {}),
           /**
            * A vessel's two nozzles are DIFFERENT boundary conditions, and the
            * K3.3 nozzle roles are what tell them apart — not where the line was

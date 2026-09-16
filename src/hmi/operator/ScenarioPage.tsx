@@ -35,8 +35,15 @@ import { SEVERITY_LABEL } from '../../model/diagnostics'
 const SOURCE_LABEL: Record<ValueSource, string> = {
   engineering: 'Engineering',
   scenario: 'Scenario',
+  signal: 'Runtime boundary',
   default: 'Default (atmospheric)',
   invalid: 'Invalid',
+}
+
+/** What a terminal's record says its pressure DOES during a run. A static one
+ *  says nothing, which is most of them. */
+const SIGNAL_LABEL: Record<string, string> = {
+  constant: 'Constant', step: 'Step', ramp: 'Ramp',
 }
 
 /** One terminal's row. */
@@ -71,6 +78,9 @@ function TerminalRow({ tag, onOverride, onRelease }: {
         {spec?.barA === undefined ? '—' : formatBarg(spec.barA)}
       </td>
       <td className="num" data-testid="scn-active">{formatBarg(resolved.barA)}</td>
+      <td data-testid="scn-signal">
+        {resolved.signal ? SIGNAL_LABEL[resolved.signal] ?? resolved.signal : 'Static'}
+      </td>
       <td data-testid="scn-source">{SOURCE_LABEL[resolved.source]}</td>
       <td data-testid="scn-observed">{observed ?? '—'}</td>
       <td>
@@ -167,7 +177,8 @@ export default function ScenarioPage() {
               <thead>
                 <tr>
                   <th>Tag</th><th>Service</th><th className="num">Engineering</th>
-                  <th className="num">Active</th><th>Source</th><th>Observed</th><th>Runtime override</th>
+                  <th className="num">Active</th><th>Runtime source</th><th>Source</th>
+                  <th>Observed</th><th>Runtime override</th>
                 </tr>
               </thead>
               <tbody>

@@ -41,6 +41,7 @@
 
 import type { ProcessModel } from './hydraulic/model'
 import { operatingPressure } from '../../model/processData'
+import type { BoundarySignal, BoundarySignalKind } from '../../model/processData'
 import { DEFAULTS } from './units'
 import type { DiagnosticSeverity } from '../../model/diagnostics'
 
@@ -76,6 +77,8 @@ export interface Scenario {
 export type ValueSource =
   /** A scenario is holding it here. */
   | 'scenario'
+  /** A declared runtime boundary signal is driving it. */
+  | 'signal'
   /** The engineering record states it, and nothing is overriding it. */
   | 'engineering'
   /** Nothing states it: the documented fallback. */
@@ -91,6 +94,32 @@ export interface ResolvedPressure {
   barA: number
   /** Present only when `source` is `invalid`. Operator-readable. */
   reason?: string
+  /** The declared runtime behaviour, when the terminal has one — shown even
+   *  while a scenario is overriding it, so an operator can see what they are
+   *  overriding. */
+  signal?: BoundarySignalKind
+}
+
+/**
+ * WHERE A DECLARED SIGNAL IS AT THIS INSTANT, bar absolute.
+ *
+ * Evaluated against the SIMULATION CLOCK the engine already keeps — there is no
+ * second timebase here and no state of its own. A signal is a pure function of
+ * the declaration and the time, which is what makes a run with one in it
+ * reproducible.
+ *
+ * A ramp of zero duration is a step, which is the only sensible reading of
+ * "get there over no time" and avoids a division nobody wants.
+ */
+export function evaluateSignal(sig: BoundarySignal, tSeconds: number): number {
+  if (sig.kind === 'constant') return sig.fromBarA
+  if (tSeconds <= sig.atS) return sig.fromBarA
+  if (sig.kind === 'step' || sig.overS <= 0) return sig.toBarA
+  const through = (tSeconds - sig.atS) / sig.overS
+  if (through >= 1) return sig.toBarA
+  // linear in the BOUNDARY. What the plant does with it is the solver's
+  // business and is not linear in anything.
+  return sig.fromBarA + (sig.toBarA - sig.fromBarA) * through
 }
 
 /**
@@ -102,10 +131,15 @@ export function resolveTerminal(
   model: ProcessModel,
   tag: string,
   scenario: Scenario | null,
+  tSeconds = 0,
 ): ResolvedPressure {
   const node = model.nodes.find((n) => n.kind === 'boundary' && n.tag === tag)
   const engineering = node?.pressureBar
   const fallback = DEFAULTS.atmosphericPressureBar
+  const sig = node?.signal
+  const declared = typeof sig === 'object' ? sig : undefined
+  const badSignal = typeof sig === 'string' ? sig : undefined
+  const describe = declared ? { signal: declared.kind } : {}
 
   const mine = (scenario?.overrides ?? [])
     .filter((o): o is Extract<Override, { kind: 'terminal-pressure' }> =>
@@ -115,7 +149,7 @@ export function resolveTerminal(
     // NOT last-wins. A scenario that says two things about one terminal has not
     // decided what it means, and picking one would make that unfindable.
     return {
-      source: 'invalid', barA: engineering ?? fallback,
+      source: 'invalid', barA: engineering ?? fallback, ...describe,
       reason: `${tag} is overridden ${mine.length} times in this scenario (${mine.map((o) => o.pressure).join(', ')}). Remove the duplicates.`,
     }
   }
@@ -130,16 +164,38 @@ export function resolveTerminal(
     const barA = operatingPressure(one.pressure)
     if (barA === undefined || !Number.isFinite(barA)) {
       return {
-        source: 'invalid', barA: engineering ?? fallback,
+        source: 'invalid', barA: engineering ?? fallback, ...describe,
         reason: `"${one.pressure}" is not a pressure this model can use. Give it a number and a unit — "3 barg", "4 bara", "50 psig".`,
       }
     }
-    return { source: 'scenario', barA }
+    /**
+     * A SCENARIO BEATS A SIGNAL, and that is a deliberate reading.
+     *
+     * K10's brief lists the precedence signal-first and then says plainly that
+     * "if a scenario explicitly overrides a runtime-variable terminal, the
+     * scenario value must win". The sentence is the instruction; the list
+     * contradicts it, and the sentence is also the safer rule — an operator who
+     * has explicitly pinned a boundary should not be quietly overruled by an
+     * automatic ramp they cannot see. The declared signal is still REPORTED, so
+     * they can see what they are overriding.
+     */
+    return { source: 'scenario', barA, ...describe }
   }
   if (node === undefined) {
     // nothing is overriding it and it is not a terminal: not this module's
     // business at all, and the solve will use whatever the node says
     return { source: 'default', barA: fallback }
+  }
+  if (badSignal !== undefined) {
+    // The record declares a behaviour this model cannot evaluate. It is NOT
+    // silently static: somebody said this boundary moves, and it will not.
+    return {
+      source: 'invalid', barA: engineering ?? fallback,
+      reason: `${tag} declares a runtime boundary signal that cannot be used — ${badSignal}`,
+    }
+  }
+  if (declared !== undefined) {
+    return { source: 'signal', barA: evaluateSignal(declared, tSeconds), signal: declared.kind }
   }
   // K7 populated `pressureBar` for every terminal: the record's value when it
   // states one, atmosphere when it does not. `boundary` says which.
@@ -153,17 +209,18 @@ export function resolveTerminal(
 export function terminalPressures(
   model: ProcessModel,
   scenario: Scenario | null,
+  tSeconds = 0,
 ): Map<string, ResolvedPressure> {
   const out = new Map<string, ResolvedPressure>()
   for (const n of model.nodes) {
     if (n.kind !== 'boundary' || n.tag === undefined) continue
-    out.set(n.tag, resolveTerminal(model, n.tag, scenario))
+    out.set(n.tag, resolveTerminal(model, n.tag, scenario, tSeconds))
   }
   // an override naming something that is not a terminal still has to be
   // REPORTED rather than dropped — otherwise a typo is invisible
   for (const o of scenario?.overrides ?? []) {
     if (o.kind !== 'terminal-pressure' || out.has(o.tag)) continue
-    out.set(o.tag, resolveTerminal(model, o.tag, scenario))
+    out.set(o.tag, resolveTerminal(model, o.tag, scenario, tSeconds))
   }
   return out
 }

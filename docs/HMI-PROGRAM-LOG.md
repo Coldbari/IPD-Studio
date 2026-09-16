@@ -741,3 +741,48 @@ tsc -b clean · production build clean
 | P2 | No scenario persistence or library — a scenario lives for the session. Storing one would make it engineering data. |
 | P2 | The page edits boundary conditions only; equipment is commanded where it already was. |
 | P2 | No reservoir model; fluid identity informational; mixing unsupported. |
+
+
+---
+
+## 24. Step K10 — runtime-variable boundaries
+
+K7 gave a terminal a pressure; K8 let a scenario hold it elsewhere. Both are
+still for the length of a run. A utility header that sags when the neighbouring
+unit starts up is neither.
+
+A terminal's record may now declare `constant`, `step` or `ramp`. Absent means
+static, which is every terminal drawn before this. Three shapes and no more: a
+boundary that moves has to move deterministically or a simulation stops being
+reproducible.
+
+The signal is compiled onto the topology once and evaluated against the engine's
+own clock — a pure function of the declaration and the time, with no state and
+no second timebase. Everything downstream comes out of the solve.
+
+**Precedence contradicted itself in the brief** — the list puts the signal above
+the scenario, the prose says the scenario must win. I implemented the prose,
+because it is the explicit instruction and because an operator who has pinned a
+boundary should not be overruled by a ramp they cannot see. The signal stays
+visible while it is overridden.
+
+**A bug in my own first cut, caught by its test:** an unreadable `at` time was
+being coerced to zero, silently moving the event to a moment the record does not
+state. Absent and unreadable are now different things.
+
+### State after K10
+
+```text
+3360 tests passing · 7 skipped · 0 failing
+tsc -b clean · production build clean
+207 Playwright passing · 2 failing, both pre-existing on a5b9793
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P2 | Boundary dynamics are PRESSURE only — no flow, level or composition. |
+| P2 | Three signal shapes; no repeating, no schedule, no external driver. |
+| P2 | No scenario persistence or library (K9). |
+| P2 | No reservoir model; fluid identity informational; mixing unsupported. |

@@ -1734,3 +1734,123 @@ tsc -b clean · production build clean
   commanded from the equipment surfaces where they already were.
 - **No scenario library.** There is no save/load/name-a-scenario; the page
   builds an ad-hoc "Operator scenario" as overrides are applied.
+
+## K10 — a boundary that moves during a run
+
+K7 gave a terminal a pressure from its record; K8 let a scenario hold it
+somewhere else. Both are **still** for the length of a run. A utility header
+that sags when the neighbouring unit starts up is neither.
+
+### The model
+
+Declared on the engineering record, **never inferred from a tag name**:
+
+| Field | Meaning |
+| --- | --- |
+| `design.boundarySignal` | `constant` \| `step` \| `ramp` — absent means STATIC |
+| `design.boundarySignalTo` | the pressure it ends at |
+| `design.boundarySignalAt` | when a step happens, or a ramp begins |
+| `design.boundarySignalOver` | how long a ramp takes |
+
+It starts from `design.operatingPressure` — the same field K7 reads, through the
+same `operatingPressure()`, so there is still one pressure system. Times are
+read by a new `seconds()` against a `TIME` table, and a bare number is seconds.
+
+Three shapes and no more. A boundary that moves must move **deterministically**
+or a simulation stops being reproducible, and these cover the training cases — a
+utility that sits still, one that trips, one that sags — without implying a
+utility-network model the product does not have. Explicitly **not** implemented:
+flow-controlled boundaries, reservoir levels, consumption models, compressor
+networks, NPSH, mixing.
+
+### Precedence — and a contradiction in the brief, resolved
+
+```text
+scenario override  →  runtime signal  →  engineering record  →  atmospheric
+```
+
+§3 lists the signal **above** the scenario and then states plainly that *"if a
+scenario explicitly overrides a runtime-variable terminal, the scenario value
+must win"*. The list and the sentence disagree. **I implemented the sentence**,
+for two reasons: it is the explicit instruction, and it is the safer rule — an
+operator who has deliberately pinned a boundary should not be quietly overruled
+by a ramp they cannot see. The declared signal stays **visible** while it is
+overridden, so they can see what they are overriding.
+
+All four cases are tested: static±scenario, runtime-variable±scenario.
+
+### Runtime data flow
+
+```text
+record → boundarySignal()  ── compiled ONCE onto ProcessNode.signal
+                                        │
+simStore.tickOnce:  t + dt ─► terminalPressures(model, scenario, t)
+                                        │  (one pass over TERMINALS, never widgets)
+                            TickOptions.boundaryPressure
+                                        ↓
+              solveHydraulics ─► node pressures · SIGNED flows
+                                        ↓
+     pump operating point · transmitters · inventory · thermal · alarms · history
+```
+
+**No second clock.** A signal is a pure function of its declaration and the
+engine's own `t`; it holds no state between ticks. The published `terminals` map
+is re-set only when a value actually moves, so a static plant does not re-render
+the scenario page five times a second.
+
+### Evidence
+
+**Step** — `BL-S` 3 barg → 1 barg at t=120 s. Before: suction, feed flow, PT-1
+and FT-1 at one solution. After: every one of them lower, PT-1 still equal to
+its own line's solved pressure to 1 dp and **not** to the boundary's number, and
+the vessel demonstrably filling more slowly.
+
+**Ramp** — 3 barg → 1 barg over 60 s from t=60. The boundary reads 4.000, 3.000,
+2.000 bar absolute at t = 60, 90, 120. The **plant's** response falls throughout
+and is measurably *not* linear, which is the point: the input is a straight line
+and the resistance law is not.
+
+**Determinism** — a 240 s ramping run is bit-identical on repeat, and a step
+lands at the same tick every time.
+
+**Two independent** — `BL-S` stepping at 60 s and `BL-D` at 120 s move on their
+own schedules; at t≈90 only one has changed. No global plant pressure.
+
+**Direction** — a boundary ramping *above* the plant reverses its own line, from
+the sign of the solved flow. No SOURCE/SINK kind was introduced; a test asserts
+neither exists.
+
+### A bug this found in my own code
+
+The first implementation read the signal's `at` time with `seconds(raw) ?? 0`.
+An **unreadable** time therefore became zero — silently moving the event to a
+moment the record does not state. That is precisely the coercion §8 forbids, and
+a test caught it. Absent and unreadable are now different things: absent means
+"from the start", unreadable is a finding.
+
+### Diagnostics
+
+`terminal-bad-signal`, `critical`, in the existing Checks engine. Unlike a
+missing pressure, a malformed signal is a statement that is **wrong** rather
+than absent: the record describes behaviour the simulation will not produce.
+Nine malformed shapes are covered — unknown kind, missing target, unreadable
+target, missing duration, negative duration, NaN, Infinity, bad pressure unit,
+bad time unit — plus a runtime-variable terminal with no operating pressure to
+start from. In every case the plant still solves at the stated pressure, nothing
+becomes NaN, and a scenario override still wins.
+
+### Gate
+
+```text
+3360 tests passing · 7 skipped · 0 failing      (+27)
+tsc -b clean · production build clean
+207 Playwright passing · 2 failing — the SAME two as on a5b9793
+```
+
+### Remaining
+
+- **Pressure only.** A boundary's flow, level and composition are not runtime
+  quantities, by design for this phase.
+- **Three shapes.** No repeating, no schedule, no external driver.
+- **No persistence of the active value** — it is recomputed from the declaration
+  and the clock, and is never written back to `design.operatingPressure`.

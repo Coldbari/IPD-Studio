@@ -308,13 +308,29 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
     const m = model
     if (!m) return
     const s = get()
+    /**
+     * BOUNDARY CONDITIONS FOR THIS INSTANT.
+     *
+     * Cheap on purpose: one pass over the TERMINALS, which a plant has a
+     * handful of — never over the widgets. A signal is a pure function of its
+     * declaration and the clock, so there is nothing to remember between ticks.
+     */
+    const at = s.t + dt
+    const resolved = terminalPressures(m.hydraulic, s.scenario, at)
+    const held = new Map<string, number>()
+    for (const [tag, r] of resolved) {
+      if (r.source === 'scenario' || r.source === 'signal') held.set(tag, r.barA)
+    }
     const { tags, branchFlows, pipePressures, hydraulic: hyd } = tick(m, s.tags, dt, rng, {
       ...(s.plugged.length > 0 ? { pipeFactor: (id: string) => (s.plugged.includes(id) ? PLUG_FACTOR : 1) } : {}),
-      // A scenario holding a terminal somewhere other than its record says.
-      // Only the OVERRIDDEN ones are passed: everything else keeps the value
-      // K7 compiled onto its node, so a plant with no scenario is untouched.
-      ...(s.scenario ? { boundaryPressure: (tag: string) =>
-        s.terminals[tag]?.source === 'scenario' ? s.terminals[tag]!.barA : undefined } : {}),
+      // What is holding each terminal AT THIS INSTANT — a scenario override, a
+      // declared runtime signal, or neither. Resolved against the engine's own
+      // clock; there is no second timebase. Only the terminals actually being
+      // held somewhere else are passed, so a plant with no scenario and no
+      // signal keeps exactly the value K7 compiled onto its node.
+      ...(held.size > 0
+        ? { boundaryPressure: (tag: string) => held.get(tag) }
+        : {}),
       ...(warm ? { warmStart: warm } : {}),
     })
     // carried forward only from a solve that actually landed
@@ -366,7 +382,20 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
       ...(hyd.reason ? { reason: hyd.reason } : {}),
       cavitating: hyd.cavitating, undetermined: hyd.undetermined,
     }
-    set({ t, tags, quality, pipeFlows: hyd.pipeFlow, pipePressures, branchFlows, equipFlows, hydraulic, alarms, journal, historyVersion: s.history.version, shelved })
+    // Republish the resolved terminals ONLY when one actually moved. A ramp
+    // changes them every tick and a static plant never does; handing React a
+    // fresh object either way would re-render the scenario page five times a
+    // second for nothing.
+    const terminalsChanged = resolved.size !== Object.keys(s.terminals).length ||
+      [...resolved].some(([tag, r]) => {
+        const was = s.terminals[tag]
+        return was === undefined || was.barA !== r.barA || was.source !== r.source
+      })
+    set({
+      t, tags, quality, pipeFlows: hyd.pipeFlow, pipePressures, branchFlows, equipFlows,
+      hydraulic, alarms, journal, historyVersion: s.history.version, shelved,
+      ...(terminalsChanged ? { terminals: Object.fromEntries(resolved) } : {}),
+    })
   },
   applyScenario: (scenario) => {
     const m = model

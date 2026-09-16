@@ -101,6 +101,9 @@ const POWER: Factors = { kw: 1, w: 1e-3, mw: 1e3, hp: 0.7457, ps: 0.7355 }
 /** Pressure -> bar (gauge; this model does not distinguish gauge from absolute). */
 const PRESSURE: Factors = { bar: 1, barg: 1, bara: 1, kpa: 1 / 100, mpa: 10, pa: 1e-5, psi: 1 / 14.5038, psig: 1 / 14.5038, atm: 1.01325 }
 /** Temperature -> °C. */
+/** Time -> SECONDS, the simulation's own time unit. */
+const TIME: Factors = { s: 1, sec: 1, secs: 1, second: 1, seconds: 1, min: 60, mins: 60, minute: 60, minutes: 60, h: 3600, hr: 3600, hrs: 3600, hour: 3600, hours: 3600 }
+
 const TEMPERATURE: Factors = { degc: 1, c: 1, degk: (v: number) => v - 273.15, k: (v: number) => v - 273.15, degf: (v: number) => (v - 32) / 1.8, f: (v: number) => (v - 32) / 1.8 }
 
 /**
@@ -161,3 +164,97 @@ export function operatingPressure(raw: string | undefined): number | undefined {
  * against each other so they cannot drift.
  */
 export const ATMOSPHERIC_BAR = 1
+
+
+// ── Runtime boundary signals ────────────────────────────────────────────────
+
+/**
+ * HOW A TERMINAL'S PRESSURE BEHAVES DURING A RUN.
+ *
+ * Declared on the engineering record, never guessed from a tag name. A terminal
+ * that declares nothing is STATIC, which is what every terminal drawn before
+ * K10 is and what most of them should stay.
+ *
+ * Deliberately three shapes and no more. A boundary that moves has to move
+ * DETERMINISTICALLY or a simulation stops being reproducible, and these three
+ * cover the training cases — a utility that sits where it is, one that trips,
+ * one that sags — without implying a utility-network model the product does not
+ * have.
+ */
+export type BoundarySignalKind = 'constant' | 'step' | 'ramp'
+
+export interface BoundarySignal {
+  kind: BoundarySignalKind
+  /** bar ABSOLUTE, where it starts: the record's operating pressure. */
+  fromBarA: number
+  /** bar ABSOLUTE, where it ends. Same as `fromBarA` for `constant`. */
+  toBarA: number
+  /** Seconds of SIMULATION time at which a step happens, or a ramp begins. */
+  atS: number
+  /** Seconds a ramp takes. Zero for `constant` and `step`. */
+  overS: number
+}
+
+/** Why a declared signal cannot be used. `undefined` means it can. */
+export type BoundarySignalError = string
+
+/**
+ * Read a terminal's runtime pressure behaviour off its record.
+ *
+ * Returns `undefined` when the record declares none — a STATIC terminal, and
+ * the overwhelming majority. Returns a string when it declares one that cannot
+ * be used, because a malformed signal must be REPORTED rather than quietly
+ * treated as static: somebody has said this boundary moves, and it will not.
+ */
+export function boundarySignal(
+  fields: Record<string, string> | undefined,
+): BoundarySignal | BoundarySignalError | undefined {
+  const raw = fields?.['design.boundarySignal']?.trim().toLowerCase()
+  if (raw === undefined || raw === '') return undefined
+
+  const kind = raw as BoundarySignalKind
+  if (kind !== 'constant' && kind !== 'step' && kind !== 'ramp') {
+    return `"${raw}" is not a boundary signal. Use constant, step or ramp.`
+  }
+  const fromBarA = operatingPressure(fields?.['design.operatingPressure'])
+  if (fromBarA === undefined || !Number.isFinite(fromBarA)) {
+    return 'a runtime-variable terminal needs an Operating pressure to start from.'
+  }
+  if (kind === 'constant') return { kind, fromBarA, toBarA: fromBarA, atS: 0, overS: 0 }
+
+  const toRaw = fields?.['design.boundarySignalTo']
+  const toBarA = operatingPressure(toRaw)
+  if (toBarA === undefined || !Number.isFinite(toBarA)) {
+    return `a ${kind} needs a valid "Boundary signal to" pressure; "${toRaw ?? ''}" is not one.`
+  }
+  /**
+   * ABSENT is not the same as UNREADABLE.
+   *
+   * No "at" means the change happens from the start, which is a reasonable
+   * default. An "at" that cannot be read is a statement nobody can act on, and
+   * defaulting it to zero would silently move the event to a time the record
+   * does not say — which is the coercion this whole module exists to avoid.
+   */
+  const atRaw = fields?.['design.boundarySignalAt']
+  const stated = atRaw !== undefined && atRaw.trim() !== ''
+  const atS = stated ? seconds(atRaw) : 0
+  if (atS === undefined || !Number.isFinite(atS) || atS < 0) {
+    return `"${atRaw ?? ''}" is not a time this model can use.`
+  }
+  if (kind === 'step') return { kind, fromBarA, toBarA, atS, overS: 0 }
+
+  const overRaw = fields?.['design.boundarySignalOver']
+  const overS = seconds(overRaw)
+  if (overS === undefined || !Number.isFinite(overS)) {
+    return `a ramp needs a valid duration; "${overRaw ?? ''}" is not one.`
+  }
+  if (overS < 0) return `a ramp cannot take ${overS} s. A duration is not negative.`
+  return { kind, fromBarA, toBarA, atS, overS }
+}
+
+/** A duration or an instant, in SECONDS. A bare number is seconds. */
+export function seconds(raw: string | undefined): number | undefined {
+  const q = parseQuantity(raw)
+  if (q === null) return undefined
+  return convert(q, TIME, 1)
+}

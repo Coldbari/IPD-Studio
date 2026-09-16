@@ -8,6 +8,30 @@ All notable changes to IPD Studio. Format follows
 
 ### Added
 
+- **A battery limit can change during a run.** A terminal's engineering record
+  may declare that its pressure is `constant`, `step`s at a stated time, or
+  `ramp`s over a stated duration — a utility header that trips, or sags when the
+  neighbouring unit starts up. A terminal that declares nothing is static, which
+  is what every drawing made before this is.
+
+  It is **causal**: the boundary goes into the hydraulic solve and the pump's
+  operating point, the transmitters, the inventory and the alarms all come back
+  out of it. Nothing writes a PT, an FT or a level to represent the change.
+
+  It is **deterministic**: a signal is a pure function of its declaration and
+  the simulation clock, with no state and no second timebase, so the same run
+  twice is the same run.
+
+  An **operator override still wins** over a declared signal — and the page
+  shows which signal is being overridden.
+
+- `terminal-bad-signal` reports a declared signal that cannot be used. Unlike a
+  missing pressure, this is a statement that is wrong rather than absent: the
+  record describes behaviour the simulation will not produce.
+
+
+### Added
+
 - **A Scenario page for the operator.** What the plant is doing today and what
   its records say it is, side by side, for every tagged terminal: the
   engineering pressure, the one actually in force, and which of the two it is.

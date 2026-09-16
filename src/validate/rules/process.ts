@@ -5,7 +5,7 @@
 import type { Rule } from '../rules'
 import { finding } from '../rules'
 import { edgesOf, neighboursOf } from '../../model/projectIndex'
-import { operatingPressure, processFor } from '../../model/processData'
+import { boundarySignal, operatingPressure, processFor } from '../../model/processData'
 import { DEFAULTS } from '../../hmi/sim/units'
 import { suctionFor } from '../../model/suction'
 import { TERMINAL_SYMBOLS } from '../../hmi/sim/tags'
@@ -257,8 +257,44 @@ export const terminalBadPressure: Rule = {
 const isTerminalWidget = (w: { type: string; props?: Record<string, unknown> }): boolean =>
   w.type === 'equip' && TERMINAL_SYMBOLS.has(typeof w.props?.symbolId === 'string' ? w.props.symbolId : '')
 
+/**
+ * A TERMINAL THAT SAYS IT MOVES, AND CANNOT.
+ *
+ * Declaring a runtime boundary signal is an assertion that this connection
+ * changes during a run. If the declaration cannot be evaluated — an unknown
+ * kind, a missing end pressure, a duration that is not a duration — then the
+ * boundary silently does not move, and a training scenario built around it
+ * quietly does not happen. That is worth saying.
+ *
+ * It is `critical` rather than a warning because, unlike a missing pressure,
+ * this is a statement that is WRONG rather than absent: the record describes
+ * behaviour the simulation will not produce.
+ */
+export const terminalBadSignal: Rule = {
+  id: 'terminal-bad-signal',
+  title: 'Terminals whose runtime boundary signal cannot be used',
+  severity: 'critical',
+  discipline: 'process',
+  why: 'A declared boundary signal that cannot be evaluated means the terminal stays still while its record says it moves. The scenario built around it will not happen, and nothing else would say so.',
+  run(ix) {
+    const out = []
+    const seen = new Set<string>()
+    for (const screen of ix.doc.hmiScreens ?? []) {
+      for (const w of screen.widgets) {
+        if (!isTerminalWidget(w) || !w.tag || seen.has(w.tag)) continue
+        seen.add(w.tag)
+        const sig = boundarySignal(ix.doc.registry?.[w.tag]?.fields)
+        if (typeof sig !== 'string') continue // absent (static) or valid
+        out.push(finding(terminalBadSignal, w.tag,
+          `${w.tag} declares a runtime boundary signal that cannot be used — ${sig} It is being held at its stated operating pressure instead.`))
+      }
+    }
+    return out
+  },
+}
+
 export const PROCESS_RULES: Rule[] = [
   noRelief, lineNoService, tankCapacityDefaulted,
   pumpSuctionInsufficient, pumpSuctionUnsupplied,
-  terminalNoPressure, terminalBadPressure,
+  terminalNoPressure, terminalBadPressure, terminalBadSignal,
 ]

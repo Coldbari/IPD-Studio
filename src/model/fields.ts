@@ -157,6 +157,13 @@ export const FIELD_CATALOG: Record<EntityKind, FieldSection[]> = {
         { key: 'design.insulation', label: 'Insulation' },
         { key: 'design.tracing', label: 'Tracing' },
         { key: 'design.testPressure', label: 'Test pressure' },
+        // A battery limit whose pressure MOVES during a run declares it here.
+        // Absent means static, which is what a terminal is unless it says
+        // otherwise — see `boundarySignal` in model/processData.ts.
+        { key: 'design.boundarySignal', label: 'Boundary signal (constant/step/ramp)' },
+        { key: 'design.boundarySignalTo', label: 'Boundary signal to' },
+        { key: 'design.boundarySignalAt', label: 'Boundary signal at' },
+        { key: 'design.boundarySignalOver', label: 'Boundary signal over' },
       ],
     },
   ],
