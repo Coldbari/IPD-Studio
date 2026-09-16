@@ -13,6 +13,7 @@ import type { SeriesWindow } from './sim/history'
 import { QUALITY_LABEL, hasNumber } from './sim/quality'
 import type { Quality } from './sim/quality'
 import { EQUIP_LABEL, equipmentState } from './sim/state'
+import { ENVELOPE_SEVERITY } from './sim/envelope'
 import type { ThemeTokens } from './theme'
 import { SCALE, THEMES } from './theme'
 
@@ -167,6 +168,8 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
   const history = useSimStore((s) => s.history)
   useSimStore((s) => s.historyVersion)
   const flow = useSimStore((s) => s.equipFlows[tag])
+  /** K13: where this machine is being run, straight off the solve. */
+  const envelope = useSimStore((s) => s.pumpEnvelopes[tag])
   const processView = useSimStore((s) => s.processView)
   const pipeFlows = useSimStore((s) => s.pipeFlows)
   const write = useSimStore((s) => s.writeTag)
@@ -265,7 +268,33 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
             {t.SPD !== undefined && (
               <Value label="Speed command" value={t.SPD} unit="%" digits={0} />
             )}
-            {flow !== undefined && <Value label="Flow" value={flow} unit="m³/h" />}
+            {/* THE MACHINE'S OWN SIGNED FLOW where the solve has one, in
+                preference to the branch magnitude: a pump running backwards
+                must not read as one running forwards. */}
+            {(envelope?.flowM3h ?? flow) !== undefined && (
+              <Value label="Flow" value={envelope?.flowM3h ?? flow} unit="m³/h" />
+            )}
+            {/* THE OPERATING ENVELOPE. Not a new page and not a new engine —
+                one line saying whether the solved operating point is somewhere
+                the engineering record can stand behind, and LIMIT UNKNOWN when
+                the record states no minimum rather than a verdict with no data
+                behind it. A drive on its way somewhere is a ramp, not a fault,
+                and carries no tone. */}
+            {envelope && (
+              <div className="fp-kv" data-testid="fp-envelope"
+                data-state={envelope.state} data-severity={ENVELOPE_SEVERITY[envelope.state] ?? 'none'}>
+                <span className="k">Operating envelope</span>
+                <span className="v" style={{
+                  color: ENVELOPE_SEVERITY[envelope.state] === 'error' ? theme.alarmHigh
+                    : ENVELOPE_SEVERITY[envelope.state] === 'warning' ? theme.alarmMedium
+                    : ENVELOPE_SEVERITY[envelope.state] === 'info' ? theme.textMuted
+                    : theme.textSecondary,
+                }}>{envelope.state}</span>
+              </div>
+            )}
+            {envelope?.minFlowM3h !== undefined && (
+              <Value label="Minimum flow" value={envelope.minFlowM3h} unit="m³/h" />
+            )}
           </Section>
           <Section title="Command">
             <div className="fp-row">

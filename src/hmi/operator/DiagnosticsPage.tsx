@@ -12,6 +12,7 @@ import { measurementRows, worstByTag } from './summary'
 import { useQa } from '../../validate/live'
 import { diagnosticsFor, CATEGORY_LABEL, DIAGNOSTIC_CATEGORIES, SEVERITY_LABEL } from '../../model/diagnostics'
 import { scenarioFindings } from '../sim/scenario'
+import { envelopeFindings } from '../sim/envelope'
 import type { DiagnosticCategory, DiagnosticFinding, DiagnosticReport, DiagnosticSeverity } from '../../model/diagnostics'
 import { locateHmi } from '../locate'
 
@@ -73,6 +74,16 @@ export default function DiagnosticsPage({ onJumpTag }: { onJumpTag(tag: string):
   const [section, setSection] = useState<Section>('live')
   // the runtime half of the diagnostics story: overrides that are not in effect
   const scenario = scenarioFindings(useSimStore((st) => st.scenarioProblems))
+  /**
+   * K13: where each pump is being run, as findings.
+   *
+   * On the LIVE section because that is what it is — a condition of the plant
+   * as it stands this second, which changes when a valve moves. It is not an
+   * engineering finding: the record is not wrong, the machine is being operated
+   * somewhere the record cannot vouch for. Mixing the two would make a
+   * configuration list blink as the plant ran.
+   */
+  const envelope = envelopeFindings(useSimStore((st) => st.pumpEnvelopes))
   const tags = useSimStore((s) => s.tags)
   const defs = useSimStore((s) => s.defs)
   const quality = useSimStore((s) => s.quality)
@@ -204,6 +215,22 @@ export default function DiagnosticsPage({ onJumpTag }: { onJumpTag(tag: string):
           {rows.length} instruments · {degraded} not good · {unbound} without a process model
         </span>
       </div>
+
+      {envelope.length > 0 && (
+        <section className="op-section" data-testid="diag-envelope">
+          <h4>Equipment operating envelope</h4>
+          <ul className="scn-problems">
+            {envelope.map((f) => (
+              <li key={f.id} data-testid="diag-env-row" data-tag={f.tag} data-severity={f.severity}>
+                <span className="scn-sev" style={{ color: SEVERITY_TONE[f.severity] }}>
+                  {SEVERITY_LABEL[f.severity]}
+                </span>
+                <strong>{f.tag}</strong> {f.message}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <div className="op-wrap">
         <table className="op-table">

@@ -113,6 +113,10 @@ export const FIELD_CATALOG: Record<EntityKind, FieldSection[]> = {
         // fixed-speed machine, which is what every pump drawn before K12 is.
         { key: 'duty.vsd', label: 'Variable speed drive' },
         { key: 'duty.minSpeed', label: 'Minimum speed' },
+        // The flow below which the machine should not be run continuously. A
+        // datasheet figure and nothing else: absent means the record has not
+        // stated one, and nothing derives it from the capacity above.
+        { key: 'duty.minFlow', label: 'Minimum flow' },
         { key: 'duty.designPressure', label: 'Design pressure' },
         { key: 'duty.designTemperature', label: 'Design temperature' },
       ],

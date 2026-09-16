@@ -52,6 +52,17 @@ export interface ProcessEngineering {
    * nothing here invents a number for it.
    */
   minSpeedPct?: number
+  /**
+   * Minimum continuous flow, m³/h (`duty.minFlow`).
+   *
+   * A CENTRIFUGAL PUMP HAS A LOW-FLOW LIMIT, and it is a manufacturer's
+   * number — recirculation, temperature rise and radial thrust all depend on
+   * the impeller, not on anything this model can see. So it is read and never
+   * derived: absent means the record has not stated one, and no fraction of
+   * `ratedFlowM3h` is substituted for it. The simulator then says it cannot
+   * tell whether the machine is below minimum flow, which is the truth.
+   */
+  minFlowM3h?: number
   /** Design pressure, bar (`design.pressure`, else `duty.designPressure`). */
   designPressureBar?: number
   /** Operating temperature, °C (`design.operatingTemperature`, else `design.temperature`). */
@@ -147,6 +158,7 @@ export function processFor(registry: Registry | undefined, tag: string | undefin
     operatingPressureBarA: operatingPressure(f['design.operatingPressure']),
     vsd: truthy(f['duty.vsd']),
     minSpeedPct: percent(f['duty.minSpeed']),
+    minFlowM3h: convert(q('duty.minFlow'), FLOW, 1),
   }
 }
 

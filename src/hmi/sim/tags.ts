@@ -116,6 +116,17 @@ export interface TagDef {
    * is imposed; no figure is invented for it.
    */
   minSpeedPct?: number
+  /**
+   * Minimum continuous flow, m³/h, from `duty.minFlow`.
+   *
+   * NEVER DEFAULTED, and that is the whole point of it. `ratedFlow` and `head`
+   * above fall back to `DEFAULTS` so an unspecified demo pump still turns; a
+   * minimum-flow limit falls back to NOTHING, because a limit nobody stated is
+   * not a limit and comparing a solved flow against an invented one would make
+   * the resulting diagnostic fiction. Absent means the operating-envelope
+   * derivation reports LIMIT UNKNOWN instead of a verdict.
+   */
+  minFlowM3h?: number
   /** Heater duty kW. Its PRESENCE is what marks a driven tag as a heater
    *  rather than a pump, so the flow network never treats it as a driver. */
   heaterKw?: number
@@ -201,6 +212,8 @@ function defFor(w: HmiWidget, registry: Registry | undefined): TagDef | null {
         // nothing is fixed-speed and behaves exactly as it always has
         ...(proc.vsd === true ? { vsd: true } : {}),
         ...(proc.minSpeedPct !== undefined ? { minSpeedPct: proc.minSpeedPct } : {}),
+        // no `?? DEFAULTS…` here, deliberately: see `minFlowM3h`
+        ...(proc.minFlowM3h !== undefined ? { minFlowM3h: proc.minFlowM3h } : {}),
       }
     }
     case 'valve':

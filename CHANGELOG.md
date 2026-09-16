@@ -24,6 +24,28 @@ All notable changes to IPD Studio. Format follows
 - `pump-speed-config` reports a minimum speed configured on a machine with no
   drive to turn down, or a turndown that is not a readable percentage.
 
+- **Pump operating envelope.** The simulator now says when a machine is being
+  run somewhere the model cannot stand behind: **dead-headed** — turning,
+  making head and passing nothing; **reverse flow** — fluid coming back through
+  a turning machine; or **below minimum flow**, where a record states one.
+
+  A new `duty.minFlow` field carries that limit, and it is **never derived**. A
+  machine whose record states none reads **LIMIT UNKNOWN**, which is what the
+  simulator actually knows — not a percentage of a rated capacity that is
+  itself a default on most drawings.
+
+  **Detection only.** Nothing trips, stops or recirculates: a minimum-flow trip
+  is real equipment with a setting and a delay, and neither is on any record
+  here.
+
+  The state is on the pump faceplate and on the Diagnostics page's live
+  section, and a drive on its way to a new speed is a ramp rather than a fault.
+  A pump's faceplate flow is now the machine's own **signed** flow, so one
+  running backwards no longer reads as one running forwards.
+
+- `pump-min-flow-config` reports a minimum flow that cannot be read, is
+  negative, or leaves the machine no operating range.
+
 
 ### Added
 

@@ -867,3 +867,49 @@ tsc -b clean · production build clean
 | P2 | No deceleration time on the record; the drive rate is used both ways. |
 | P2 | Still no manufacturer equipment data — valve resistance is one calibrated constant for every valve. |
 | P2 | No scenario library (K9); boundary dynamics are pressure only (K10); mixing unsupported (K5). |
+
+
+---
+
+## 27. Step K13 — pump operating envelope
+
+K12's own recommended next phase, taken in the order it asked for: not the
+automatic controller, but the protection layer that has to exist before one.
+
+The inventory came first and found the thing that shaped the whole phase:
+**`ratedFlow` and `head` fall back to simulator defaults**, so any minimum-flow
+limit derived as a percentage of rated capacity would, on most drawings, be a
+percentage of a number the simulator made up. So `duty.minFlow` is read and
+never derived, and a machine with none stated reads `LIMIT UNKNOWN`.
+
+Three concepts kept apart: the solve decides the operating point, the record
+decides the envelope, and **protection does not exist yet**. A test runs a
+machine dead-headed for sixty seconds and asserts it is still running.
+
+No invented thresholds. "Nothing is moving" is `SHUT_LEAK_MAX`, the solver's
+own published ceiling on a blocked element; "turning" is `shaft > 0`, the exact
+test `pumpFlow` uses. Signed throughout, and the reverse-flow case is the proof
+it matters: the envelope reports −29.2 m³/h while the transmitter on the same
+line reads +29.2, because an FE does not know which way round it was installed.
+
+`faultOfNodes` was split out of `processFaultOf` so a pump's nozzles and a
+measurement's binding ask the same question the same way.
+
+### State after K13
+
+```text
+3456 tests passing · 7 skipped · 0 failing
+tsc -b clean · production build clean
+207 Playwright passing · 2 failing, both pre-existing on a5b9793
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P1 | The envelope now exists, so an automatic flow-or-pressure loop cascaded onto speed is the next coherent step — with its own tuning discussion. |
+| P2 | Detection only: no protective action, because no engineering field defines one. No time delay on a violation, for the same reason. |
+| P2 | Minimum flow is the whole envelope — no maximum continuous flow, no preferred/allowable operating region, no NPSH margin as a bound. |
+| P2 | The consequence of low-flow operation (temperature rise, recirculation) is not modelled; only the condition is reported. |
+| P2 | Still no manufacturer equipment data — valve resistance is one calibrated constant for every valve, and `duty.speed` is text nobody reads. |
+| P2 | No scenario library (K9); boundary dynamics are pressure only (K10); mixing unsupported (K5). |

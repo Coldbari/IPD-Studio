@@ -343,9 +343,65 @@ export const pumpSpeedConfig: Rule = {
   },
 }
 
+/**
+ * A MINIMUM FLOW THAT IS NOT A FLOW.
+ *
+ * `duty.minFlow` is the one number K13's operating-envelope derivation
+ * compares a solved flow against, and it is never derived from anything else —
+ * so a record that states one the reader cannot use leaves the machine at
+ * LIMIT UNKNOWN while its record looks filled in. That is the worst of both:
+ * somebody has done the work and the simulator is not using it.
+ *
+ * Also catches the two values that cannot be true of a pump: a negative
+ * minimum, and a minimum at or above the machine's own rated capacity — a
+ * machine that may never be run below its duty point has no operating range at
+ * all.
+ */
+export const pumpFlowConfig: Rule = {
+  id: 'pump-min-flow-config',
+  title: 'Minimum flow that cannot be used',
+  severity: 'warning',
+  discipline: 'process',
+  why: 'A minimum-flow limit the reader cannot use is not a limit: the simulator reports the machine as having no stated minimum while the record looks complete.',
+  run(ix) {
+    const out = []
+    const seen = new Set<string>()
+    for (const screen of ix.doc.hmiScreens ?? []) {
+      for (const w of screen.widgets) {
+        if (w.type !== 'pump' && w.type !== 'equip') continue
+        if (!w.tag || seen.has(w.tag)) continue
+        seen.add(w.tag)
+        const stated = ix.doc.registry?.[w.tag]?.fields?.['duty.minFlow']
+        if (stated === undefined || stated.trim() === '') continue
+        const proc = processFor(ix.doc.registry, w.tag)
+        if (proc.minFlowM3h === undefined) {
+          out.push(finding(pumpFlowConfig, w.tag,
+            `${w.tag}'s minimum flow reads "${stated}", which is not a flow this model can read. Give it one — "5 m³/h".`))
+          continue
+        }
+        if (proc.minFlowM3h < 0) {
+          out.push(finding(pumpFlowConfig, w.tag,
+            `${w.tag}'s minimum flow is ${proc.minFlowM3h} m³/h. A flow limit is not negative.`))
+          continue
+        }
+        // only against a STATED capacity: `ratedFlow` falls back to a
+        // simulator default, and checking a record against a default would be
+        // reporting the drawing for something the drawing does not say
+        const rated = ix.doc.registry?.[w.tag]?.fields?.['duty.capacity']
+        if (rated !== undefined && rated.trim() !== '' && proc.ratedFlowM3h !== undefined
+            && proc.minFlowM3h >= proc.ratedFlowM3h) {
+          out.push(finding(pumpFlowConfig, w.tag,
+            `${w.tag}'s minimum flow of ${proc.minFlowM3h} m³/h is at or above its rated capacity of ${proc.ratedFlowM3h} m³/h, which leaves it no operating range.`))
+        }
+      }
+    }
+    return out
+  },
+}
+
 export const PROCESS_RULES: Rule[] = [
   noRelief, lineNoService, tankCapacityDefaulted,
   pumpSuctionInsufficient, pumpSuctionUnsupplied,
   terminalNoPressure, terminalBadPressure, terminalBadSignal,
-  pumpSpeedConfig,
+  pumpSpeedConfig, pumpFlowConfig,
 ]

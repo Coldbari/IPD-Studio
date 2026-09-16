@@ -2109,3 +2109,231 @@ fixed-speed machine anywhere moved.
   both directions, stated as an assumption.
 - **No speed above rated.** The curve is not defined there.
 - **No motor data** — no efficiency, no power draw, no minimum-flow protection.
+
+## K13 — pump operating envelope
+
+K12 made the shaft commandable and closed with the obvious next question: a
+VSD with no protection layer is half a feature. So before anything commands
+speed automatically, the simulator has to be able to say **when a machine is
+being run somewhere the model cannot stand behind**.
+
+### What the engineering model already held — the inventory, first
+
+| Concept | Where it lives | Status before K13 |
+| --- | --- | --- |
+| rated flow | `duty.capacity` → `ratedFlowM3h` | present, **defaults to 50 m³/h** |
+| rated head | `duty.head` → `headBar` | present, **defaults to 4 bar** |
+| shutoff head | *derived*, `shutoffFromDuty(headAtRated)` | not a field, and should not be |
+| runout / maximum flow | *derived*, `RUNOUT_FACTOR × rated × r` | not a field, and should not be |
+| driver power | `duty.power` → `powerKw` | present |
+| rated speed | `duty.speed` | present as **text**; nothing reads it |
+| variable speed | `duty.vsd`, `duty.minSpeed` | K12 |
+| **minimum flow** | — | **absent. Nothing in the model held one.** |
+| pump status | `RUN`, `RAMP`, `FAULT` runtime tags | K11/K12 |
+| protection fields | — | **absent, and still absent after K13** |
+
+Two of those are load-bearing for everything below.
+
+**`ratedFlow` and `head` FALL BACK to simulator defaults.** An unspecified pump
+still turns, at 50 m³/h and 4 bar, so that a demo screen moves. That is fine
+for a demo and fatal for a limit: a minimum flow computed as a percentage of
+rated capacity would, on most drawings, be a percentage of a number the
+simulator made up. It would look like engineering data and be nothing of the
+kind.
+
+**Maximum flow was deliberately NOT added as a field.** Runout is already
+defined by the curve at `1.5 × rated × r`. A separate maximum-flow field would
+be a second statement of the same physical fact, free to contradict the first.
+
+### Three concepts, kept apart
+
+```text
+A  HYDRAULIC OPERATING POINT   Q, the pressures either side, the head
+                               the curve makes at the shaft speed reached
+                                    ↑ the solve decides all of it
+B  ENGINEERING ENVELOPE        the region the RECORD says it may be run in
+                                    ↑ one number: duty.minFlow
+C  PROTECTIVE ACTION           what the plant does about a violation
+                                    ↑ K13 does NONE of this
+```
+
+`sim/envelope.ts` reads A, compares against B, and performs no C. Nothing in it
+writes a tag, stops a machine or changes a flow — and a test runs a machine
+dead-headed for sixty seconds and asserts it is still running, still commanded
+and still un-tripped. **A minimum-flow trip is a real piece of plant equipment
+with a setting and a time delay.** Inventing one because real plants usually
+have one is exactly the fabrication this programme exists to remove.
+
+### The one new engineering field
+
+| Field | Meaning |
+| --- | --- |
+| `duty.minFlow` | Minimum continuous flow, below which the machine should not be run |
+
+Read through the existing `FLOW` table, so `5 m³/h`, `1.4 l/s` and `22 gpm` all
+work. **Never defaulted.** `ratedFlow` above falls back so a demo pump turns;
+this falls back to nothing, because a limit nobody stated is not a limit.
+
+### No invented thresholds either
+
+| Question | Answer | Where it comes from |
+| --- | --- | --- |
+| "is it turning?" | `shaft > 0` | the exact test `pumpFlow` itself uses |
+| "is anything moving?" | `|Q| ≤ SHUT_LEAK_MAX` | the solver's own published ceiling on what a BLOCKED element passes — a constant that exists so a caller can say "nothing is moving" precisely |
+| "is it making head?" | `P_discharge − P_suction > 0` | the solved pressure field |
+
+Not one number in this phase was chosen for convenience.
+
+### The states, in precedence order
+
+```text
+UNKNOWN              the solve cannot stand behind the numbers
+STOPPED              the shaft is at rest
+REVERSE FLOW         fluid coming BACK through a turning machine
+DEAD-HEAD            turning, making head, passing nothing
+BELOW MINIMUM FLOW   below the minimum the RECORD states
+LIMIT UNKNOWN        running forward, and no minimum is stated
+NORMAL               running forward, at or above the stated minimum
+```
+
+`UNKNOWN` is the same question a measurement gets, asked of the pump's own two
+nozzles: `faultOfNodes` was split out of `processFaultOf` so the two bindings
+share one rule rather than growing a second opinion about when a number can be
+trusted.
+
+### Signed, throughout
+
+The pump edge runs suction → discharge, so **positive is the machine doing its
+job and negative is fluid coming back through it.** No `Math.abs` stands
+between the solve and the verdict.
+
+Measured, with the discharge boundary held at 10 barg: the envelope reports
+**−29.2 m³/h and REVERSE FLOW**, while the flow transmitter on the same line
+reads **+29.2 m³/h** — because a flow element does not know which way round it
+was installed, and this is exactly why §11 requires the diagnostic to read the
+solved quantity rather than the instrument.
+
+The faceplate's pump flow now comes from the machine's own signed edge rather
+than the branch magnitude it used before, for the same reason.
+
+### Causal chain
+
+```text
+operator / scenario ─► SPD ─► speedTarget ─► shaft dynamics ─► RAMP
+boundary signal / scenario ─► terminal pressure
+valve command ─► POS ─► resistance
+                              ↓
+                       solveHydraulics          ← unchanged
+                              ↓
+        SIGNED pump-edge flow · node pressures · convergence flags
+                              ↓
+                  pumpEnvelopes(model, defs, tags, solve)
+                              ↓                   ↑
+                              ↓            duty.minFlow, duty.minSpeed
+                              ↓             (engineering record, read-only)
+                     envelopeFindings ─► faceplate line · Diagnostics LIVE block
+```
+
+### What the boundary sweep measures
+
+Holding BL-D progressively higher against a 40 m³/h, 35 m machine at full
+speed:
+
+| BL-D | Q, m³/h | head, bar | state |
+| --- | --- | --- | --- |
+| 1 barg | 43.2 | 2.98 | NORMAL |
+| 3 barg | 35.5 | 4.02 | NORMAL |
+| 5 barg | 25.6 | 5.05 | NORMAL |
+| 6.5 barg | 14.3 | 5.83 | NORMAL |
+| 7 barg | 7.3 | 6.09 | BELOW MINIMUM FLOW |
+| 8 barg | −15.7 | 6.60 | REVERSE FLOW |
+| 10 barg | −29.2 | 7.64 | REVERSE FLOW |
+
+The machine is pushed back along its own curve by the plant in front of it.
+**The test asserts the ORDER of the states and the monotonicity, never the
+pressure at which each appears** — that is the solve's business, and writing it
+down would be a second model of the same thing.
+
+### Diagnostics
+
+| Finding | Severity | Fires when |
+| --- | --- | --- |
+| `pump-deadhead` | `error` | turning, making head, passing nothing |
+| `pump-reverse-flow` | `error` | flow negative through a turning machine |
+| `pump-below-min-flow` | `warning` | below the **stated** minimum |
+| `pump-speed-out-of-envelope` | `warning` | speed COMMAND outside the declared drive range while the shaft is held at the nearest end |
+| `pump-min-flow-unknown` | `info` | running forward, no minimum on the record |
+| `pump-min-flow-config` | `warning` (Checks) | a stated minimum that is unreadable, negative, or at/above the machine's own **stated** capacity |
+
+Severity is the existing `DiagnosticSeverity`; no new hierarchy. Each message
+carries TAG, condition, actual, limit-if-known and source, e.g.
+
+```text
+P-1  is below minimum flow. Actual 0.3 m³/h, minimum 10.0 m³/h.
+     Source: engineering record.
+
+P-1  minimum-flow limit unavailable. The simulator cannot determine whether
+     0.1 m³/h is below the manufacturer's minimum; no "Minimum flow" is
+     stated on its record.
+```
+
+`pump-min-flow-config` checks against a **stated** `duty.capacity` only —
+reporting a drawing against a simulator default would be reporting it for
+something it never said.
+
+### One finding that was NOT implemented
+
+`pump-speed-out-of-envelope` as a *hydraulic* condition. A VSD's steady shaft
+can never sit below its declared turndown: K12 clamps the target to the floor,
+so the only way below it is a ramp, and a ramp is not a violation. The
+finding exists only for the **command**, which genuinely can be asked for
+something the drive will not do. Nothing else in §6's candidate list is
+supported by data this model holds.
+
+### Operator presentation
+
+No new page. One line on the pump faceplate —
+
+```text
+Actual speed        42 %
+Speed command       40 %
+Flow              1.1 m³/h
+Operating envelope  BELOW MINIMUM FLOW
+Minimum flow      10.0 m³/h
+```
+
+— and one block at the top of the Diagnostics page's **LIVE** section, in the
+vocabulary that page already uses. It is on Live rather than Engineering
+deliberately: the record is not wrong, the machine is being operated somewhere
+the record cannot vouch for, and mixing the two would make a configuration list
+blink as the plant ran.
+
+**A colour is a severity.** NORMAL, STOPPED, LIMIT UNKNOWN and a drive mid-ramp
+all read in the ordinary text tone; the alarm palette is reserved for the two
+conditions that earn it. A test asserts a machine one second into a speed
+change reads NORMAL with no severity at all.
+
+### Gate
+
+```text
+3456 tests passing · 7 skipped · 0 failing      (+46)
+tsc -b clean · production build clean
+207 Playwright passing · 2 failing — the SAME two as on a5b9793
+```
+
+### Limitations
+
+- **Detection only.** Nothing trips, stops or recirculates. No protective
+  action exists because no engineering field defines one.
+- **Minimum flow is the whole envelope.** No maximum continuous flow, no
+  preferred operating region, no allowable operating region, no NPSH margin as
+  an envelope bound — the data for none of them is in the model.
+- **No time delay.** A violation is reported the instant the solve shows it. A
+  real minimum-flow trip has a delay, and a delay is a setting nobody stated.
+- **Most records state no minimum flow**, so most machines report `LIMIT
+  UNKNOWN`. That is the honest reading of an empty field, not a gap in the
+  detection.
+- **No temperature-rise or recirculation model.** The consequence of running
+  below minimum flow is not simulated; only the condition is reported.
+- **`duty.speed` is still text nobody reads.** Speed is a fraction of rated
+  throughout; there is no rpm anywhere in the runtime.

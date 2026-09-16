@@ -488,8 +488,22 @@ export function processFaultOf(
 ): ProcessFault | undefined {
   const nodes = hydraulicNodesOf(model, d)
   if (nodes === undefined) return undefined // nothing hydraulic behind this tag
-  // Worst first. A solve that did not converge invalidates every node in it,
-  // so there is no point asking which one is also cavitating.
+  return faultOfNodes(hyd, nodes)
+}
+
+/**
+ * The same question asked of NODES rather than of a tag's binding.
+ *
+ * Split out so that anything standing on a piece of the pressure field asks it
+ * ONCE, the same way — a measurement through `processFaultOf` above, a pump's
+ * own two nozzles through `sim/envelope.ts`. One rule, several bindings; the
+ * alternative is two places that decide when a number can be trusted and
+ * eventually disagree.
+ *
+ * Worst first. A solve that did not converge invalidates every node in it, so
+ * there is no point asking which one is also cavitating.
+ */
+export function faultOfNodes(hyd: SolveResult, nodes: Set<string>): ProcessFault | undefined {
   if (!hyd.converged) return 'unconverged'
   if (hyd.cavitating.some((n) => nodes.has(n))) return 'cavitating'
   if (hyd.undetermined.some((n) => nodes.has(n))) return 'undetermined'

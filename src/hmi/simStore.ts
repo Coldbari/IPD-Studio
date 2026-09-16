@@ -27,6 +27,8 @@ import type { SimSpeed } from './sim/units'
 import { History, qualityCode } from './sim/history'
 import type { ProcessRoute, ProcessViewModel } from './sim/processView'
 import { buildProcessView, processRoutes } from './sim/processView'
+import type { PumpEnvelope } from './sim/envelope'
+import { pumpEdgeMap, pumpEnvelopes } from './sim/envelope'
 
 /**
  * What the hydraulic solve managed this tick, published for the operator.
@@ -75,6 +77,14 @@ let rng = makeRng(SEED)
  * to improve on.
  */
 let warm: Record<string, number> | undefined
+/**
+ * Pump tag -> its own edge in the network, built once per run.
+ *
+ * Static for exactly the reason `processView` is: the topology changes when
+ * the drawing does, not when the plant runs. Rebuilding it per tick would walk
+ * every edge five times a second to learn something that cannot have changed.
+ */
+let pumpEdges = new Map<string, string>()
 
 /**
  * Runtime state lives OUTSIDE the doc store on purpose: sim ticks and operator
@@ -148,6 +158,15 @@ interface SimStoreState {
   processView: ProcessViewModel | null
   /** Live flow through each pump/valve tag — faceplate readout. */
   equipFlows: Record<string, number>
+  /**
+   * WHERE EACH PUMP IS BEING RUN — the K13 operating envelope, per tag.
+   *
+   * A derivation of the solve and the engineering records, not a store: every
+   * number in it is `hydraulic`'s or `defs`'s, and nothing writes back. It
+   * carries the SIGNED pump flow, which is the one place a magnitude would
+   * have hidden a real fault — a machine running backwards.
+   */
+  pumpEnvelopes: Record<string, PumpEnvelope>
   /** What the hydraulic solve managed this tick. Read it before trusting
    *  anything above that came out of it. */
   hydraulic: HydraulicStatus
@@ -262,16 +281,17 @@ function supSets(shelved: Record<string, number>, oos: Record<string, true>, tag
 
 export const useSimStore = create<SimStoreState>()((set, get) => ({
   mode: 'edit', playing: false, speed: 1, t: 0,
-  tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {},
+  tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, pumpEnvelopes: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {},
 
   enterRun: (screens, registry, fluids) => {
     model = buildSimModel(screens, registry)
     rng = makeRng(SEED)
     warm = undefined // a different plant's pressure field is not a guess
+    pumpEdges = pumpEdgeMap(model.hydraulic)
     const tags0 = initTags(model)
     // a fresh History per run: a new identity is how React learns the old
     // trend data is gone, and nothing from the previous run can leak forward
-    set({ mode: 'run', playing: true, t: 0, tags: tags0, defs: tagDefMap(model.defs), quality: qualityMap(model, tags0, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, ...(() => { const pv = buildProcessView(model.hydraulic, model.defs, model.controllers, fluids ?? []); return { processView: pv, routes: processRoutes(pv) } })(), equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, scenarioProblems: [],
+    set({ mode: 'run', playing: true, t: 0, tags: tags0, defs: tagDefMap(model.defs), quality: qualityMap(model, tags0, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, ...(() => { const pv = buildProcessView(model.hydraulic, model.defs, model.controllers, fluids ?? []); return { processView: pv, routes: processRoutes(pv) } })(), equipFlows: {}, pumpEnvelopes: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, scenarioProblems: [],
       terminals: Object.fromEntries(terminalPressures(model.hydraulic, null)),
       terminalSpec: Object.fromEntries(model.hydraulic.nodes
         .filter((n) => n.kind === 'boundary' && n.tag !== undefined)
@@ -287,7 +307,8 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
   exitRun: () => {
     model = null
     warm = undefined
-    set({ mode: 'edit', playing: false, t: 0, tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {} })
+    pumpEdges = new Map()
+    set({ mode: 'edit', playing: false, t: 0, tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, pumpEnvelopes: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {} })
   },
   playPause: () => set((s) => ({ playing: !s.playing })),
   setSpeed: (speed) => set({ speed }),
@@ -296,7 +317,7 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
     rng = makeRng(SEED)
     warm = undefined // RESET puts the plant back to its start: solve it afresh
     const fresh = initTags(model)
-    set({ t: 0, tags: fresh, quality: qualityMap(model, fresh, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], playing: true,
+    set({ t: 0, tags: fresh, quality: qualityMap(model, fresh, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, equipFlows: {}, pumpEnvelopes: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], playing: true,
       // RESET returns the plant to its engineering state, scenario included:
       // it is part of "where this run started", not part of the drawing
       scenario: null, scenarioProblems: [],
@@ -377,6 +398,14 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
       for (const p of b.pumps) equipFlows[p] = Math.max(equipFlows[p] ?? 0, f)
       for (const v of b.valves) equipFlows[v] = Math.max(equipFlows[v] ?? 0, f)
     }
+    /**
+     * WHERE EACH PUMP IS BEING RUN, this instant.
+     *
+     * Reads the SIGNED edge flow straight out of the solve — not `equipFlows`
+     * above, which is a branch magnitude and would report a machine running
+     * backwards as one running forwards.
+     */
+    const envelopes = pumpEnvelopes(m.hydraulic, m.defs, tags, hyd, pumpEdges)
     const hydraulic: HydraulicStatus = {
       converged: hyd.converged, residual: hyd.residual, iterations: hyd.iterations,
       ...(hyd.reason ? { reason: hyd.reason } : {}),
@@ -393,6 +422,7 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
       })
     set({
       t, tags, quality, pipeFlows: hyd.pipeFlow, pipePressures, branchFlows, equipFlows,
+      pumpEnvelopes: envelopes,
       hydraulic, alarms, journal, historyVersion: s.history.version, shelved,
       ...(terminalsChanged ? { terminals: Object.fromEntries(resolved) } : {}),
     })
