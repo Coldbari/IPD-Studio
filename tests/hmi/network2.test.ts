@@ -1,6 +1,32 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Copyright © 2026 Praharsh Nagpure — IPD Studio. Noncommercial use only;
+// commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
+
+/**
+ * MANIFOLDS: a header that fans out, and two feeds that fan in.
+ *
+ * This file used to test `solveFlows`, which split a pump's rating across its
+ * open legs in proportion to their conductance. That model is gone — K3.2
+ * removed it rather than keeping it beside the hydraulic solve — and a
+ * proportional split is not what a tee does anyway: it is an assumption ABOUT
+ * the answer, imposed instead of solved.
+ *
+ * The claims survive and get stronger. Where the old tests asserted a ratio
+ * this one asserts MASS BALANCE at the junction and the ORDERING the physics
+ * requires, both re-derived from the solved pressure field.
+ *
+ * `buildNetwork` is still live — the thermal model and the topology view read
+ * its branches — so its enumeration is still tested here directly.
+ */
+
 import { describe, expect, it } from 'vitest'
+import '../../src/symbols/lib/index'
 import type { HmiPipe, HmiScreen, HmiWidget } from '../../src/hmi/model'
-import { buildNetwork, pipeFlowMap, solveFlows } from '../../src/hmi/sim/network'
+import { buildNetwork } from '../../src/hmi/sim/network'
+import { buildProcessModel } from '../../src/hmi/sim/hydraulic/model'
+import { MASS_TOL, SHUT_LEAK_MAX, solveHydraulics } from '../../src/hmi/sim/hydraulic/solver'
+import type { SolveInputs } from '../../src/hmi/sim/hydraulic/solver'
+import { DEFAULTS } from '../../src/hmi/sim/units'
 
 const W = (id: string, type: HmiWidget['type'], x: number, y: number, w: number, h: number, tag?: string, props?: HmiWidget['props']): HmiWidget =>
   ({ id, type, x, y, w, h, tag, props })
@@ -8,11 +34,7 @@ const P = (id: string, pts: [number, number][]): HmiPipe => ({ id, points: pts.m
 const screen = (widgets: HmiWidget[], pipes: HmiPipe[]): HmiScreen =>
   ({ id: 's', name: 'S', theme: 'classic', widgets, pipes })
 
-// manifold: source -> P-1 -> junction symbol -> two valved lines -> TK-A / TK-B
-//   e1: (0,100)->(100,100) into pump at (100,80,56,56)
-//   e2: pump -> junction symbol at (300,90,12,12)
-//   e3: junction -> LV-A at (500,80) -> continues? separate pipes:
-// keep it simple: e3 junction->valveA, e4 valveA->tankA; e5 junction->valveB, e6 valveB->tankB
+// manifold: source -> P-1 -> junction -> two valved legs -> TK-A / TK-B
 const manifold = screen(
   [
     W('p1', 'pump', 100, 80, 56, 56, 'P-1'),
@@ -32,17 +54,18 @@ const manifold = screen(
   ],
 )
 
-const tags = (op: { a: number; b: number }, run = 1) => {
-  const fr = (v: string) => (v === 'LV-A' ? op.a / 100 : op.b / 100)
-  return {
-    frac: fr,
-    pump: (_p: string) => run,
-    level: (_t: string) => 50,
-  }
-}
+const inputs = (open: { a: number; b: number }, over: Partial<SolveInputs> = {}): SolveInputs => ({
+  valveOpen: (tag) => (tag === 'LV-A' ? open.a : open.b),
+  pumpSpeed: () => 1,
+  pumpRated: () => DEFAULTS.pumpFlowM3h,
+  pumpHead: () => DEFAULTS.pumpHeadBar,
+  vesselLevel: () => 50,
+  ...over,
+})
 
-describe('fan-out solver', () => {
+describe('a header that fans out', () => {
   const net = buildNetwork(manifold)
+  const m = buildProcessModel(manifold)
 
   it('enumerates BOTH legs of the manifold (the v1 walker lost one)', () => {
     expect(net.branches).toHaveLength(2)
@@ -51,49 +74,53 @@ describe('fan-out solver', () => {
     for (const b of net.branches) expect(b.pumps).toEqual(['P-1'])
   })
 
-  it('splits the pump flow across open legs by conductance', () => {
-    const t = tags({ a: 100, b: 100 })
-    const flows = solveFlows(net, t.frac, t.pump, t.level, undefined, { rated: 10, gravity: 4 })
-    const vals = Object.values(flows).sort((x, y) => x - y)
-    expect(vals[0]).toBeCloseTo(5)
-    expect(vals[1]).toBeCloseTo(5)
+  it('the junction BALANCES: what arrives down the header leaves down the legs', () => {
+    const r = solveHydraulics(m, inputs({ a: 1, b: 1 }))
+    expect(r.converged).toBe(true)
+    // Not a ratio anyone chose — the conservation law itself, to the tolerance
+    // the solve is defined to.
+    expect(Math.abs(r.pipeFlow.e2! - (r.pipeFlow.e3! + r.pipeFlow.e5!))).toBeLessThan(MASS_TOL)
+    // and the two legs are topologically identical — same valve, same number
+    // of runs — so they carry EXACTLY the same flow. Pipe resistance in this
+    // model is a calibrated constant rather than a function of the drawn
+    // length (an HMI pipe carries neither diameter nor length), which is
+    // documented, and this is where that shows.
+    expect(r.pipeFlow.e3!).toBeCloseTo(r.pipeFlow.e5!, 9)
+    expect(r.pipeFlow.e3!).toBeGreaterThan(1)
   })
 
-  it('closing one leg sends everything down the other', () => {
-    const t = tags({ a: 0, b: 100 })
-    const flows = solveFlows(net, t.frac, t.pump, t.level, undefined, { rated: 10, gravity: 4 })
-    const byTank = Object.fromEntries(net.branches.map((b) => [(b.to as { tag: string }).tag, flows[b.id]]))
-    expect(byTank['TK-A']).toBe(0)
-    expect(byTank['TK-B']).toBeCloseTo(10)
+  it('closing one leg sends the flow down the other', () => {
+    const both = solveHydraulics(m, inputs({ a: 1, b: 1 }))
+    const shut = solveHydraulics(m, inputs({ a: 0, b: 1 }))
+    expect(Math.abs(shut.pipeFlow.e3!)).toBeLessThan(SHUT_LEAK_MAX)
+    // and the open leg carries MORE than it did sharing the header — the
+    // machine slides back down its curve as the path in front of it opens up
+    expect(shut.pipeFlow.e5!).toBeGreaterThan(both.pipeFlow.e5!)
+    expect(Math.abs(shut.pipeFlow.e2! - shut.pipeFlow.e5!)).toBeLessThan(MASS_TOL)
   })
 
-  it('a half-open leg gets its conductance share', () => {
-    const t = tags({ a: 50, b: 100 })
-    const flows = solveFlows(net, t.frac, t.pump, t.level, undefined, { rated: 10, gravity: 4 })
-    const byTank = Object.fromEntries(net.branches.map((b) => [(b.to as { tag: string }).tag, flows[b.id]]))
-    // conductance share conserves the pump's rating: 0.5:1.0 → 1/3 : 2/3
-    expect(byTank['TK-A']).toBeCloseTo(10 * (0.5 / 1.5))
-    expect(byTank['TK-B']).toBeCloseTo(10 * (1 / 1.5))
+  it('a half-open leg carries less, and the header carries the sum either way', () => {
+    const r = solveHydraulics(m, inputs({ a: 0.5, b: 1 }))
+    expect(r.pipeFlow.e3!).toBeLessThan(r.pipeFlow.e5!)
+    expect(r.pipeFlow.e3!).toBeGreaterThan(0.5)
+    expect(Math.abs(r.pipeFlow.e2! - (r.pipeFlow.e3! + r.pipeFlow.e5!))).toBeLessThan(MASS_TOL)
+    // NOT the conductance model's 1/3 : 2/3. A valve's resistance goes as f⁻⁴
+    // and the legs share a pump that responds to the total, so the split is
+    // an output of the network rather than a ratio imposed on it.
+    expect(Math.abs(r.pipeFlow.e3! / (r.pipeFlow.e3! + r.pipeFlow.e5!) - 1 / 3)).toBeGreaterThan(0.02)
   })
 
-  it('shared header pipes animate with the SUM of the legs', () => {
-    const t = tags({ a: 100, b: 100 })
-    const flows = solveFlows(net, t.frac, t.pump, t.level, undefined, { rated: 10, gravity: 4 })
-    const pf = pipeFlowMap(net, flows)
-    expect(pf.e1).toBeCloseTo(10) // both legs cross the header
-    expect(pf.e4).toBeCloseTo(5)
-    expect(pf.e6).toBeCloseTo(5)
-  })
-
-  it('a plugged pipe throttles only the legs crossing it', () => {
-    const t = tags({ a: 100, b: 100 })
-    const flows = solveFlows(net, t.frac, t.pump, t.level, (id) => (id === 'e4' ? 0.25 : 1), { rated: 10, gravity: 4 })
-    const byTank = Object.fromEntries(net.branches.map((b) => [(b.to as { tag: string }).tag, flows[b.id]]))
-    expect(byTank['TK-A']!).toBeLessThan(byTank['TK-B']!)
+  it('a plugged pipe throttles only the leg crossing it', () => {
+    const r = solveHydraulics(m, inputs({ a: 1, b: 1 }, { pipeFactor: (id) => (id === 'e4' ? 0.25 : 1) }))
+    expect(r.pipeFlow.e3!).toBeLessThan(r.pipeFlow.e5!)
+    // the clean leg is not merely unharmed, it picks up what the plugged one
+    // gave up — the pump's duty point moved
+    const clean = solveHydraulics(m, inputs({ a: 1, b: 1 }))
+    expect(r.pipeFlow.e5!).toBeGreaterThan(clean.pipeFlow.e5!)
   })
 })
 
-describe('fan-in', () => {
+describe('two feeds that fan in', () => {
   // two tanks gravity-feed one pump into a sink
   const fanIn = screen(
     [
@@ -107,12 +134,13 @@ describe('fan-in', () => {
       P('e3', [[356, 128], [600, 128]]),
     ],
   )
-  it('both inlets reach the pump and share its rating', () => {
+
+  it('both inlets reach the pump, and what they bring is what it discharges', () => {
     const net = buildNetwork(fanIn)
     expect(net.branches).toHaveLength(2)
-    const flows = solveFlows(net, () => 1, () => 1, () => 50, undefined, { rated: 10, gravity: 4 })
-    const total = Object.values(flows).reduce((s, v) => s + v, 0)
-    expect(total).toBeCloseTo(10) // the pump moves its rating, split across inlets
-    expect(pipeFlowMap(net, flows).e3).toBeCloseTo(10)
+    const r = solveHydraulics(buildProcessModel(fanIn), inputs({ a: 1, b: 1 }))
+    expect(r.converged).toBe(true)
+    expect(Math.abs(r.pipeFlow.e1! + r.pipeFlow.e2! - r.pipeFlow.e3!)).toBeLessThan(MASS_TOL)
+    expect(r.pipeFlow.e3!).toBeGreaterThan(1)
   })
 })

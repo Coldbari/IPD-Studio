@@ -658,3 +658,147 @@ authority finding but is **not yet proven** to be it: reproducing that exact
 number needs the integration present, and it is still gated. The remaining work
 is a fixture-sizing decision (give the drain more authority, or accept an
 equilibrium above setpoint), not a tuning one.
+
+## K3.2 — landing the runtime hydraulic integration
+
+K3 wrote the integration and reverted it. K3.1 proved the loops were not
+mistuned. This step lands it: `sim/engine.ts` now solves the pressure field
+every sub-step and takes every flow, pressure and inventory from the result.
+**The conductance model is removed, not retained** — there is no second flow
+calculation in the product.
+
+### What the runtime now does
+
+```text
+valve position → resistance → pressure field → flow → inventory
+```
+
+`solveFlows` and `solvePressures` are gone from the tick. `simStore` publishes
+`pipeFlows` **signed**, straight from `SolveResult.pipeFlow`, and a new
+`hydraulic` status object carrying `converged`, `residual`, `iterations`,
+`cavitating` and `undetermined`.
+
+A vessel's **inventory in m³ is the state** and its level is derived from it,
+integrated from the SIGNED flow across its own nozzle edges. `writeTag` carries
+a level write into that inventory, because otherwise a forced level sprang back
+on the next tick — a regression this step found and fixed.
+
+### Quality now carries the solver's limits
+
+| Solver flag | Quality | Shown as |
+| --- | --- | --- |
+| `converged: false` | **BAD** (number hidden) | *No hydraulic solution — mass is not balanced* |
+| node in `cavitating` | **UNCERTAIN** | *Suction below absolute zero — the model cannot represent this* |
+| node in `undetermined` | **UNCERTAIN** | *No path to a pressure boundary — pressure level is undetermined* |
+
+`FORCED` and `FROZEN` still outrank these: the number on the screen came from
+an operator's hand or a held input, so the state of the plant behind it does
+not describe it either way.
+
+### Every test expectation that changed, and why
+
+Eleven assertions across six files. Each was judged against the new model
+individually; none was mass-updated, and no tolerance was widened to hide a
+disagreement.
+
+| # | Test | Old expectation | New expectation | Physical reason |
+|---|---|---|---|---|
+| 1 | `pressure` › holds setpoint | SP = 3 bar | SP = **6** bar | Sweeping PV-101 end to end gives **3.50–8.20 bar** on this plant. 3 is below the floor. 6 is mid-range and where the process gain is steepest (0.09 bar/% against 0.03 near either end), so the valve has real authority. |
+| 2 | `pressure` › settles still | SP = 3 bar | SP = **6** bar | Same range. At SP 3 the loop was saturated, so "no limit cycle" was vacuously true of a valve that could not move. |
+| 3 | `pressure` › recovers from a disturbance | SP = 3 bar | SP = **6** bar | Same range. |
+| 4 | `pressure` › rejects a setpoint change | SP 2 → 4 | SP **4.5 → 7** | 2 bar is below the 3.50 floor, so the low case was the valve pinned wide open and "a higher setpoint needs a tighter valve" held for the wrong reason. Both new setpoints are controlled states off the stops. |
+| 5 | `physicsIntegration` › the whole scenario | SP = 3 bar | SP = **6** bar | A *different* plant (P-101 is 60 m³/h at 45 m, with a heater in the line) and so a different range: **4.76–8.92 bar**, measured. 3 is below its floor too. |
+| 6 | `controllers` › outlet-valve level loop | FV-201 at 30 %, 4 h | FV-201 at **22 %**, 6 h | **§11, Option A — widen the drain's authority.** At 30 % the inlet puts 11.78 m³/h in against a gravity drain that passes 11.18 m³/h *wide open*: the loop correctly saturated and parked above SP. That is real behaviour and it is already covered as saturation in `loopReachability`; it is not what a test of *modulation* should assert. 22 % puts 6.45 m³/h in, held at about 61 % travel with 11.18 available — authority in both directions. A new assertion pins the valve off both stops, which the over-fed fixture could not make. |
+| 7 | `units` › level never leaves 0–100 | level > 99, flows **exactly 0** | level **= 100.000000**, flows **< `SHUT_LEAK_MAX`** | The old model shut a branch at 99.5 % of capacity, so the level asymptoted short of the top while the pump went on delivering 50 m³/h into a clamp that deleted it. The vessel gate stops inflow at the nozzle instead: the tank fills to exactly 100 % and the flow collapses with it. Not exact zero, because a blocked element is a steep FINITE conductance — a hard zero has a zero derivative and traps Newton. What is left is 1.34e-4 m³/h, a seventh of a millilitre an hour. |
+| 8 | `engine` › unvalved stub | the stub never drains the tank | the stub **does** drain it | The old solver special-cased this shape (`uncontrollableStub`) to keep a demo screen calm. It is an open line from a vessel's bottom nozzle to a boundary, and a vessel with head above an open line drains. `dangling-end` already reports the drawing defect, which is the right place to object. |
+| 9 | `engine` › supply header | opening HV-2 fills TK-2 | **nothing moves either way**, and the two node pressures are asserted equal | Pipe `b` lands in the upper part of TK-2's shell, so it attaches to the vessel's TOP nozzle — vapour space, at boundary pressure. The header is at boundary pressure too. See *one boundary pressure* below. The test now pins the mechanism, so it fails loudly the day the boundary is split. |
+| 10 | `engine`, `equip` › calm start | flows `=== 0` | flows `< SHUT_LEAK_MAX` | Same finite-conductance reason as #7. `SHUT_LEAK_MAX` is exported by the solver so a caller can say "nothing is moving" precisely — 0.4 mL/h at the highest pressure the model allows, against real flows of tens of m³/h. |
+| 11 | `runtimeHydraulic` › warm vs cold | — (new) | agree to within **`MASS_TOL`** | Newton stops when the worst junction residual is under `MASS_TOL`, so two converged solves of the same network are the same answer *to that precision*. Demanding bit-identity would demand something the solver never claimed. Measured difference: 5.9e-5 m³/h. |
+
+### The old model is deleted, not parked
+
+`solveFlows` and `pipeFlowMap` are removed from `sim/network.ts`, and the
+pressure profile — `solvePressures`, `pumpHeadBar`, `LOSS_K`, `BranchPressure`,
+`HydraulicCtx` — from `sim/process.ts`. Nothing in `src/` called them after the
+integration landed, and leaving a tested-but-dead flow calculation in the tree
+is exactly the second source of truth this step exists to remove: it reads as
+coverage and it is a wiring mistake away from being live.
+
+What stays in those files is what is still load-bearing: `buildNetwork` and its
+branch projection (the thermal model, the Overview flowsheet and controller
+action all read routes from it), `tankPressureBar`, and the vessel energy
+balance.
+
+Their tests moved with them rather than being deleted:
+
+- `network2.test.ts` — the manifold suite. It asserted a conductance RATIO;
+  it now asserts **mass balance at the junction** on the same fixture, which
+  is a stronger claim, plus the orderings the physics requires. Seven tests
+  became six.
+- `pressure.test.ts` › *the pump curve* — it checked `pumpHeadBar` with
+  `duty.head` read as the SHUTOFF head, so a 4 bar / 50 m³/h machine made 4 bar
+  at no flow and **nothing at its own duty point**. Rewritten against
+  `pumpHead`/`shutoffFromDuty` with the datasheet semantics. This is the
+  superseded assumption that moved every setpoint in that file.
+- `pressure.test.ts` › *suction pressure follows the source vessel's level* —
+  the claim is live; it now closes through a real screen and a real solve.
+
+### New coverage
+
+`tests/hmi/runtimeHydraulic.test.ts` — 26 tests on a branched representative
+plant (one pump, a tee, two vessels, a pressure loop and a level loop) driven
+through `simStore`, plus the three bundled samples for preservation:
+
+- compilation preserves every pipe and every device (1–2, and 24–26 on the samples)
+- causality: both legs develop flow, the tee balances to `MASS_TOL`, flow is not linear in valve position, closing the valve raises the discharge (3–7)
+- inventory: level rises by exactly the volume delivered, a written level sticks, a full vessel stops taking and an empty one stops giving (8–11)
+- a leg **reverses** and `pipeFlows` carries the sign (12)
+- both loops close through the solve (13–14)
+- the status is published; an undetermined node and a cavitating suction each degrade quality, and a healthy instrument is still GOOD (15–18)
+- the store's published flows are **bit-identical** to the solver's (19)
+- warm start moves the iteration count, not the answer (20)
+- finite and in range over an 8-hour shift; RESET restores exactly (21–22)
+
+### Findings this step produced
+
+1. **A pump can be specified past what its suction line can supply.** The
+   representative fixture at 50 m³/h drove `P-101`'s suction below absolute
+   zero and the solve reported it. Specified at 40 m³/h / 35 m it is clean.
+   This is the model working, not failing — but it means a drawing can carry a
+   duty the drawn suction cannot support, with no diagnostic saying so.
+   Candidate for a future NPSH check.
+2. **`declaredRole` does not know `bottom` or `top`.** A pipe carrying
+   `bPort: 'bottom'` onto a vessel is honoured as an *attachment* but its ROLE
+   still falls through to geometry, so a stated bottom nozzle can resolve to
+   the top. `DECLARED_ROLE` in `sim/hydraulic/ports.ts` has entries for the
+   pump and inline roles only. Not fixed here — it changes port resolution,
+   which is topology work, not integration.
+3. **The calm start opens `LV-101` for one second.** `initTags` seeds a
+   controller-driven valve at the controller's default output (40 %), so a
+   level valve strokes shut over the first second of a run and moves 5e-5 % of
+   a 200 m³ vessel on the way. Pre-existing; measured and documented in the
+   test rather than tolerated blindly.
+
+### One boundary pressure — the limitation this step did not remove
+
+`DEFAULTS.supplyPressureBar` is one number doing two jobs: the pressure at a
+battery-limit header *and* the atmosphere a vent or drain discharges to.
+Consequence: **a boundary cannot fill a vented vessel.** Raising it to 3 bar
+was tried and reverted — it fixes the header and puts 3 bar of backpressure on
+every gravity drain in the model. The remedy is a second boundary pressure,
+which is a topology change and not part of landing the integration.
+
+### Gate
+
+```text
+3120 tests passing · 7 skipped · 0 failing
+  (3095 before, +26 runtime-integration tests, −1 as the manifold suite
+   was rewritten from seven conductance tests onto six on the solve)
+tsc -b clean · production build clean
+189 Playwright specs passing · 2 failing, BOTH PRE-EXISTING
+```
+
+The two Playwright failures (`equip.spec.ts` compressor faceplate,
+`screenshot.spec.ts` faceplate v2) were verified to fail identically on the
+parent commit `a5b9793`. They are not caused by this step and are not fixed by
+it.

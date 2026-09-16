@@ -6,6 +6,58 @@ All notable changes to IPD Studio. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The simulation runs on the hydraulic solver.** `sim/engine.ts` solves the
+  network's pressure field every sub-step and takes every flow, every pressure
+  and every vessel inventory from the result:
+  `valve position → resistance → pressure field → flow → inventory`. The
+  conductance model it replaced is **removed, not retained** — there is no
+  second flow calculation in the product. Flow is no longer linear in valve
+  position, junctions balance, and a line can reverse: a vessel being filled
+  drains back down the same pipe when the pressures say so, and `pipeFlows` is
+  signed so the screen animates it the way it runs.
+- **A vessel holds a volume; its level is derived from it.** Inventory in m³ is
+  the state, integrated from the signed flow across the vessel's own nozzles. A
+  full vessel refuses inflow and an empty one refuses outflow as a rule on those
+  edges, so mass is no longer destroyed by a clamp at the top of the tank.
+
+### Removed
+
+- **The conductance flow model and the pressure profile.** `solveFlows` and
+  `pipeFlowMap` are gone from `sim/network.ts`, and `solvePressures`,
+  `pumpHeadBar` and `LOSS_K` from `sim/process.ts`. Nothing called them once
+  the integration landed, and a tested-but-dead flow calculation reads as
+  coverage while being a wiring mistake away from becoming a second source of
+  truth again. `buildNetwork`'s branch projection stays — the thermal model,
+  the flowsheet and controller action all read routes from it.
+
+### Added
+
+- **Data quality carries the solver's own limits.** A solve that did not
+  converge reads **BAD** and its number is hidden; a node with no path to a
+  pressure boundary, or one the model has driven below absolute zero, reads
+  **UNCERTAIN** with the reason in words. `simStore.hydraulic` publishes
+  `converged`, `residual`, `iterations`, `cavitating` and `undetermined`.
+- **Warm start through the runtime.** The previous converged pressure field is
+  carried into the next solve and between the sub-steps of a fast tick, and
+  cleared on RUN, RESET and exit. It halves the iteration count and agrees with
+  a cold solve to within `MASS_TOL` — the precision a converged solve is
+  defined to.
+- `tests/hmi/runtimeHydraulic.test.ts` — 26 causal integration tests on a
+  branched representative plant driven through `simStore`, plus preservation
+  checks on all three bundled samples.
+
+### Fixed
+
+- **A forced tank level sprang back.** Writing `PV` on a vessel now writes the
+  inventory it is derived from, so an operator or a scenario forcing a level to
+  raise an alarm works again.
+- **A dead pipe no longer animates.** Blocked elements are a steep finite
+  conductance, so a shut line carries a fraction of a millilitre an hour; the
+  canvas gates its flow animation on `SHUT_LEAK_MAX` rather than on zero.
+
+
 ## [0.21.0] — 2026-09-15 — the operator workstation
 
 The HMI stops being a screen that animates and becomes a workstation with a

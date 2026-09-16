@@ -123,10 +123,15 @@ describe('a shift: start up, control, heat, reset', () => {
     expect(Math.abs(pv('LT-101') - after)).toBeLessThan(0.5)
 
     // 5. HAND THE VALVE TO THE CONTROLLER and watch it take the pressure to SP
-    sim().writeTag('PIC-101', 'SP', 3)
+    // 6 bar. This plant is not the one in `pressure.test.ts` — P-101 here is
+    // 60 m³/h at 45 m and there is a heater in the line — so it has its own
+    // range: sweeping the valve gives 4.76 bar wide open and 8.92 bar shut.
+    // The 3 bar this step used before is below that floor, and the loop could
+    // only saturate. 6 bar sits inside it with the valve near 70 % open.
+    sim().writeTag('PIC-101', 'SP', 6)
     sim().writeTag('PIC-101', 'MODE', 1)
     advance(1800, 2)
-    expect(Math.abs(pv('PT-101') - 3)).toBeLessThan(0.4)
+    expect(Math.abs(pv('PT-101') - 6)).toBeLessThan(0.4)
     expect(sim().tags['PIC-101']!.OP!).toBeGreaterThan(0)
     expect(sim().tags['PIC-101']!.OP!).toBeLessThan(100)
 

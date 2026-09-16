@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { HmiScreen, HmiWidget } from '../../src/hmi/model'
 import { buildTagDefs } from '../../src/hmi/sim/tags'
 import { buildSimModel, initTags, tick } from '../../src/hmi/sim/engine'
+import { SHUT_LEAK_MAX } from '../../src/hmi/sim/hydraulic/solver'
 import { buildNetwork } from '../../src/hmi/sim/network'
 import { mapNodes } from '../../src/hmi/importFromPid'
 import type { Sheet } from '../../src/model/types'
@@ -71,7 +72,10 @@ describe('equip in the flow network', () => {
     const model = buildSimModel(sc)
     const tags = initTags(model)
     let r = tick(model, tags, 0.2, rng)
-    expect(Object.values(r.branchFlows).every((f) => f === 0)).toBe(true) // calm start
+    // calm start. NOT `=== 0`: a blocked element in the hydraulic model is a
+    // huge finite conductance, so it leaks a few tens of mL/h — see
+    // SHUT_LEAK_MAX and the note in engine.test.ts.
+    for (const f of Object.values(r.branchFlows)) expect(Math.abs(f)).toBeLessThan(SHUT_LEAK_MAX)
     r.tags['K-101']!.RUN = 1
     for (let i = 0; i < 15; i++) r = tick(model, r.tags, 0.2, rng)
     expect(Object.values(r.branchFlows).some((f) => f > 0)).toBe(true)

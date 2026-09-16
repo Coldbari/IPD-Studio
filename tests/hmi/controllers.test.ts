@@ -59,9 +59,29 @@ describe('auto-wired control loops', () => {
     const { tags } = runFor(5 * 3600, (t) => { t['LIC-101']!.SP = 70 })
     expect(Math.abs(tags['TK-101']!.PV! - 70)).toBeLessThan(5)
   })
-  it('outlet-valve level loops are direct-acting: drain modulates to hold level against inflow', () => {
-    // source -> P-201 -> FV-201 (fixed 30%) -> TK-201 -> LV-201 -> sink
+  it('outlet-valve level loops are direct-acting: drain modulates to hold level against inflow', { timeout: 30000 }, () => {
+    // source -> P-201 -> FV-201 (fixed 22%) -> TK-201 -> LV-201 -> sink
     // LIC-201 controls the OUTLET, so its action must invert (level low -> close drain)
+    //
+    // THE INFLOW IS SIZED TO WHAT A GRAVITY DRAIN CAN PASS. The inlet is pumped
+    // — 4 bar of head — while LV-201 discharges on the vessel's static head
+    // alone, so the two ends of this fixture are not symmetric and the inflow
+    // cannot simply be set to whatever looks reasonable. Measured on this
+    // drawing, at 50 % level:
+    //
+    //     LV-201 travel   10 %   20 %   30 %   40 %   50 %   60 %  100 %
+    //     drain, m³/h     0.19   0.77   1.73   3.02   4.56   6.21  11.18
+    //
+    // The fixture used to hold FV-201 at 30 %, which puts 11.78 m³/h in — MORE
+    // than the 11.18 m³/h the drain can take wide open. No valve position held
+    // setpoint; the loop correctly drove to its stop and the level parked above
+    // SP, climbing until the extra static head made up the missing 0.6 m³/h.
+    // That is the right behaviour for an over-fed vessel, and it is already
+    // covered as saturation in `loopReachability.test.ts` — but it is not the
+    // behaviour THIS test is about, which is modulation.
+    //
+    // 22 % puts 6.45 m³/h in. The drain holds that at about 61 % travel, with
+    // 11.18 m³/h available if it opens fully: authority in both directions.
     const outlet: HmiScreen = {
       id: 'o', name: 'O', theme: 'classic',
       widgets: [
@@ -85,10 +105,16 @@ describe('auto-wired control loops', () => {
     expect(lic.action).toBe(-1)
     let tags = initTags(model)
     tags['P-201']!.RUN = 1
-    tags['FV-201']!.OP = 30   // fixed 3 u/s inflow < max 4 u/s gravity drain
+    tags['FV-201']!.OP = 22   // 6.45 m³/h in, against 11.18 m³/h of drain
     const rng = makeRng(4)
-    for (let i = 0; i < Math.round((4 * 3600) / 2); i++) tags = tick(model, tags, 2, rng).tags
+    // Six process-hours: 20 m³ to fill from 30 % to setpoint at ~6 m³/h is
+    // over three of them before the drain valve has anything to do.
+    for (let i = 0; i < Math.round((6 * 3600) / 2); i++) tags = tick(model, tags, 2, rng).tags
     expect(Math.abs(tags['TK-201']!.PV! - 50)).toBeLessThan(4)
+    // and it is HOLDING it, not sitting on a stop: the assertion the old
+    // over-fed fixture could not make
+    expect(tags['LIC-201']!.OP!).toBeGreaterThan(5)
+    expect(tags['LIC-201']!.OP!).toBeLessThan(95)
   })
   it('MAN mode passes operator OP through to the valve', () => {
     const { tags } = runFor(2, (t) => { t['LIC-101']!.MODE = 0; t['LIC-101']!.OP = 77 })

@@ -347,6 +347,9 @@ qaFor @ 500 / 2000 objects   0.337 / 1.730 ms  (Phase 0: 0.9 / 5.7 ms)
 | P2 | `sample-plant`'s label-vs-tag findings — genuine data quality in the sample, not a software defect. |
 | P2 | The unbound-display idle wander, the one remaining value-producing fallback. Disclosed four ways. |
 | P3 | Trend axis prints `00:00` twice while the run is shorter than the span. |
+| **P1** | One boundary pressure: `supplyPressureBar` is both the battery-limit header and the atmosphere, so a boundary cannot fill a vented vessel (K3.2). |
+| P2 | No NPSH check — a drawing can carry a pump duty its drawn suction cannot supply; the solve flags the cavitation but no diagnostic reports it (K3.2). |
+| P2 | `declaredRole` has no `bottom`/`top`, so a stated vessel nozzle still resolves its role by geometry (K3.2). |
 
 ## 14. What this is, and is not
 
@@ -371,3 +374,58 @@ tsc -b clean · production build clean
 
 **Stop development here. The system has reached the planned acceptance
 boundary.**
+
+---
+
+## 16. Steps K – K3.2 — the process model
+
+Written after §15's "stop development here". The programme did stop at the
+planned acceptance boundary; what follows is a separate, explicitly-scoped
+engineering phase against the one thing §12 recorded as a declared
+simplification: **the flow model**.
+
+| Step | Scope | Outcome |
+|---|---|---|
+| K | A topology-driven process model: ports, a pressure-node/flow-edge graph, a coupled solve | **PARTIAL** — solver built and proven; the runtime integration was written and reverted |
+| K2 | Make the branched solve converge | **DONE** — the clamped Newton iterate was the root cause; replaced with a backtracking line search |
+| K3 | Wire it into the runtime | **PARTIAL** — written, exercised, reverted with two loops off setpoint |
+| K3.1 | Find out whether those loops were mistuned | **DONE** — they were not. The setpoints were outside the reachable range |
+| K3.2 | Land the integration as one atomic step | **DONE** — this section |
+
+### What changed in K3.2
+
+`sim/engine.ts` solves the pressure field every sub-step. The conductance model
+is **removed rather than kept alongside**, which was the point: the defect was
+never a wrong number, it was two sources of truth that nothing constrained to
+agree. A vessel's inventory in m³ is now the state and its level is derived.
+`simStore` publishes signed pipe flows and a hydraulic status object, and data
+quality degrades on the solver's own `converged`, `cavitating` and
+`undetermined` flags rather than presenting a float regardless.
+
+Eleven test expectations changed. Every one is recorded individually in
+`docs/HMI-AUDIT.md` § *K3.2* with its old value, its new value and the physical
+reason — including the two that are **corrections of previously-faked
+behaviour**: an unvalved stub off a vessel drains it (the old solver
+special-cased that shape to keep a demo screen calm), and a full vessel stops
+the flow at its nozzle instead of letting a clamp delete the mass that kept
+arriving.
+
+### What it does not do
+
+- **One boundary pressure.** `supplyPressureBar` is both the battery-limit
+  header and the atmosphere, so a boundary cannot fill a vented vessel. Raising
+  it was tried and reverted; it backpressures every gravity drain. Pinned as a
+  test so the day it is split, the test fails.
+- **No NPSH check.** The solve reports a suction below absolute zero, but
+  nothing warns that a drawing carries a pump duty its drawn suction cannot
+  supply. Found while building the K3.2 fixture.
+- **`declaredRole` has no `bottom`/`top`.** A P&ID that states a vessel nozzle
+  is honoured as an attachment but its role still falls through to geometry.
+
+### State after K3.2
+
+```text
+3120 tests passing · 7 skipped · 0 failing
+tsc -b clean · production build clean
+189 Playwright specs passing · 2 failing, both pre-existing on a5b9793
+```

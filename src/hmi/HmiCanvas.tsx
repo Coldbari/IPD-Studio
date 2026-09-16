@@ -21,6 +21,7 @@ import type { View } from './view'
 import { effectiveK, panBy, viewBoxOf, zoomAt } from './view'
 import { useStore } from '../store/store'
 import { useSimStore } from './simStore'
+import { SHUT_LEAK_MAX } from './sim/hydraulic/solver'
 import { HMI_DRAG_MIME } from './HmiPalette'
 import { parseSignalRef } from './tagIndex'
 
@@ -578,15 +579,29 @@ export default function HmiCanvas({ screen, selection, onSelect, mode, tool, onT
             : raw
         const o = offset(p.id)
         const pts = p.points.map((q) => `${q.x + o.dx},${q.y + o.dy}`).join(' ')
-        const flow = flows?.[p.id] ?? 0
+        /**
+         * `flows` is SIGNED — positive runs the way the line's hydraulic edge
+         * is oriented — so the rate is the magnitude and the sign picks which
+         * way the dashes travel. A line that reverses used to read as dead.
+         *
+         * And the threshold is `SHUT_LEAK_MAX`, not zero: a shut valve is a
+         * huge FINITE resistance in this model (it has to be — an infinite one
+         * has no derivative), so a dead line carries a few tenths of a
+         * millilitre an hour. Against `> 0` that crawled across the screen.
+         */
+        const signed = flows?.[p.id] ?? 0
+        const flow = Math.abs(signed)
         const wpx = p.width ?? 4
         return (
           <g key={p.id}>
             <polyline points={pts} fill="none" stroke={p.color ?? theme.pipe} strokeWidth={wpx} strokeLinejoin="round" />
-            {flow > 0 && (
+            {flow > SHUT_LEAK_MAX && (
               <polyline points={pts} fill="none" stroke={theme.pipeFlow} strokeWidth={wpx} strokeLinejoin="round"
                 className="hmi-flow" strokeDasharray="10 14"
-                style={{ animationDuration: `${Math.max(0.35, Math.min(3, 8 / flow))}s` }} />
+                style={{
+                  animationDuration: `${Math.max(0.35, Math.min(3, 8 / flow))}s`,
+                  ...(signed < 0 ? { animationDirection: 'reverse' as const } : {}),
+                }} />
             )}
             {mode === 'edit' && selection.includes(p.id) && (
               <polyline points={pts} fill="none" stroke={theme.selection} strokeWidth={wpx + 4} opacity={0.35} />

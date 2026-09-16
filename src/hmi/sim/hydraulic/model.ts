@@ -195,10 +195,16 @@ function widgetAt(widgets: HmiWidget[], p: { x: number; y: number }): HmiWidget 
  * Line loss coefficient, bar per (m³/h)², for one pipe run.
  *
  * Sized together with `VALVE_K` and the pump curve's runout factor so that a
- * default machine (50 m³/h rated, 4 bar shutoff) running through a typical
- * three-run path with one fully open control valve settles near its RATED
- * duty. That is a calibration, not a calculation from diameter and length:
- * an HMI pipe carries neither. `model/processData.ts` is where a stated
+ * default machine (50 m³/h rated, 4 bar at that duty) running through a
+ * typical three-run path with one fully open control valve settles at its
+ * RATED duty.
+ *
+ * The figure is defined RELATIVE TO THE BOUNDARY CONDITIONS: change
+ * `supplyPressureBar` and this has to be re-derived, or the same machine
+ * delivers a different duty through the same path.
+ *
+ * It is a calibration, not a calculation from diameter and length: an HMI pipe
+ * carries neither. `model/processData.ts` is where a stated
  * diameter would enter if the engineering record ever holds one, and until it
  * does this is the documented stand-in.
  */

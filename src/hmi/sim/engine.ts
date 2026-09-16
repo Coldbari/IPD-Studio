@@ -7,9 +7,14 @@ import type { Measures, TagDef } from './tags'
 import { buildTagDefs } from './tags'
 import type { Registry } from '../../model/registry'
 import type { FlowNetwork } from './network'
-import { buildNetwork, solveFlows } from './network'
+import { buildNetwork } from './network'
+import type { ProcessModel } from './hydraulic/model'
+import { buildProcessModel } from './hydraulic/model'
+import type { SolveResult } from './hydraulic/solver'
+import { solveHydraulics } from './hydraulic/solver'
+import type { ProcessFault } from './quality'
 import { BOUNDS, DEFAULTS, SECONDS_PER_HOUR, clamp, volumeMoved } from './units'
-import { pipeTemperatures, solvePressures, tankPressureBar, tankTempRate } from './process'
+import { pipeTemperatures, tankPressureBar, tankTempRate } from './process'
 
 export interface ControllerSpec {
   tag: string
@@ -24,7 +29,20 @@ export interface ControllerSpec {
    *  both invert the loop. */
   action?: 1 | -1
 }
-export interface SimModel { defs: TagDef[]; net: FlowNetwork; controllers: ControllerSpec[] }
+export interface SimModel {
+  defs: TagDef[]
+  /**
+   * The branch projection. Still built, and still what answers questions about
+   * ROUTES — which vessel a path serves for the thermal model, what the
+   * Overview flowsheet draws, which way a controller must act. It decides no
+   * number: every flow and every pressure now comes from `hydraulic`.
+   */
+  net: FlowNetwork
+  /** The pressure-node / flow-edge topology the hydraulic solve runs on.
+   *  Compiled ONCE with the model; never rebuilt per tick. */
+  hydraulic: ProcessModel
+  controllers: ControllerSpec[]
+}
 export type Tags = Record<string, Record<string, number>>
 
 /**
@@ -104,11 +122,12 @@ export function buildSimModel(screens: HmiScreen | HmiScreen[], registry?: Regis
     buildNetwork(sc).branches.map((b) => ({ ...b, id: `S${i}:${b.id}` })),
   )
   const net: FlowNetwork = { branches }
+  const hydraulic = buildProcessModel(list)
   const controllers = wireHeaters(wireControllers(defs), defs, net).map((c) => ({
     ...c,
     action: controllerAction(c, defs, net),
   }))
-  return { defs, net, controllers }
+  return { defs, net, hydraulic, controllers }
 }
 
 /**
@@ -255,28 +274,110 @@ export function initTags(model: SimModel): Tags {
   // The calm-start plant is stationary, so the seed is exact rather than an
   // approximation: no flow anywhere, and the pressure profile is whatever
   // static head and the supply header give with every pump stopped.
-  const zeroFlow = () => 0
-  const { byPipe } = solvePressures(model.net, {
-    flow: zeroFlow,
-    ramp: zeroFlow,
-    rated: (p) => model.defs.find((d) => d.name === p)?.ratedFlow ?? DEFAULTS.pumpFlowM3h,
-    head: (p) => model.defs.find((d) => d.name === p)?.head ?? DEFAULTS.pumpHeadBar,
-    level: (tag) => tags[tag]?.PV ?? 0,
+  /**
+   * INITIALISATION IS A HYDRAULIC SOLVE, not an assumption of stillness.
+   *
+   * The previous version asserted zero flow everywhere and painted a pressure
+   * profile on top. True for the calm start it was designed around, false the
+   * moment anything could move on its own — a vessel standing above a
+   * boundary, two vessels at different levels. Solving instead means the plant
+   * comes up in a state that satisfies its own equations, so the first tick
+   * continues the process rather than correcting a fiction.
+   *
+   * The equipment states above are the deterministic part: pumps stopped,
+   * piped hand valves shut, an undriven throttling valve at 0 %. What the
+   * network does with those is physics, and every bound transmitter is seeded
+   * from it.
+   */
+  const hyd = solveHydraulics(model.hydraulic, {
+    valveOpen: (v) => {
+      const t = tags[v]
+      if (!t) return 1
+      if (t.POS !== undefined) return clamp(t.POS / 100, 0, 1)
+      if (t.OP !== undefined) return clamp(t.OP / 100, 0, 1)
+      return (t.OPEN ?? 1) >= 0.5 ? 1 : 0
+    },
+    pumpSpeed: () => 0, // calm start: nothing is turning yet
+    pumpRated: (p) => model.defs.find((d) => d.name === p)?.ratedFlow ?? DEFAULTS.pumpFlowM3h,
+    pumpHead: (p) => model.defs.find((d) => d.name === p)?.head ?? DEFAULTS.pumpHeadBar,
+    vesselLevel: (tag) => tags[tag]?.PV ?? 0,
   })
+  const byPipe = pipePressureMap(model, hyd)
   const pipeTemps = pipeTemperatures(model.net, (tag) => tags[tag]?.T ?? DEFAULTS.ambientC)
-  const fakeModel = { ...model }
   for (const d of model.defs) {
+    if (d.kind === 'tank') {
+      // Inventory is the state from the very first frame, not derived later.
+      const capacity = Math.max(1e-6, d.capacity ?? DEFAULTS.tankVolumeM3)
+      tags[d.name]!.V = (capacity * clamp(tags[d.name]!.PV ?? 0, 0, 100)) / 100
+      continue
+    }
     if (d.kind !== 'display') continue
-    const seeded = measurementOf(d, tags, {}, byPipe, pipeTemps, fakeModel)
+    const seeded = measurementOf(d, tags, byPipe, pipeTemps, model, hyd)
     if (seeded !== undefined) tags[d.name]!.PV = clamp(seeded, d.min, d.max)
   }
   return tags
 }
 
+/**
+ * Net flow into a vessel, m³/h, positive INTO it.
+ *
+ * Asks the vessel's own port nodes what crossed them. An edge LEAVING a nozzle
+ * contributes negatively and one ARRIVING contributes positively, so the SIGN
+ * of the solved flow decides the direction rather than the drawing's arrow. A
+ * vessel's two nozzle nodes are joined by the liquid and not by an edge, so
+ * nothing double-counts.
+ */
+function vesselNetFlow(model: SimModel, hyd: SolveResult, tag: string): number {
+  const mine = new Set(model.hydraulic.vesselNodes.get(tag) ?? [])
+  if (mine.size === 0) return 0
+  let net = 0
+  for (const e of model.hydraulic.edges) {
+    const q = hyd.flow[e.id] ?? 0
+    if (q === 0) continue
+    const leaves = mine.has(e.from)
+    const arrives = mine.has(e.to)
+    if (leaves === arrives) continue
+    net += arrives ? q : -q
+  }
+  return net
+}
+
+/** The pressure each drawn pipe sits at: the mean of its edge's two nodes.
+ *  ONE map, read by PT, by gauges, by the HMI and by a controller's PV. */
+function pipePressureMap(model: SimModel, hyd: SolveResult): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const e of model.hydraulic.edges) {
+    if (e.pipeIds.length === 0) continue
+    const a = hyd.pressure[e.from] ?? DEFAULTS.supplyPressureBar
+    const b = hyd.pressure[e.to] ?? DEFAULTS.supplyPressureBar
+    for (const id of e.pipeIds) out[id] = (a + b) / 2
+  }
+  return out
+}
+
+export interface TickOptions {
+  /** Scenario: a restriction multiplier on a drawn pipe, 1 = unrestricted. */
+  pipeFactor?(pipeId: string): number
+  /**
+   * A previous CONVERGED pressure field to start the solve from.
+   *
+   * An optimisation only — it halves the Newton iterations. It does not change
+   * the answer beyond the precision a converged solve is defined to: two
+   * converged solves of the same network agree to within `MASS_TOL`, and the
+   * measured difference is 6e-5 m³/h. The caller must never pass an
+   * unconverged field; `simStore` only carries one forward when `converged`
+   * was true.
+   */
+  warmStart?: Record<string, number>
+}
+
 export interface TickResult {
   tags: Tags
-  /** m³/h per branch. */
+  /** m³/h per branch, magnitude, for the thermal model and the flowsheet. */
   branchFlows: Record<string, number>
+  /** The hydraulic solve this tick ran on: SIGNED per-pipe flows for the
+   *  operator screen, and the validity flags quality degrades on. */
+  hydraulic: SolveResult
   /** bar per pipe — what a PT bound to that line reads. */
   pipePressures: Record<string, number>
 }
@@ -294,13 +395,66 @@ export function tick(
   prev: Tags,
   dt: number,
   rng: () => number,
-  opts?: { pipeFactor?: (pipeId: string) => number },
+  opts?: TickOptions,
 ): TickResult {
   const n = Math.max(1, Math.ceil(dt / MAX_STEP_S))
   if (n === 1) return step(model, prev, dt, rng, opts)
   let out = step(model, prev, dt / n, rng, opts)
-  for (let i = 1; i < n; i++) out = step(model, out.tags, dt / n, rng, opts)
+  for (let i = 1; i < n; i++) {
+    // Each sub-step starts from the one before it rather than from the field
+    // the caller handed in. At 300× that is sixty sub-steps, and the plant
+    // moves very little across any one of them, so the previous answer is a
+    // far better guess than a sixty-sub-steps-old one. Still an optimisation
+    // and nothing more: a converged field is a converged field whatever it
+    // started from, and an unconverged one is never carried forward.
+    out = step(model, out.tags, dt / n, rng,
+      out.hydraulic.converged ? { ...opts, warmStart: out.hydraulic.pressure } : opts)
+  }
   return out
+}
+
+/**
+ * Why the hydraulic solve cannot stand behind the value this tag carries, if
+ * it cannot.
+ *
+ * The solve reports its own limits — see `SolveResult` — and this is the join
+ * between those limits and the tags that depend on them. A measurement bound
+ * to a line reads that line's edge; a level reads its vessel's nozzles; the
+ * vessel itself is included because its inventory was integrated from flows
+ * across those same nozzles.
+ *
+ * `undefined` means the solve stands behind it, NOT that nothing was checked.
+ */
+export function processFaultOf(
+  model: SimModel,
+  hyd: SolveResult,
+  d: { name: string; kind: string; bindTank?: string; bindPipe?: string },
+): ProcessFault | undefined {
+  const nodes = hydraulicNodesOf(model, d)
+  if (nodes === undefined) return undefined // nothing hydraulic behind this tag
+  // Worst first. A solve that did not converge invalidates every node in it,
+  // so there is no point asking which one is also cavitating.
+  if (!hyd.converged) return 'unconverged'
+  if (hyd.cavitating.some((n) => nodes.has(n))) return 'cavitating'
+  if (hyd.undetermined.some((n) => nodes.has(n))) return 'undetermined'
+  return undefined
+}
+
+/** The hydraulic nodes a tag's value depends on, or `undefined` when it
+ *  depends on none — an unbound display, a motor, a controller. */
+function hydraulicNodesOf(
+  model: SimModel,
+  d: { name: string; kind: string; bindTank?: string; bindPipe?: string },
+): Set<string> | undefined {
+  if (d.bindPipe !== undefined) {
+    const edgeId = model.hydraulic.edgeOfPipe.get(d.bindPipe)
+    const e = model.hydraulic.edges.find((x) => x.id === edgeId)
+    return e ? new Set([e.from, e.to]) : undefined
+  }
+  const vessel = d.kind === 'tank' ? d.name : d.bindTank
+  if (vessel === undefined) return undefined
+  const nodes = model.hydraulic.vesselNodes.get(vessel)
+  return nodes ? new Set(nodes) : undefined
 }
 
 function step(
@@ -308,7 +462,7 @@ function step(
   prev: Tags,
   dt: number,
   rng: () => number,
-  opts?: { pipeFactor?: (pipeId: string) => number },
+  opts?: TickOptions,
 ): TickResult {
   const tags: Tags = Object.fromEntries(Object.entries(prev).map(([k, v]) => [k, { ...v }]))
   const defByName = new Map(model.defs.map((d) => [d.name, d]))
@@ -371,10 +525,22 @@ function step(
     }
   }
 
-  // 2) branch flows, m³/h. Calm-start doctrine lives in solveFlows: passive
-  // free ends, gravity only from tank bottoms with a controllable path, pumps
-  // split across their legs by conductance.
+  // 2) THE HYDRAULIC SOLVE — the one place a flow or a pressure is decided.
+  //
+  //    Quasi-steady: given where every valve sits, how fast every pump turns
+  //    and what every vessel holds, this answers what the pressure field is
+  //    and therefore what is moving. The dynamics are what those flows then do
+  //    to the inventories, below. The causal order is the point:
+  //
+  //        valve position -> resistance -> pressure field -> flow -> inventory
+  //
+  //    and not the conductance heuristic it replaced, which multiplied a
+  //    pump's rating by the valve fractions on a path and painted pressure on
+  //    afterwards. There is no second flow calculation left in the runtime.
   const level = (tag: string) => prev[tag]?.PV ?? 0
+  /** Valve opening 0..1: actual POSITION where the actuator has one, else the
+   *  command, else an on/off valve's state. The solver turns this into a
+   *  resistance — it is never multiplied into a flow. */
   const frac = (v: string) => {
     const t = tags[v]
     if (!t) return 1
@@ -382,18 +548,32 @@ function step(
     if (t.OP !== undefined) return clamp(t.OP / 100, 0, 1)
     return (t.OPEN ?? 1) >= 0.5 ? 1 : 0
   }
-  // Delivery follows the SHAFT, not the command: a coasting pump is still
-  // moving liquid, and a tripped one is not (its breaker is open).
+  /** Delivery follows the SHAFT, not the command: a coasting pump is still
+   *  moving liquid, and a tripped one is not — its breaker is open. */
   const ramp = (p: string) => {
     const t = tags[p]
     if (!t || (t.FAULT ?? 0) >= 0.5) return 0
     return clamp(t.RAMP ?? ((t.RUN ?? 0) >= 0.5 ? 1 : 0), 0, 1)
   }
   const ratedOf = (p: string) => defByName.get(p)?.ratedFlow ?? DEFAULTS.pumpFlowM3h
-  const branchFlows = solveFlows(model.net, frac, ramp, level, opts?.pipeFactor, {
-    rated: ratedOf,
-    gravity: DEFAULTS.gravityFlowM3h,
-  })
+  const headOf = (p: string) => defByName.get(p)?.head ?? DEFAULTS.pumpHeadBar
+  const hyd = solveHydraulics(model.hydraulic, {
+    valveOpen: frac,
+    pumpSpeed: ramp,
+    pumpRated: ratedOf,
+    pumpHead: headOf,
+    vesselLevel: level,
+    ...(opts?.pipeFactor ? { pipeFactor: opts.pipeFactor } : {}),
+  }, opts?.warmStart ? { warmStart: opts.warmStart } : {})
+
+  //    Branch flow, for the consumers that still ask in branch terms — the
+  //    thermal model and the Overview flowsheet. DERIVED from the solve rather
+  //    than computed a second way: a branch carries what its pipes carry.
+  const branchFlows: Record<string, number> = {}
+  for (const b of model.net.branches) {
+    const first = b.pipeIds[0]
+    branchFlows[b.id] = first === undefined ? 0 : Math.abs(hyd.pipeFlow[first] ?? 0)
+  }
 
   // 3) integrate vessel inventories. THE conversion the audit was about:
   // m³ = m³/h × s / 3600, then level is that volume over the vessel's real
@@ -401,28 +581,23 @@ function step(
   // nothing to do with how large the widget is drawn.
   for (const d of model.defs) {
     if (d.kind !== 'tank') continue
-    let netFlow = 0 // m³/h
-    for (const b of model.net.branches) {
-      // Same rule as `measurementOf` below: a branch with no computed flow
-      // contributes nothing. Inside `step` every branch always has one; the
-      // guard is what stops an absent key becoming a NaN inventory.
-      if (b.to.kind === 'tank' && b.to.tag === d.name) netFlow += branchFlows[b.id] ?? 0
-      if (b.from.kind === 'tank' && b.from.tag === d.name) netFlow -= branchFlows[b.id] ?? 0
-    }
     const capacity = Math.max(1e-6, d.capacity ?? DEFAULTS.tankVolumeM3)
     const t = tags[d.name]!
-    const deltaPct = (volumeMoved(netFlow, dt) / capacity) * 100
-    t.PV = clamp((t.PV ?? 0) + deltaPct, BOUNDS.levelPct.min, BOUNDS.levelPct.max)
+    // INVENTORY, m³, is the state; level is derived from it. The vessel's own
+    // port nodes are asked what crossed them, SIGNED, so a line that reverses
+    // drains a vessel it was filling a moment ago — which the branch model,
+    // whose flows were non-negative, could not express at all.
+    const netFlow = vesselNetFlow(model, hyd, d.name) // m³/h, + into the vessel
+    const held = t.V ?? (capacity * clamp(t.PV ?? 0, 0, 100)) / 100
+    const next = clamp(held + volumeMoved(netFlow, dt), 0, capacity)
+    t.V = next
+    t.PV = clamp((next / capacity) * 100, BOUNDS.levelPct.min, BOUNDS.levelPct.max)
   }
 
-  // 4) hydraulics: the pressure profile that the new levels and flows imply
-  const { byPipe: pipePressures } = solvePressures(model.net, {
-    flow: (id) => branchFlows[id] ?? 0,
-    ramp,
-    rated: ratedOf,
-    head: (p) => defByName.get(p)?.head ?? DEFAULTS.pumpHeadBar,
-    level: (tag) => tags[tag]?.PV ?? 0,
-  })
+  // 4) the pressure a line actually sits at, straight out of the solve. A PT
+  //    bound to a pipe reads the mean of its edge's two node pressures, which
+  //    is the pressure at the middle of that run. Gauges read the same map.
+  const pipePressures = pipePressureMap(model, hyd)
   for (const d of model.defs) {
     if (d.kind !== 'tank') continue
     tags[d.name]!.P = tankPressureBar(tags[d.name]!.PV ?? 0)
@@ -466,7 +641,7 @@ function step(
     if ((t.FROZEN ?? 0) >= 0.5 || (t.FORCED ?? 0) >= 0.5) continue
     const noise = (rng() - 0.5) * (d.max - d.min) * NOISE_FRACTION
     const read = (v: number) => clamp(v + noise, d.min, d.max)
-    const measured = measurementOf(d, tags, branchFlows, pipePressures, pipeTemps, model)
+    const measured = measurementOf(d, tags, pipePressures, pipeTemps, model, hyd)
     if (measured !== undefined) {
       t.PV = read(measured)
       continue
@@ -475,7 +650,7 @@ function step(
     const wander = (rng() - 0.5) * (d.max - d.min) * 0.01
     t.PV = clamp((t.PV ?? base) + wander + (base - (t.PV ?? base)) * 0.02, d.min, d.max)
   }
-  return { tags, branchFlows, pipePressures }
+  return { tags, branchFlows, pipePressures, hydraulic: hyd }
 }
 
 /**
@@ -489,10 +664,10 @@ function step(
 function measurementOf(
   d: TagDef,
   tags: Tags,
-  branchFlows: Record<string, number>,
   pipePressures: Record<string, number>,
   pipeTemps: Record<string, number>,
   model: SimModel,
+  hyd: SolveResult,
 ): number | undefined {
   const measures: Measures = d.measures ?? (d.bindPipe ? 'flow' : 'level')
   if (d.bindTank !== undefined) {
@@ -505,22 +680,21 @@ function measurementOf(
   if (d.bindPipe !== undefined) {
     if (measures === 'pressure') return pipePressures[d.bindPipe] ?? 0
     if (measures === 'temperature') return pipeTemps[d.bindPipe] ?? DEFAULTS.supplyTempC
-    // flow (and level, which is meaningless on a line) sums the branches
-    // crossing this pipe, in m³/h.
-    //
-    // `?? 0` IS LOad-BEARING, not defensive tidying. `initTags` calls this with
-    // an EMPTY branchFlows to seed bound transmitters from the calm-start
-    // state, where the honest answer is "nothing is flowing". A non-null
-    // assertion there yielded `0 + undefined = NaN`, and that NaN was not
-    // transient: a controller in AUTO copied it into its PV on the first tick,
-    // clamp() carried it into the integrator, and from there it reached the
-    // valve, the vessel, its level, pressure and temperature. Comparisons
-    // against NaN are all false, so every alarm on those tags silently stopped
-    // annunciating while quality still read GOOD. Two of the three bundled
-    // samples did this on every RUN.
-    let f = 0
-    for (const br of model.net.branches) if (br.pipeIds.includes(d.bindPipe)) f += branchFlows[br.id] ?? 0
-    return f
+    /**
+     * FLOW IS THE SOLVED STREAM, not a sum over paths.
+     *
+     * The pipe the instrument is installed in belongs to exactly one hydraulic
+     * edge, and that edge's flow IS what crosses the instrument. The branch
+     * model had to add up every path through the pipe because a branch was a
+     * route rather than a conductor; an edge is a conductor.
+     *
+     * The transmitter reads the MAGNITUDE — a flow element does not know which
+     * way round it was installed — and the SIGN is preserved in `pipeFlows`,
+     * so the runtime keeps the direction even where the reading does not.
+     */
+    const edgeId = model.hydraulic.edgeOfPipe.get(d.bindPipe)
+    if (edgeId === undefined) return undefined
+    return Math.abs(hyd.flow[edgeId] ?? 0)
   }
   return undefined
 }

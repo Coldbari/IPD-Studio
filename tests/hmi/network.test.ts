@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildNetwork, pipeFlowMap } from '../../src/hmi/sim/network'
+import { buildNetwork } from '../../src/hmi/sim/network'
 import type { HmiScreen, HmiWidget, HmiPipe } from '../../src/hmi/model'
 
 const W = (id: string, type: HmiWidget['type'], x: number, y: number, w: number, h: number, tag: string, props?: HmiWidget['props']): HmiWidget =>
@@ -56,12 +56,13 @@ describe('buildNetwork', () => {
     expect(net.branches).toHaveLength(2)
     expect(net.branches.every((b) => b.from.kind === 'tank' && b.from.tag === 'TK-T')).toBe(true)
   })
-  it('two independent pipes make two branches; pipeFlowMap spreads branch flow to pipes', () => {
+  it('two independent pipes make two branches', () => {
     const screen = S([], [P('a', [0, 0], [100, 0]), P('b', [0, 50], [100, 50])])
     const net = buildNetwork(screen)
     expect(net.branches).toHaveLength(2)
-    const flows = pipeFlowMap(net, { [net.branches[0]!.id]: 7, [net.branches[1]!.id]: 0 })
-    expect(flows.a === 7 || flows.b === 7).toBe(true)
+    // `pipeFlowMap` used to spread a branch's flow back over its pipes. It is
+    // gone with the conductance model: a pipe's flow is its own hydraulic
+    // edge's flow, published signed in `simStore.pipeFlows`.
   })
 })
 

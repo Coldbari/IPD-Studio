@@ -58,7 +58,18 @@ export const DEFAULTS = {
   pumpHeadBar: 4,
   /** Gravity/battery-limit supply through an open hand valve. */
   gravityFlowM3h: 20,
-  /** Pressure at a battery-limit supply header. */
+  /**
+   * Pressure at a process BOUNDARY — a free pipe end, bar.
+   *
+   * ONE constant for every boundary, and that is a stated limitation rather
+   * than an oversight. An unterminated line carries no information about what
+   * is beyond it, and the model cannot tell a supply header from a discharge
+   * to atmosphere. Splitting them was tried: a header at 3 bar lets a supply
+   * fill a vented vessel, and in the same move puts 3 bar of backpressure on
+   * every gravity drain, which then runs backwards. One atmosphere is the
+   * self-consistent choice, and its cost is that a boundary cannot fill a
+   * vented vessel unaided — that needs a pump, which is how a plant does it.
+   */
   supplyPressureBar: 1,
   /** A full vessel's static head at its outlet. ≈ 3 m of liquid. */
   tankFullHeadBar: 0.3,

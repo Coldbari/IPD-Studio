@@ -105,6 +105,24 @@ const MAX_ITER = 250
 export const ZERO_FLOW = 1e-9
 
 /**
+ * The largest flow a BLOCKED element can pass, m³/h.
+ *
+ * A shut valve, a stopped pump and a full vessel's inlet are all a huge but
+ * FINITE conductance rather than a hard zero, because an infinite resistance
+ * has no derivative and Newton cannot determine the pressure of a node whose
+ * only live connection carries nothing. The price of that is a leak, and this
+ * is its ceiling: `√(P_max / R_shut)` with `R_shut = VALVE_K / SHUT_FRACTION⁴`,
+ * about four tenths of a litre an hour at the highest pressure the model
+ * allows, and 17 mL/h at ordinary ones.
+ *
+ * Exported so a caller can say "nothing is moving" precisely, instead of
+ * testing a float against exact zero and being defeated by a deliberate
+ * modelling device. It is NOT a tolerance to hide errors behind: a real flow
+ * in this model is tens of m³/h, five orders larger.
+ */
+export const SHUT_LEAK_MAX = Math.sqrt(64 / (4e-4 / 1e-3 ** 4))
+
+/**
  * Mass-balance residual that counts as converged, m³/h.
  *
  * A ten-thousandth of a cubic metre an hour: a tenth of a millilitre, two
@@ -389,8 +407,11 @@ export function solveHydraulics(model: ProcessModel, s: SolveInputs, opts: Solve
   for (let i = 0; i < n; i++) {
     const node = model.nodes[i]!
     if (node.kind === 'vessel') {
-      // A bottom nozzle sees the liquid head; a top one sees the vapour space,
-      // which this model holds at the supply boundary pressure.
+      // Every vessel here is VENTED: its surface sits at the boundary
+      // pressure. A bottom nozzle additionally sees the static head of what is
+      // above it; a top one sees the vapour space and so sits at the boundary.
+      // That is why a boundary cannot fill a vented vessel in this model —
+      // see `supplyPressureBar` in sim/units.ts.
       pressure[i] = node.liquid
         ? DEFAULTS.supplyPressureBar + vesselHeadBar(s.vesselLevel(node.tag ?? ''))
         : DEFAULTS.supplyPressureBar

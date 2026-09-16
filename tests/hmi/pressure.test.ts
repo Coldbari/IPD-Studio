@@ -17,7 +17,9 @@
 
 import { describe, expect, it } from 'vitest'
 import { buildSimModel, initTags, tick } from '../../src/hmi/sim/engine'
-import { pumpHeadBar, solvePressures, tankPressureBar } from '../../src/hmi/sim/process'
+import { tankPressureBar } from '../../src/hmi/sim/process'
+import { buildProcessModel } from '../../src/hmi/sim/hydraulic/model'
+import { pumpHead, shutoffFromDuty, solveHydraulics } from '../../src/hmi/sim/hydraulic/solver'
 import { makeRng } from '../../src/hmi/sim/noise'
 import { BOUNDS, DEFAULTS } from '../../src/hmi/sim/units'
 import type { HmiScreen } from '../../src/hmi/model'
@@ -62,14 +64,25 @@ const atOpening = (pct: number) =>
   }, 120)
 
 describe('the pump curve', () => {
-  it('falls from shutoff head to nothing at rated flow', () => {
-    expect(pumpHeadBar(4, 50, 1, 0)).toBeCloseTo(4)
-    expect(pumpHeadBar(4, 50, 1, 50)).toBeCloseTo(0)
-    expect(pumpHeadBar(4, 50, 1, 25)).toBeCloseTo(3)
+  /**
+   * `duty.head` IS THE HEAD AT THE RATED FLOW, the way a datasheet states it.
+   *
+   * The curve these two tests used to check read it as the SHUTOFF head, so a
+   * 4 bar / 50 m³/h machine delivered 4 bar at no flow and nothing at all at
+   * its own duty point — which is not a pump, and is why every setpoint in
+   * this file had to move when the hydraulic solver landed. Shutoff is now
+   * derived from the duty: `H₀ = duty.head / (1 − 1/1.5²)` = 1.8 × duty.head.
+   */
+  it('passes THROUGH its duty point, and rises to shutoff at no flow', () => {
+    expect(pumpHead(4, 50, 1, 50)).toBeCloseTo(4)              // at rated: the stated head
+    expect(pumpHead(4, 50, 1, 0)).toBeCloseTo(shutoffFromDuty(4)) // at no flow: shutoff
+    expect(shutoffFromDuty(4)).toBeCloseTo(7.2, 2)
+    expect(pumpHead(4, 50, 1, 25)).toBeGreaterThan(4)          // and falls monotonically between
+    expect(pumpHead(4, 50, 1, 25)).toBeLessThan(shutoffFromDuty(4))
   })
   it('obeys the affinity laws: head goes as speed squared', () => {
-    expect(pumpHeadBar(4, 50, 0.5, 0)).toBeCloseTo(1)
-    expect(pumpHeadBar(4, 50, 0, 0)).toBe(0) // a stopped pump makes no head
+    expect(pumpHead(4, 50, 0.5, 0)).toBeCloseTo(shutoffFromDuty(4) * 0.25)
+    expect(pumpHead(4, 50, 0, 0)).toBe(0) // a stopped pump makes no head
   })
 })
 
@@ -118,11 +131,28 @@ describe('pressure responds to the plant, and the transmitter reads it', () => {
   })
 
   it('suction pressure follows the SOURCE vessel’s level', () => {
-    const net = { branches: [{ id: 'b', from: { kind: 'tank' as const, tag: 'T' }, to: { kind: 'sink' as const }, pumps: [], heaters: [], valves: [], devices: [], pipeIds: ['x'] }] }
-    const at = (level: number) => solvePressures(net, {
-      flow: () => 0, ramp: () => 0, rated: () => 50, head: () => 4, level: () => level,
-    }).byBranch.b!.pIn
+    // TK-S gravity-feeds P-S. Through the real solve, on the real topology:
+    // the vessel's contents are what the machine has to draw from, so the
+    // suction node's pressure IS its static head above the boundary.
+    const fed: HmiScreen = {
+      id: 'f', name: 'F', theme: 'classic',
+      widgets: [
+        { id: 't', type: 'tank', x: 0, y: 0, w: 96, h: 128, tag: 'TK-S' },
+        { id: 'p', type: 'pump', x: 300, y: 90, w: 56, h: 56, tag: 'P-S' },
+      ],
+      pipes: [
+        { id: 'a', points: [{ x: 48, y: 120 }, { x: 296, y: 118 }], aId: 't', aPort: 'bottom', bId: 'p', bPort: 'suction' },
+        { id: 'b', points: [{ x: 360, y: 118 }, { x: 600, y: 118 }], aId: 'p', aPort: 'discharge' },
+      ],
+    }
+    const m = buildProcessModel(fed)
+    const suction = m.nodes.find((n) => n.id.endsWith(':suction'))!.id
+    const at = (lvl: number) => solveHydraulics(m, {
+      valveOpen: () => 1, pumpSpeed: () => 0, pumpRated: () => 50,
+      pumpHead: () => 4, vesselLevel: () => lvl,
+    }).pressure[suction]!
     expect(at(90)).toBeGreaterThan(at(10))
+    expect(at(10)).toBeGreaterThan(DEFAULTS.supplyPressureBar) // a vessel above it always helps
   })
 
   it('stays inside its physical bounds however hard it is driven', () => {
@@ -146,7 +176,14 @@ describe('the pressure loop closes', () => {
   })
 
   it('holds setpoint, and does not rail the way an open loop does', () => {
-    const sp = 3
+    // 6 bar, not the 3 bar this test used before the hydraulic solver landed.
+    // Sweeping the valve end to end on THIS plant (P-101: 50 m³/h at 4 bar,
+    // into a 1 bar boundary) gives 3.50 bar wide open and 8.20 bar shut, so a
+    // 3 bar setpoint was half a bar below anything the machine can produce and
+    // the loop had no choice but to sit on its stop. 6 bar is inside the range
+    // and lands where the process gain is steepest — about 0.09 bar per % of
+    // travel, against 0.03 near either end — so the valve has real authority.
+    const sp = 6
     const { tags } = run((t) => { t['P-101']!.RUN = 1; t['PIC-101']!.SP = sp }, 900)
     expect(Math.abs(tags['PT-101']!.PV! - sp)).toBeLessThan(0.3)
     // the defect this whole step exists to fix: a disconnected PV saturates
@@ -161,7 +198,7 @@ describe('the pressure loop closes', () => {
     const m = buildSimModel(screen)
     let tags = initTags(m)
     tags['P-101']!.RUN = 1
-    tags['PIC-101']!.SP = 3
+    tags['PIC-101']!.SP = 6 // inside the 3.50-8.20 bar range; see above
     for (let i = 0; i < 900; i++) tags = tick(m, tags, 1, rng).tags
     const tail: number[] = []
     for (let i = 0; i < 20; i++) {
@@ -172,8 +209,12 @@ describe('the pressure loop closes', () => {
   })
 
   it('rejects a setpoint change by moving the valve the right way', () => {
-    const low = run((t) => { t['P-101']!.RUN = 1; t['PIC-101']!.SP = 2 }, 900)
-    const high = run((t) => { t['P-101']!.RUN = 1; t['PIC-101']!.SP = 4 }, 900)
+    // Both setpoints inside the range, and both far enough off the stops that
+    // the comparison is between two CONTROLLED states. The old pair was 2 and
+    // 4 bar: 2 is below the 3.50 bar floor, so the low case was the valve
+    // pinned wide open, and the assertion below held for the wrong reason.
+    const low = run((t) => { t['P-101']!.RUN = 1; t['PIC-101']!.SP = 4.5 }, 900)
+    const high = run((t) => { t['P-101']!.RUN = 1; t['PIC-101']!.SP = 7 }, 900)
     expect(high.tags['PT-101']!.PV!).toBeGreaterThan(low.tags['PT-101']!.PV!)
     // a higher pressure setpoint needs a TIGHTER valve
     expect(high.tags['PV-101']!.POS!).toBeLessThan(low.tags['PV-101']!.POS!)
@@ -183,11 +224,11 @@ describe('the pressure loop closes', () => {
     const model2 = buildSimModel(screen)
     let tags = initTags(model2)
     tags['P-101']!.RUN = 1
-    tags['PIC-101']!.SP = 3
+    tags['PIC-101']!.SP = 6 // inside the 3.50-8.20 bar range; see above
     const step = (secs: number) => { for (let i = 0; i < secs; i++) tags = tick(model2, tags, 1, rng).tags }
     step(900)
     const settled = tags['PT-101']!.PV!
-    expect(Math.abs(settled - 3)).toBeLessThan(0.3)
+    expect(Math.abs(settled - 6)).toBeLessThan(0.3)
 
     tags['P-101']!.FAULT = 1
     step(30)
@@ -196,7 +237,7 @@ describe('the pressure loop closes', () => {
     tags['P-101']!.FAULT = 0
     tags['P-101']!.RUN = 1
     step(900)
-    expect(Math.abs(tags['PT-101']!.PV! - 3)).toBeLessThan(0.3)
+    expect(Math.abs(tags['PT-101']!.PV! - 6)).toBeLessThan(0.3)
   })
 })
 

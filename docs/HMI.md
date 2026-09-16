@@ -171,27 +171,42 @@ Because the units are real, so are the timescales: a 100 m³ vessel on a
 accelerates process time and nothing else, because every step longer than a
 second is sub-divided internally, so the physics at 300× is the physics at 1×.
 
-**Pressure** is a profile over the flows the network already solves: a pump
-adds head off a quadratic characteristic (falling from shutoff to nothing at
-rated flow, scaled by the affinity laws), a vessel's contents put static head
-on its outlet, and line loss goes as flow². So **closing a valve raises the
-discharge pressure** — less flow, so the pump rides up its curve — and lowers
-it downstream, which is what makes a pressure loop controllable.
+**Pressure causes flow, and it is solved rather than profiled.** Every tick
+the runtime builds the network's pressure field by damped Newton and reads the
+flows off it:
+
+```text
+valve position → resistance → pressure field → flow → inventory
+```
+
+A pump adds head off a quadratic characteristic (scaled by the affinity laws),
+a vessel's contents put static head on its bottom nozzles, and line loss goes
+as `ΔP = R·Q·|Q|`. So **closing a valve raises the discharge pressure** — less
+flow, so the pump rides up its curve — and lowers it downstream, which is what
+makes a pressure loop controllable. The full description, equations, assumptions
+and measured convergence are under [The hydraulic model](#the-hydraulic-model).
+
+Three things follow that the previous conductance model could not express.
+Flow is **not linear in valve position**. **Junctions balance**, so a tee is
+one network rather than two unrelated paths. And a line **can reverse**: a
+vessel that was being filled a moment ago drains back down the same pipe when
+the pressures say so, and the runtime carries the sign.
+
 **Temperature** is a well-mixed energy balance per vessel: mixing with whatever
 flows in, heater duty over the held volume, and a first-order loss to ambient.
 A heater is **not** a pump — dropping one into a line adds heat, not flow.
 
-It is a deterministic simplified model for training and testing, not a
-hydraulic or thermodynamic solver: it does not iterate to a consistent
-pressure field, does not conserve energy across a branch, and knows one fluid.
-What it does guarantee is that every value an operator sees moved for a real
-reason.
+It is a deterministic simplified model for training and testing. It solves one
+incompressible fluid, quasi-steady, with no phase change, no compressibility
+and no elevation except a vessel's own liquid head — and it says so rather than
+implying rigour it does not have. What it does guarantee is that every value an
+operator sees moved for a real reason, and that where it cannot determine one
+it **says so** instead of printing a plausible number.
 
-The rest is deliberately simple and honest about it: pumps deliver rated
-flow through open valves, tanks integrate level, sources feed by pressure. **Headers and manifolds work**: a line
-that fans out splits the pump's flow across its open legs by conductance
-(closing one leg sends everything down the other — a proportional split,
-not a pressure solve, and documented as such). Equipment has **dynamics** and **one state machine**:
+Tanks hold a **volume**, and level is derived from it — not the other way
+round. A full vessel refuses inflow and an empty one refuses outflow, as a rule
+on the edges at its nozzles, so mass is never quietly destroyed by a clamp.
+Equipment has **dynamics** and **one state machine**:
 `STOPPED → STARTING → RUNNING → STOPPING → STOPPED`, plus `TRIPPED` and
 `DISABLED`. Pumps spin up over ~2 s and **coast down over ~3 s** (a coasting
 pump is still moving liquid; a tripped one is not, because its breaker is
@@ -205,8 +220,10 @@ transmitter, force a reading off scale, fail an instrument outright, plug the
 busiest line — every one journaled, all undone by Reset. RUN starts **calm**, the way a real plant
 hands over: pumps stopped, every hand valve in a flow path closed, undriven
 throttling valves at 0% — nothing moves and nothing alarms until the
-operator lines up valves and starts pumps (or a control loop acts). Lines
-that dead-end without any valve can never drain a tank. Alarm limits (LL/L/H/HH) on tanks and
+operator lines up valves and starts pumps (or a control loop acts). An
+unvalved line off a vessel **does** drain it, because there is nothing in it to
+stop the flow — the `dangling-end` diagnostic objects to drawing one, which is
+the right place to object. Alarm limits (LL/L/H/HH) on tanks and
 displays — **read from the engineering record whenever it states them** —
 drive a blinking, acknowledgeable alarm banner with an
 ISA-18.2-style lifecycle (active → acked / cleared) and **three priorities**
@@ -496,31 +513,35 @@ decision — remove, remap or ignore — stays yours.
 - Reconciliation is an **edit-mode** action. An operator station does not
   reshape its own screens.
 
-## The hydraulic model (new, not yet driving the runtime)
+## The hydraulic model
 
 `sim/hydraulic/` is a canonical process topology and a coupled pressure/flow
-solver, built and proven as a standalone module. It converges on every fixture
-topology and on all three bundled samples. **It does not yet drive the running
-simulation** — `sim/engine.ts` still uses the branch/conductance model
-below it. What follows describes the new module and states exactly where it
-stops; `docs/HMI-AUDIT.md` records why.
+solver, and **it is what the running simulation runs on**. Every flow, every
+pressure and every vessel inventory in the product comes out of it. There is no
+second flow calculation anywhere: the conductance model it replaced has been
+removed rather than kept alongside.
 
 ### Why it exists
 
-The running solver decides flow first and derives pressure from it:
+The solver it replaced decided flow first and derived pressure from it:
 
 ```text
 Q = pump rating × speed × ∏(valve fraction)     then     P = f(Q)
 ```
 
-Three things that cannot express. Flow is **linear in valve position**, which
-is not what a valve does. **Junctions never balance**, because each
-source-to-destination path is solved alone and a tee is two unrelated paths.
-And **pressure cannot cause anything**, because it is computed after the thing
-it is meant to cause. Flows are also non-negative by construction, so a line
-can never reverse.
+Three things that cannot express. Flow was **linear in valve position**, which
+is not what a valve does. **Junctions never balanced**, because each
+source-to-destination path was solved alone and a tee was two unrelated paths.
+And **pressure could not cause anything**, because it was computed after the
+thing it was meant to cause. Flows were also non-negative by construction, so a
+line could never reverse.
 
-### What the new module does
+Worse than any single one of those: there were **two sources of truth**. The
+conductance model produced the branch flows the HMI drew, and the pressure
+profile produced the numbers the transmitters read, and nothing constrained the
+two to agree. A valve could be shut in one and passing in the other.
+
+### What the module does
 
 ```text
 valve position → resistance → pressure field → flow → inventory
@@ -612,7 +633,9 @@ Jacobian block is singular. Those are frozen at supply pressure and named in
 unsolvable — which is what happened to the refinery sample (12 such nodes).
 
 **Warm start** reuses a previous converged pressure field, and only for nodes
-it names. It halves the iteration count and cannot change the answer; a test
+it names. It halves the iteration count. It does not change the answer beyond
+the precision a converged solve is defined to — two converged solves of the
+same network agree to within `MASS_TOL`, measured at 6e-5 m³/h — and a test
 pins warm against cold.
 
 ### Convergence, measured
@@ -639,7 +662,49 @@ constitutive equation, re-derived independently from the solved pressures.
 Cost: `buildProcessModel` 0.03–0.07 ms once per document; `solveHydraulics`
 0.03–0.28 ms cold, 0.004–0.022 ms warm.
 
-### Where it stops
+### How the runtime uses it
 
-The solver is trustworthy; it is **not yet wired into the runtime**, and that
-is the next phase's work. `engine.ts` still runs the branch/conductance model.
+`engine.ts` calls `solveHydraulics` once per sub-step and takes everything from
+the result:
+
+| Consumer | Reads |
+| --- | --- |
+| A vessel's inventory | the SIGNED flow across its own nozzle edges, integrated as `m³ = m³/h × s / 3600` |
+| An `FT` bound to a line | that line's edge flow, magnitude — a flow element does not know which way round it was installed |
+| A `PT` bound to a line | the mean of its edge's two node pressures |
+| The operator screen | `pipeFlows`, SIGNED, so a reversed line animates the way it runs |
+| The thermal model | branch magnitudes, derived from the same numbers rather than computed again |
+
+**Warm start.** `simStore` carries the previous converged pressure field into
+the next solve, and each sub-step of a fast tick starts from the one before it.
+It is an optimisation and nothing more — it halves the iteration count, and the
+answer it lands on agrees with a cold solve to within `MASS_TOL`, which is the
+precision a converged solve is defined to. It is cleared on RUN, on RESET and
+on leaving a run, because a different plant's field is not a guess.
+
+### What the runtime says when it cannot answer
+
+The solve reports its own limits, and the product carries them to the operator
+rather than printing the float anyway. `simStore.hydraulic` publishes
+`converged`, `residual`, `iterations`, `cavitating` and `undetermined`, and
+data quality degrades on all three:
+
+| Solver flag | Quality | What the operator is told |
+| --- | --- | --- |
+| `converged: false` | **BAD** — the number is hidden, dashes are shown | *No hydraulic solution — mass is not balanced* |
+| node in `cavitating` | **UNCERTAIN** | *Suction below absolute zero — the model cannot represent this* |
+| node in `undetermined` | **UNCERTAIN** | *No path to a pressure boundary — pressure level is undetermined* |
+
+A measurement bound to a line inherits its edge's two nodes; a level inherits
+its vessel's nozzles, because its inventory was integrated across them.
+
+### Known limitation: one boundary pressure
+
+`DEFAULTS.supplyPressureBar` is a single number doing two jobs — the pressure at
+a battery-limit header *and* the atmosphere a vent or drain discharges to.
+The consequence is precise: **a boundary cannot fill a vented vessel**, because
+the vessel's vapour space is at that same pressure and there is no driving
+force. Raising the number fixes the header case and puts the same backpressure
+on every gravity drain in the model, which is worse. The honest remedy is a
+second boundary pressure, and it is not in this step. `engine.test.ts` pins the
+limitation as a test, so it fails loudly the day the boundary is split.

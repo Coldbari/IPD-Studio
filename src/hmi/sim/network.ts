@@ -9,7 +9,7 @@ export type EndRef = { kind: 'source' } | { kind: 'sink' } | { kind: 'tank'; tag
 
 /** One flow PATH from a source terminal to a sink/tank terminal. Fan-out at a
  *  pump or junction yields one branch per downstream leg; the shared pump's
- *  rating is split across them by conductance in solveFlows. */
+ *  flow through each is decided by the hydraulic solve. */
 export interface Branch {
   id: string
   from: EndRef
@@ -158,82 +158,4 @@ export function buildNetwork(screen: HmiScreen): FlowNetwork {
     walk(p, [], from, fromBottom)
   }
   return { branches }
-}
-
-const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
-
-/**
- * Flow per branch. Conductance = product of valve fractions (× any pipe
- * factors, e.g. a plugged line); a pump's rating splits across the branches
- * that share it, proportional to conductance — an honest approximation, not
- * a pressure solve, and documented as such. Gravity branches don't split.
- */
-export function solveFlows(
-  net: FlowNetwork,
-  frac: (valveTag: string) => number,
-  pumpOn: (pumpTag: string) => number,
-  tankLevel: (tag: string) => number,
-  pipeFactor: ((pipeId: string) => number) | undefined,
-  /** `rated` is the pump's RATED FLOW in m³/h (UNITS.flow) — a function when
-   *  pumps differ, which they do once duties come out of the registry, and a
-   *  plain number when they do not. `gravity` is the m³/h a gravity or
-   *  battery-limit branch delivers through a fully open path. */
-  rating: { rated: number | ((pumpTag: string) => number); gravity: number },
-): Record<string, number> {
-  const ratedOf = typeof rating.rated === 'function' ? rating.rated : () => rating.rated as number
-  const g: Record<string, number> = {}
-  const driver: Record<string, number> = {}
-  for (const b of net.branches) {
-    let cond = 1
-    for (const v of b.valves) cond *= clamp01(frac(v))
-    if (pipeFactor) for (const id of b.pipeIds) cond *= clamp01(pipeFactor(id))
-    if (b.from.kind === 'tank' && tankLevel(b.from.tag) <= 0.5) cond = 0
-    if (b.to.kind === 'tank' && tankLevel(b.to.tag) >= 99.5) cond = 0
-    g[b.id] = cond
-    if (b.pumps.length > 0) {
-      // calm-start doctrine holds: every pump on the path must be driving
-      const ramp = Math.min(...b.pumps.map((p) => clamp01(pumpOn(p))))
-      // series pumps: the weakest rating sets what the path can carry
-      const rated = Math.min(...b.pumps.map((p) => ratedOf(p)))
-      driver[b.id] = ramp > 0 ? rated * ramp : 0
-    } else if (b.from.kind === 'tank') {
-      const uncontrollableStub = b.to.kind === 'sink' && b.valves.length === 0
-      driver[b.id] = b.fromBottom && !uncontrollableStub ? rating.gravity : 0
-    } else if (b.from.kind === 'source' && b.valves.length > 0) {
-      // a free end feeding THROUGH a hand valve is a battery-limit/supply
-      // header: opening the valve draws on it. Calm start still holds — the
-      // valve comes up closed, so nothing moves until an operator acts.
-      driver[b.id] = rating.gravity
-    } else {
-      driver[b.id] = 0 // valveless free-end stubs stay passive
-    }
-  }
-
-  const byPump = new Map<string, string[]>()
-  for (const b of net.branches) for (const p of b.pumps) byPump.set(p, [...(byPump.get(p) ?? []), b.id])
-
-  const flows: Record<string, number> = {}
-  for (const b of net.branches) {
-    const cond = g[b.id]!
-    const drive = driver[b.id]!
-    if (cond === 0 || drive === 0) { flows[b.id] = 0; continue }
-    if (b.pumps.length === 0) { flows[b.id] = drive * cond; continue }
-    let f = Infinity
-    for (const p of b.pumps) {
-      // max(1, Σg): a single restricted leg still feels its valve (drive × g,
-      // the v1 behavior); only genuinely competing open legs split the rating
-      const total = Math.max(1, byPump.get(p)!.reduce((s, id) => s + g[id]!, 0))
-      f = Math.min(f, drive * (cond / total))
-    }
-    flows[b.id] = f
-  }
-  return flows
-}
-
-/** Expand per-branch flows to per-pipe flows for the canvas animation.
- *  Branches share header pipes, so flows SUM. */
-export function pipeFlowMap(net: FlowNetwork, branchFlows: Record<string, number>): Record<string, number> {
-  const out: Record<string, number> = {}
-  for (const b of net.branches) for (const id of b.pipeIds) out[id] = (out[id] ?? 0) + (branchFlows[b.id] ?? 0)
-  return out
 }

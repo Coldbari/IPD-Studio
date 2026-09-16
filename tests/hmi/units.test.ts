@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest'
 import { buildSimModel, initTags, tick } from '../../src/hmi/sim/engine'
 import { buildTagDefs } from '../../src/hmi/sim/tags'
 import { makeRng } from '../../src/hmi/sim/noise'
+import { SHUT_LEAK_MAX } from '../../src/hmi/sim/hydraulic/solver'
 import { DEFAULTS, SECONDS_PER_HOUR, UNITS, clockText, volumeMoved } from '../../src/hmi/sim/units'
 import type { HmiScreen, HmiWidget } from '../../src/hmi/model'
 import type { Registry } from '../../src/model/registry'
@@ -75,12 +76,21 @@ describe('tank level is volume over capacity', () => {
 
   it('level never leaves 0-100 however long it runs', () => {
     const { tags, branchFlows } = runPlant(plant({ capacity: 10 }), 6 * SECONDS_PER_HOUR, 60)
-    // solveFlows shuts a branch INTO a full vessel at 99.5 %, so the level
-    // asymptotes just under the top rather than being clamped there — and the
-    // flow stops, which is the part that matters
-    expect(tags['TK-1']!.PV).toBeGreaterThan(99)
+    // A FULL VESSEL REFUSES INFLOW, and it does so as a constitutive rule on
+    // the edges at its nozzles rather than as a clamp on the number afterwards.
+    //
+    // The old model shut the branch at 99.5 % of capacity, so the level crept
+    // up to something just short of the top and the pump went on delivering
+    // 50 m³/h into a clamp that quietly deleted it. Now the tank fills to
+    // exactly 100 % in twelve minutes — 10 m³ at 50 m³/h — and the flow
+    // collapses with it, so nothing is destroyed to keep the level in range.
+    expect(tags['TK-1']!.PV).toBeCloseTo(100, 6)
     expect(tags['TK-1']!.PV).toBeLessThanOrEqual(100)
-    expect(Object.values(branchFlows).every((f) => f === 0)).toBe(true)
+    // Not exact zero: the gate is a steep FINITE conductance, because a hard
+    // zero has a zero derivative and traps the solve (see `GATE_LEAK`). What
+    // is left is 1.34e-4 m³/h — a seventh of a millilitre an hour, six orders
+    // below the 50 m³/h that was arriving a minute earlier.
+    for (const f of Object.values(branchFlows)) expect(Math.abs(f)).toBeLessThan(SHUT_LEAK_MAX)
   })
 
   it('flow is reported in m³/h, at the pump’s rated duty', () => {
