@@ -913,3 +913,55 @@ tsc -b clean · production build clean
 | P2 | The consequence of low-flow operation (temperature rise, recirculation) is not modelled; only the condition is reported. |
 | P2 | Still no manufacturer equipment data — valve resistance is one calibrated constant for every valve, and `duty.speed` is text nobody reads. |
 | P2 | No scenario library (K9); boundary dynamics are pressure only (K10); mixing unsupported (K5). |
+
+
+---
+
+## 28. Step K14 — closed-loop speed control
+
+K13's recommended next phase, taken. The envelope existed, so the loop could be
+built against something.
+
+One controller type, as the brief asked: pressure → speed. The existing PI was
+reused and no second algorithm was written; what K14 added to it is an output
+DESTINATION (`SPD`), an output RANGE (`[duty.minSpeed, 100]`, and `[0, 100]`
+for every loop that existed before), and a tuning entry of its own. Nothing in
+`TUNING` was touched.
+
+The wiring is the interesting part. A pump does not share a loop number with
+its controller, and `P-101` collides with `PIC-101` on family+loop — the exact
+accidental pairing `wireControllers` already guards against. So the machine is
+found the way `wireHeaters` finds a heater: by asking what produces the thing
+being measured. Asked of the K7 topology rather than the branch projection,
+because the branch model predates K7 and still counts a battery-limit terminal
+among a path's `pumps`. The walk goes out from the measured pipe WITHOUT
+CROSSING A PUMP, which is exactly the transmitter's pressure zone.
+
+The gains were measured, not chosen: the loop was driven to instability
+(kp 3.5, ti 6 — 116 % overshoot, 1.46 bar swing, never settles) and then backed
+off by roughly a factor of two. The tuning target is written down in the test
+file so it can be re-measured.
+
+K11's one-tick measurement latency survives intact and is demonstrated tick by
+tick. K12's command-versus-shaft distinction survives a controller. K13's
+envelope is not suppressed when the controller is what caused the violation.
+
+### State after K14
+
+```text
+3504 tests passing · 7 skipped · 0 failing
+tsc -b clean · production build clean
+207 Playwright passing · 2 failing, both pre-existing on a5b9793
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P1 | One loop type only. Flow → speed is the same machinery and was deliberately left for a later phase, as was cascade. |
+| P2 | A controller's default setpoint is 50, off-scale on a 0-10 bar loop until an operator sets one. Pre-existing; out of scope here. |
+| P2 | No output rate limit on any loop; the drive's own ramp is what softens a step. |
+| P2 | PI, not PID — there is no derivative term in this codebase. |
+| P2 | Still detection only on the envelope: no protective action, no minimum-flow trip, because no field defines one. |
+| P2 | Still no manufacturer equipment data — one valve constant for every valve, and `duty.speed` is text nobody reads. |
+| P2 | No scenario library (K9); boundary dynamics are pressure only (K10); mixing unsupported (K5). |

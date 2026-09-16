@@ -5,7 +5,7 @@
 import { create } from 'zustand'
 import { useEffect } from 'react'
 import type { HmiScreen } from './model'
-import type { SimModel } from './sim/engine'
+import type { ControllerSpec, SimModel } from './sim/engine'
 import { buildSimModel, initTags, processFaultOf, tick } from './sim/engine'
 import type { Registry } from '../model/registry'
 import type { Fluid } from '../model/types'
@@ -167,6 +167,17 @@ interface SimStoreState {
    * have hidden a real fault — a machine running backwards.
    */
   pumpEnvelopes: Record<string, PumpEnvelope>
+  /**
+   * THE WIRED CONTROL LOOPS — what each controller measures and what it
+   * drives. STATIC for a run, like `processView`: wiring is a property of the
+   * drawing, not of this instant.
+   *
+   * Published so an operator surface can say WHO owns a final element without
+   * re-deriving the wiring. A pump whose speed a loop commands must not offer
+   * the operator a slider that the next tick overwrites; that is the competing
+   * write K14 is required not to have.
+   */
+  controllers: ControllerSpec[]
   /** What the hydraulic solve managed this tick. Read it before trusting
    *  anything above that came out of it. */
   hydraulic: HydraulicStatus
@@ -281,7 +292,7 @@ function supSets(shelved: Record<string, number>, oos: Record<string, true>, tag
 
 export const useSimStore = create<SimStoreState>()((set, get) => ({
   mode: 'edit', playing: false, speed: 1, t: 0,
-  tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, pumpEnvelopes: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {},
+  tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, pumpEnvelopes: {}, controllers: [], hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {},
 
   enterRun: (screens, registry, fluids) => {
     model = buildSimModel(screens, registry)
@@ -291,7 +302,7 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
     const tags0 = initTags(model)
     // a fresh History per run: a new identity is how React learns the old
     // trend data is gone, and nothing from the previous run can leak forward
-    set({ mode: 'run', playing: true, t: 0, tags: tags0, defs: tagDefMap(model.defs), quality: qualityMap(model, tags0, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, ...(() => { const pv = buildProcessView(model.hydraulic, model.defs, model.controllers, fluids ?? []); return { processView: pv, routes: processRoutes(pv) } })(), equipFlows: {}, pumpEnvelopes: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, scenarioProblems: [],
+    set({ mode: 'run', playing: true, t: 0, tags: tags0, defs: tagDefMap(model.defs), quality: qualityMap(model, tags0, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, ...(() => { const pv = buildProcessView(model.hydraulic, model.defs, model.controllers, fluids ?? []); return { processView: pv, routes: processRoutes(pv) } })(), equipFlows: {}, pumpEnvelopes: {}, controllers: model.controllers, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, scenarioProblems: [],
       terminals: Object.fromEntries(terminalPressures(model.hydraulic, null)),
       terminalSpec: Object.fromEntries(model.hydraulic.nodes
         .filter((n) => n.kind === 'boundary' && n.tag !== undefined)
@@ -308,7 +319,7 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
     model = null
     warm = undefined
     pumpEdges = new Map()
-    set({ mode: 'edit', playing: false, t: 0, tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, pumpEnvelopes: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {} })
+    set({ mode: 'edit', playing: false, t: 0, tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, pumpEnvelopes: {}, controllers: [], hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {} })
   },
   playPause: () => set((s) => ({ playing: !s.playing })),
   setSpeed: (speed) => set({ speed }),
@@ -317,7 +328,7 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
     rng = makeRng(SEED)
     warm = undefined // RESET puts the plant back to its start: solve it afresh
     const fresh = initTags(model)
-    set({ t: 0, tags: fresh, quality: qualityMap(model, fresh, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, equipFlows: {}, pumpEnvelopes: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], playing: true,
+    set({ t: 0, tags: fresh, quality: qualityMap(model, fresh, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, equipFlows: {}, pumpEnvelopes: {}, controllers: model.controllers, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], playing: true,
       // RESET returns the plant to its engineering state, scenario included:
       // it is part of "where this run started", not part of the drawing
       scenario: null, scenarioProblems: [],
@@ -372,6 +383,21 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
           // measurement: they carry no quality of their own
           if (tg.SP !== undefined) put(`${d.name}.SP`, tg.SP)
           if (tg.OP !== undefined) put(`${d.name}.OP`, tg.OP)
+        }
+        /**
+         * A DRIVEN MACHINE TRENDS BOTH SPEEDS, and the actual one is not
+         * replaced by the command.
+         *
+         * `SPD` is what somebody asked for — an operator, or a K14 speed loop.
+         * `RAMP` is the shaft, scaled to per cent so the two share an axis.
+         * Trending only the command would make a drive look instantaneous;
+         * trending only the shaft would hide who asked for what. The whole
+         * point of K12 was that they are different, and a trend that showed
+         * one in place of the other would undo it.
+         */
+        if (d.kind === 'motor') {
+          if (tg.SPD !== undefined) put(`${d.name}.SPD`, tg.SPD)
+          if (tg.RAMP !== undefined) put(`${d.name}.RAMP`, tg.RAMP * 100)
         }
       }
     })

@@ -9,6 +9,7 @@ import { boundarySignal, operatingPressure, processFor } from '../../model/proce
 import { DEFAULTS } from '../../hmi/sim/units'
 import { suctionFor } from '../../model/suction'
 import { TERMINAL_SYMBOLS } from '../../hmi/sim/tags'
+import { buildSimModel, speedLoopCandidate } from '../../hmi/sim/engine'
 
 const RELIEF_SYMBOLS = new Set(['psv', 'pse', 'pvsv', 'psv.pilot', 'vacuum-breaker', 'breather', 'flame-arrestor'])
 
@@ -399,9 +400,53 @@ export const pumpFlowConfig: Rule = {
   },
 }
 
+/**
+ * A PRESSURE LOOP POINTING AT A MACHINE THAT CANNOT BE SPEED-CONTROLLED.
+ *
+ * K14 connects a pressure controller with no valve in its loop to the machine
+ * that makes the pressure it measures — but only when that machine's record
+ * DECLARES a variable speed drive. A fixed-speed pump is not quietly turned
+ * into a final control element.
+ *
+ * The consequence of silence would be a controller that looks wired on the
+ * screen, tracks its measurement, and drives nothing at all. So it is said
+ * out loud, and it is said HERE rather than at runtime because it is a
+ * property of the drawing and the records, not of this instant.
+ *
+ * `speedLoopCandidate` is the same function the wiring uses. Two
+ * implementations of "which machine would this loop drive" is how a check
+ * starts disagreeing with the thing it is checking.
+ */
+export const pumpSpeedNoDrive: Rule = {
+  id: 'pump-speed-no-drive',
+  title: 'Pressure loop on a fixed-speed machine',
+  severity: 'warning',
+  discipline: 'process',
+  why: 'The controller measures the pressure this machine makes and has nothing else to drive, but the machine has no variable speed drive on its record — so the loop will track its measurement and control nothing.',
+  run(ix) {
+    const screens = ix.doc.hmiScreens ?? []
+    if (screens.length === 0) return []
+    const model = buildSimModel(screens, ix.doc.registry)
+    const out = []
+    for (const c of model.defs) {
+      if (c.kind !== 'controller') continue
+      const wired = model.controllers.find((x) => x.tag === c.name)
+      // already driving something: a valve in its loop, a heater, or a drive
+      if (!wired || wired.outTag !== undefined) continue
+      const pvDef = model.defs.find((d) => d.name === wired.pvTag)
+      if (!pvDef) continue
+      const cand = speedLoopCandidate(pvDef, model.defs, model.hydraulic)
+      if (!cand || cand.vsd) continue
+      out.push(finding(pumpSpeedNoDrive, c.name,
+        `${c.name} measures the pressure ${cand.pump} makes and has no valve to throttle, but ${cand.pump} does not declare a variable speed drive — so the loop controls nothing. Set "Variable speed drive" to Yes on ${cand.pump}, or give the loop a control valve.`))
+    }
+    return out
+  },
+}
+
 export const PROCESS_RULES: Rule[] = [
   noRelief, lineNoService, tankCapacityDefaulted,
   pumpSuctionInsufficient, pumpSuctionUnsupplied,
   terminalNoPressure, terminalBadPressure, terminalBadSignal,
-  pumpSpeedConfig, pumpFlowConfig,
+  pumpSpeedConfig, pumpFlowConfig, pumpSpeedNoDrive,
 ]

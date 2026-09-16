@@ -170,6 +170,22 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
   const flow = useSimStore((s) => s.equipFlows[tag])
   /** K13: where this machine is being run, straight off the solve. */
   const envelope = useSimStore((s) => s.pumpEnvelopes[tag])
+  /**
+   * K14: the loop that commands this machine's speed, if one does.
+   *
+   * Its presence is what takes the speed control away from the operator here:
+   * a controller writes `SPD` every tick, so a slider the operator can still
+   * move would be a command overwritten before it reached the shaft. One
+   * writer, and the faceplate says which.
+   */
+  const speedLoop = useSimStore((s) =>
+    s.controllers.find((c) => c.outTag === tag && c.outKind === 'pump'))
+  /** ...and, on a controller's own plate, the machine it drives. */
+  const drivenPump = useSimStore((s) =>
+    s.controllers.find((c) => c.tag === tag && c.outKind === 'pump')?.outTag)
+  const driven = useSimStore((s) => (drivenPump ? s.tags[drivenPump] : undefined))
+  const loopAuto = useSimStore((s) =>
+    speedLoop ? (s.tags[speedLoop.tag]?.MODE ?? 1) >= 0.5 : false)
   const processView = useSimStore((s) => s.processView)
   const pipeFlows = useSimStore((s) => s.pipeFlows)
   const write = useSimStore((s) => s.writeTag)
@@ -316,12 +332,26 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
               somewhere is a ramp, not a deviation, and carries no alarm. */}
           {t.SPD !== undefined && (
             <Section title="Speed">
+              {/* WHO IS COMMANDING THE SPEED. A plain statement in the ordinary
+                  text tone — a machine under control is not an abnormal
+                  condition and must not read as one. */}
+              {speedLoop && (
+                <div className="fp-kv" data-testid="fp-speed-owner"
+                  data-loop={speedLoop.tag} data-mode={loopAuto ? 'AUTO' : 'MANUAL'}>
+                  <span className="k">Speed control</span>
+                  <span className="v" style={{ color: theme.textSecondary }}>
+                    {speedLoop.tag} {loopAuto ? 'AUTO' : 'MANUAL'}
+                  </span>
+                </div>
+              )}
               <input data-testid="fp-speed" type="range" min={0} max={100} value={t.SPD}
-                aria-label="Pump speed command per cent"
+                aria-label="Pump speed command per cent" disabled={speedLoop !== undefined}
+                title={speedLoop ? `${speedLoop.tag} commands this speed` : 'Speed command %'}
                 onChange={(e) => write(tag, 'SPD', Number(e.target.value))} style={{ width: '100%' }} />
               <div className="fp-row">
                 {[100, 75, 50].map((v) => (
                   <button key={v} className="fp-btn" data-testid={`fp-speed-${v}`}
+                    disabled={speedLoop !== undefined}
                     onClick={() => write(tag, 'SPD', v)}>{v} %</button>
                 ))}
               </div>
@@ -377,6 +407,17 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
               <VBar label="OUT" value={t.OP ?? 0} min={0} max={100} unit="%" color={theme.op} theme={theme} />
             </div>
           </Section>
+          {/* A SPEED LOOP SHOWS BOTH SPEEDS. The output IS the command, and
+              the shaft is what the pump curve reads — K12's distinction, kept
+              visible with a controller in the loop. */}
+          {drivenPump && driven && (
+            <Section title="Drive" testId="fp-drive">
+              <div className="fp-kv"><span className="k">Machine</span>
+                <span className="v">{drivenPump}</span></div>
+              <Value label="Speed command" value={driven.SPD} unit="%" digits={0} />
+              <Value label="Actual speed" value={(driven.RAMP ?? 0) * 100} unit="%" digits={0} />
+            </Section>
+          )}
           <Section title="Mode">
             <div className="fp-row" role="group" aria-label="Controller mode">
               <button className={`fp-btn${auto ? ' on' : ''}`} data-testid="fp-auto"
@@ -402,6 +443,19 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
               onChange={(e) => write(tag, 'OP', Number(e.target.value))} style={{ width: '100%', marginTop: SCALE.space.md }} />
             <div className="fp-kv"><span className="k">Output</span>
               <span className="v">{(t.OP ?? 0).toFixed(1)}<span className="u">%</span></span></div>
+            {/* SATURATION, SAID RATHER THAN IMPLIED. An output resting at its
+                limit is either a satisfied loop or one that has run out of
+                machine, and only the second means the setpoint is unreachable.
+                It carries the WARNING tone because that is what it is — not
+                the AUTO/MANUAL state beside it, which is normal and plain. */}
+            {(t.SAT ?? 0) !== 0 && (
+              <div className="fp-kv" data-testid="fp-saturated" data-sat={t.SAT}>
+                <span className="k">Output</span>
+                <span className="v" style={{ color: theme.alarmMedium }}>
+                  {(t.SAT ?? 0) > 0 ? 'AT MAXIMUM' : 'AT MINIMUM'}
+                </span>
+              </div>
+            )}
           </Section>
         </>
       )}

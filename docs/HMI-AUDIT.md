@@ -2337,3 +2337,213 @@ tsc -b clean · production build clean
   below minimum flow is not simulated; only the condition is reported.
 - **`duty.speed` is still text nobody reads.** Speed is a fraction of rated
   throughout; there is no rpm anywhere in the runtime.
+
+## K14 — closed-loop speed control
+
+K12 made the shaft commandable. K13 made the envelope visible. K14 closes the
+loop: **a pressure controller that reads the transmitter an operator reads and
+commands the speed of the machine making that pressure.**
+
+### The existing controller was reused. No second algorithm exists.
+
+`step()` has carried a PI with conditional-integration anti-windup and bumpless
+transfer since before this programme began. K14 adds three things to it and
+changes none of its behaviour for any loop that existed before:
+
+| Added | Why |
+| --- | --- |
+| `outKind: 'pump'` | an output destination — `SPD`, never `RAMP` |
+| `outMin` / `outMax` | an output RANGE. Defaults 0 and 100, which is every pre-K14 loop |
+| `SPEED_TUNING` | a tuning entry of its own. **Nothing in `TUNING` was touched** |
+
+```text
+Kp        1.8   (dimensionless: % output per % of PV SPAN)
+Ki        Kp/Ti = 0.15 %/s per % of error
+Kd        none. The algorithm is PI and remains PI
+sample    the simulation timestep. No second clock, no second rate
+limits    [duty.minSpeed, 100] on a speed loop; [0, 100] on everything else
+windup    conditional integration — I is frozen while the output is
+          saturated in the error's direction. Unchanged, now against the
+          loop's OWN limits rather than a hard-coded 0-100
+```
+
+### Wiring: the topology, not the tag
+
+A pump does not share a loop number with its controller the way `PIC-101` and
+`PV-101` do — and `P-101` collides with `PIC-101` on family+loop, which is the
+accidental pairing `wireControllers` already guards against. So the machine is
+found the way `wireHeaters` finds a heater: **by asking what produces the thing
+being measured.**
+
+Asked of the **K7 hydraulic topology**, not the branch projection — the branch
+model predates K7 and still counts a battery-limit terminal among a path's
+`pumps`, which is exactly the wrong answer. `speedLoopCandidate` walks out from
+the measured pipe **without crossing a pump**, which gives precisely the
+pressure zone the transmitter sits in, and then asks whose discharge is in it.
+Discharge side → `action +1`; suction side → `action −1`, because a faster
+machine pulls its suction down.
+
+**A valve in the loop still wins.** A plant that drew `PIC-101` with `PV-101`
+is controlling pressure by throttling, and K14 does not take that away.
+
+**Capability is still declared.** The topology finds the machine; `duty.vsd`
+decides whether it may be driven. A fixed-speed pump is left alone and
+`pump-speed-no-drive` (`warning`) says so — the check calls the same
+`speedLoopCandidate` the wiring does, so it cannot disagree with what it checks.
+
+### The loop, and the one-tick latency
+
+```text
+SP ─► error (normalised by the PV's SPAN) ─► PI ─► OP
+                                                   ↓
+                                                  SPD          ← command
+                                                   ↓
+                                   shaft dynamics (RAMP_S 2 s)
+                                                   ↓
+                                                  RAMP         ← actual
+                                                   ↓
+                                      pumpHead(duty, RAMP, Q)  ← unchanged
+                                                   ↓
+                                            solveHydraulics    ← unchanged
+                                                   ↓
+                                       node pressure ─► PT-1 PV
+                                                   ↓
+                                        (NEXT TICK) controller
+```
+
+**K11's one-tick measurement latency is preserved and is load-bearing.** The
+controller reads `tags[pvTag].PV` at the top of the step, before the solve that
+produces this tick's reading. Measured, on a step disturbance:
+
+```text
+before      PT 2.998    PIC.PV 2.998    OP 72.77
+tick N      PT 3.453    PIC.PV 2.998    OP 73.18   ← still the OLD reading
+tick N+1    PT 3.926    PIC.PV 3.453    OP 64.31   ← consumes tick N's, reacts
+```
+
+The controller's input is the **transmitter**, noise and all — not the clean
+solved node it was derived from, not the pump's head, not the boundary.
+
+### One writer of SPD
+
+In AUTO **and** in MANUAL the controller is the only thing that writes `SPD`,
+and the pump's faceplate disables its speed control while a loop owns the
+machine, naming the loop. An operator write straight at a controlled machine
+does not survive a tick, and the screen no longer offers one.
+
+| Mode | Who decides `SPD` |
+| --- | --- |
+| AUTO | the PI, from SP and the measured PV |
+| MANUAL | the operator, through the controller's own OP |
+
+**Bumpless both ways, and both measured:**
+- AUTO → MANUAL holds the output *exactly* (72.77277289 → 72.77277289).
+- MANUAL → AUTO resumes from the speed the plant is at — 40.0 → 41.3 %, the
+  proportional term and nothing else, because the integrator tracks
+  `I = OP − Kp·e` throughout MANUAL.
+- **At RESET and at RUN**, a speed loop is seeded from the machine's own rest
+  command (100 %), not from `OP: 0`. A drive's rest state is rated speed, not
+  stopped; seeding at zero would hand the first MANUAL frame a command to stop
+  a machine nobody asked to slow down.
+
+### Tuning: measured, not chosen
+
+Tuned against the fixture in `tests/hmi/speedControl.test.ts` by finding where
+the loop goes unstable and backing off.
+
+**Process gain, measured:** 15 % of output moved the transmitter 0.62 bar on a
+10 bar span — about 0.4 % of span per % of output.
+
+| Kp | Ti | step 2.6→3.2 bar | step 2.3→3.6 bar | |
+| --- | --- | --- | --- | --- |
+| 1.2 | 25 | 188 s, no overshoot | 234 s, no overshoot | sluggish |
+| **1.8** | **12** | **64 s, 9 % overshoot** | **102 s, 5 % overshoot** | **chosen** |
+| 2.5 | 8 | 42 s, 17 % overshoot | 209 s, 12 % overshoot | degrading |
+| 3.5 | 6 | never settles, 116 % overshoot, 1.46 bar swing | | **UNSTABLE** |
+
+3.5 is the sample-rate limit cycle the `TUNING.pressure` comment warns about,
+**reached here rather than assumed**. 1.8 sits at roughly half that gain — an
+ordinary gain margin — and the settled spread it leaves, 0.11 bar, is the
+transmitter's own 0.8 %-of-span noise rather than the loop hunting. `Ti` is an
+order above the drive's 2 s lag on purpose: an integrator faster than the
+actuator chases a shaft that has not arrived.
+
+Checked at dt = 0.2 s as well as dt = 1 s (64 s and 63 s to settle), so the
+numbers are not an artefact of the step the tests integrate at.
+
+**The tuning TARGET is written down in the test file** — stable, overshoot at
+most a fifth of the step, no sustained oscillation, settled inside 150 s and
+inside the measurement noise — so it can be re-measured rather than taken on
+trust. These are a starting point for a training simulation and **not a claim
+about any real plant**: loop gain here depends on the duty point, the valve
+resistance and the boundary pressures, all of which differ per plant.
+
+### Disturbance rejection — the proof the loop is genuinely closed
+
+Settled at SP 3 bar, then K10 moves the battery limit the machine discharges
+into from 1 barg to 2.5 barg. Nothing tells the controller; it can only find out
+through its transmitter.
+
+```text
+settled          PV 3.01    OP 91.7 %
++1 tick          PV 4.20    ← disturbed, and the loop has not seen it yet
++300 s           PV 3.00    OP 62.3 %   ← slowed the machine, pressure back
+```
+
+A valve disturbance is rejected the same way.
+
+### Saturation, exposed rather than implied
+
+`SAT` is +1 at the top of the loop's travel, −1 at the bottom, 0 between, and
+the controller faceplate says **AT MAXIMUM** / **AT MINIMUM**. An output resting
+at 100 % is either a satisfied loop or one that has run out of machine, and only
+the second means the setpoint is unreachable.
+
+| Condition | Result |
+| --- | --- |
+| SP 9 bar (above what the plant can make) | OP 100 %, `SAT +1`, `I` clamped at 100 and **stops there** |
+| SP 0.5 bar (below what the drive will run at) | OP 20 % — the record's own turndown — `SAT −1`, `I` held at 38 rather than unwinding to −100 |
+| ten minutes hard against the stop, then SP 2.6 | back on setpoint within 150 s |
+| **no `duty.minSpeed` stated** | floor is **0**. No turndown is invented |
+
+### Operating envelope — K13 is not suppressed
+
+K13 detects; K14 controls. A controller that drives its machine below the
+stated minimum flow is **not excused**: the envelope reports `BELOW MINIMUM
+FLOW` exactly as it would if an operator had done it, and K14 does **not** trip,
+throttle or otherwise act on it. With no `duty.minFlow` stated the state stays
+`LIMIT UNKNOWN` — a controller manufactures no constraint the record does not
+carry.
+
+### History
+
+A driven machine now trends **both** speeds: `P-1.SPD` (the command, whoever
+asked) and `P-1.RAMP` (the shaft, scaled to per cent so they share an axis),
+beside the controller's existing `SP`, `PV` and `OP`. Trending only the command
+would make a drive look instantaneous; trending only the shaft would hide who
+asked for what. The command does not replace the actual.
+
+### Gate
+
+```text
+3504 tests passing · 7 skipped · 0 failing      (+48)
+tsc -b clean · production build clean
+207 Playwright passing · 2 failing — the SAME two as on a5b9793
+```
+
+### Limitations
+
+- **One loop type.** Pressure → speed only. Flow → speed is the same machinery
+  and was deliberately not built in the same phase.
+- **One machine per loop.** No parallel-pump staging, no lead/lag, no cascade.
+- **PI, not PID.** There is no derivative term in this codebase and K14 did not
+  add one.
+- **The gains are this fixture's.** A different duty point or boundary pressure
+  needs different numbers, and nothing here discovers them.
+- **A controller's default setpoint is still 50**, which is off-scale on a
+  0–10 bar loop until an operator sets one. Pre-existing, and left alone
+  because retuning or reseeding existing controllers is out of scope here.
+- **No output rate limit.** The controller may step its command as far as it
+  likes in one tick; the drive's own ramp is what softens it.
+- **No protective action**, still. K13's envelope is reported and K14 does not
+  act on it.

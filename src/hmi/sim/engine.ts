@@ -20,9 +20,28 @@ export interface ControllerSpec {
   tag: string
   pvTag: string
   outTag?: string
-  /** What the output drives. A temperature loop with no valve in its family
-   *  modulates the heater that warms the vessel it measures instead. */
-  outKind?: 'valve' | 'heater'
+  /**
+   * What the output drives.
+   *
+   * A temperature loop with no valve in its family modulates the heater that
+   * warms the vessel it measures. A PRESSURE loop with no valve in its family
+   * commands the SPEED of the machine that makes the pressure it measures —
+   * `pump`, K14 — and writes `SPD`, never `RAMP`: the drive remains
+   * responsible for turning a command into a shaft, exactly as K12 left it.
+   */
+  outKind?: 'valve' | 'heater' | 'pump'
+  /**
+   * OUTPUT RANGE, per cent. Defaults 0 and 100, which is every loop that
+   * existed before K14 and is what a valve's travel is.
+   *
+   * A speed loop's floor is the turndown the machine's record STATES, so the
+   * controller's own saturation limit is the same number the drive will
+   * enforce. With the two apart, the algorithm would wind down against a limit
+   * it could not see and its output would stop meaning the speed of the pump.
+   * With none stated, the floor is 0 and no limit is invented — K12's rule.
+   */
+  outMin?: number
+  outMax?: number
   /** +1 = reverse-acting (open the valve to raise the PV); -1 = direct
    *  (close it to raise the PV). Derived from the flow network — a drain valve
    *  on the measured tank, or a pressure tap on the pump's discharge side,
@@ -80,6 +99,53 @@ const TUNING: Record<Measures, { kp: number; ti: number }> = {
 /** A controller whose ISA letter names nothing this model simulates. */
 const DEFAULT_TUNING = { kp: 2, ti: 120 }
 
+/**
+ * THE SPEED LOOP'S OWN TUNING — K14.
+ *
+ * SEPARATE FROM `TUNING.pressure` ABOVE, AND NOTHING ABOVE WAS TOUCHED. That
+ * table is indexed by what a loop MEASURES, and this loop measures pressure
+ * like any other; what differs is what it DRIVES. A valve's travel and a
+ * drive's speed are not the same actuator and one number cannot mean both.
+ *
+ * ── THE BASIS: MEASURED, NOT CHOSEN ───────────────────────────────────────
+ *
+ * Tuned against the fixture in `tests/hmi/speedControl.test.ts` — a 40 m³/h,
+ * 35 m machine between two stated boundaries, discharge transmitter on a
+ * 0-10 bar span — by finding where the loop goes unstable and backing off.
+ *
+ *   PROCESS GAIN, measured: 15 % of output moved the transmitter 0.62 bar,
+ *   so about 0.4 % of span per % of output.
+ *
+ *   kp   ti    step 2.6→3.2 bar        step 2.3→3.6 bar
+ *   ───────────────────────────────────────────────────────────────────
+ *   1.2  25    188 s,  no overshoot    234 s,  no overshoot    sluggish
+ *   1.8  12     64 s,  9 % overshoot   102 s,  5 % overshoot   ← chosen
+ *   2.5   8     42 s, 17 % overshoot   209 s, 12 % overshoot   degrading
+ *   3.5   6     never settles, 116 % overshoot, 1.46 bar swing UNSTABLE
+ *
+ * 3.5 is the limit cycle at the sample rate that the `pressure` entry above
+ * warns about, reached here rather than assumed. 1.8 sits at roughly HALF the
+ * gain that produces it — an ordinary gain margin — and the settled spread it
+ * leaves, 0.11 bar, is the transmitter's own 0.8 %-of-span noise rather than
+ * anything the loop is doing.
+ *
+ * `ti` is an order above the drive's `RAMP_S` lag of 2 s on purpose: an
+ * integrator faster than the actuator chases a shaft that has not arrived.
+ *
+ * Checked at dt = 0.2 s as well as dt = 1 s (64 s and 63 s to settle), so the
+ * numbers are not an artefact of the step the tests integrate at.
+ *
+ * ── WHAT THIS IS NOT ──────────────────────────────────────────────────────
+ *
+ * A STARTING POINT FOR A TRAINING SIMULATION, NOT A CLAIM ABOUT ANY PLANT.
+ * Loop gain here depends on the duty point, the valve resistance, the boundary
+ * pressures and the vessel configuration, and a different plant needs
+ * different numbers. The tuning TARGET is written down in the test file —
+ * stable, bounded overshoot, no sustained oscillation, settled inside the
+ * measurement noise — so it can be re-measured rather than taken on trust.
+ */
+const SPEED_TUNING = { kp: 1.8, ti: 12 }
+
 /** Equipment dynamics: pump spin-up seconds, coast-down seconds, valve
  *  stroke %/s, and the deviation band+delay that raises a valve DEV alarm. */
 const RAMP_S = 2
@@ -125,10 +191,12 @@ export function buildSimModel(screens: HmiScreen | HmiScreen[], registry?: Regis
   // the registry comes too: a TAGGED TERMINAL's boundary pressure is on its
   // engineering record, and the topology is where that becomes a fixed node
   const hydraulic = buildProcessModel(list, registry)
-  const controllers = wireHeaters(wireControllers(defs), defs, net).map((c) => ({
-    ...c,
-    action: controllerAction(c, defs, net),
-  }))
+  const controllers = wirePumps(wireHeaters(wireControllers(defs), defs, net), defs, hydraulic)
+    .map((c) => ({
+      ...c,
+      action: controllerAction(c, defs, net),
+      ...outputRange(c, defs),
+    }))
   return { defs, net, hydraulic, controllers }
 }
 
@@ -148,6 +216,9 @@ function controllerAction(c: ControllerSpec, defs: TagDef[], net: FlowNetwork): 
   if (!c.outTag || c.outKind === 'heater') return 1
   const pvDef = defs.find((d) => d.name === c.pvTag)
   if (!pvDef) return 1
+  // A SPEED loop's direction is decided by which side of the machine the
+  // transmitter is on, and `speedLoopCandidate` is the one place that asks.
+  if (c.outKind === 'pump') return c.action ?? 1
   const br = net.branches.find((b) => b.valves.includes(c.outTag!))
 
   if (pvDef.measures === 'pressure' && pvDef.bindPipe && br) {
@@ -229,6 +300,130 @@ function wireHeaters(controllers: ControllerSpec[], defs: TagDef[], net: FlowNet
   })
 }
 
+/**
+ * THE MACHINE A PRESSURE CONTROLLER WOULD COMMAND THE SPEED OF, and whether
+ * its record lets it.
+ *
+ * ONE question, asked in ONE place, by both callers that need it: `wirePumps`
+ * below, which connects the loop, and the `pump-speed-no-drive` check, which
+ * reports the case where it cannot. Two implementations would eventually
+ * disagree about which pump a loop belongs to.
+ *
+ * ASSOCIATION BY THE TOPOLOGY, not by tag family — the same reasoning
+ * `wireHeaters` is built on. A pump does not share a loop number with the
+ * controller the way `PIC-101` and `PV-101` do, and `P-101` would collide with
+ * `PIC-101` on family+loop anyway, which is exactly the kind of accidental
+ * pairing `wireControllers` already guards against. What makes it the right
+ * machine is that it produces the pressure being measured.
+ *
+ * ASKED OF THE HYDRAULIC MODEL, not the branch projection. The branch model
+ * predates K7 and still counts a battery-limit terminal among a path's
+ * `pumps`; the K7 topology knows a terminal from a machine. The question is
+ * answered by walking OUT from the measured pipe WITHOUT CROSSING A PUMP,
+ * which gives exactly the pressure zone the transmitter sits in — and then
+ * asking which machine's discharge is in that zone.
+ *
+ * CAPABILITY IS STILL DECLARED. This finds the machine; `duty.vsd` decides
+ * whether it may be driven. A fixed-speed pump is reported and left alone.
+ */
+export interface SpeedLoopCandidate {
+  /** The machine whose pressure this controller measures. */
+  pump: string
+  /** True when its record declares a drive. False means the loop is REFUSED. */
+  vsd: boolean
+  /** +1 when raising the speed raises the PV — the transmitter is on the
+   *  discharge side. -1 on the suction side, where a faster machine pulls the
+   *  pressure down. */
+  action: 1 | -1
+}
+
+export function speedLoopCandidate(
+  pvDef: TagDef, defs: TagDef[], model: ProcessModel,
+): SpeedLoopCandidate | undefined {
+  if (pvDef.measures !== 'pressure' || pvDef.bindPipe === undefined) return undefined
+  const edgeId = model.edgeOfPipe.get(pvDef.bindPipe)
+  const edge = model.edges.find((e) => e.id === edgeId)
+  if (!edge) return undefined
+  const pumps = model.edges.filter((e) => e.kind === 'pump' && e.tag !== undefined)
+  if (pumps.length === 0) return undefined
+
+  const zone = pressureZone(model, edge.from, edge.to)
+  const found = (tag: string, action: 1 | -1): SpeedLoopCandidate =>
+    ({ pump: tag, vsd: defs.find((d) => d.name === tag)?.vsd === true, action })
+  // DISCHARGE FIRST. A transmitter between two machines in series is reading
+  // the discharge of the upstream one, and that is the machine whose speed
+  // changes what it reads.
+  for (const p of pumps) if (zone.has(p.to)) return found(p.tag!, 1)
+  for (const p of pumps) if (zone.has(p.from)) return found(p.tag!, -1)
+  return undefined
+}
+
+/**
+ * Every node reachable from a starting pair WITHOUT CROSSING A PUMP.
+ *
+ * A pump is the boundary between two pressure zones — that is what it is for —
+ * so not crossing one is what makes this answer "which side of which machine
+ * is this transmitter on". Breadth-first over tens of edges, ONCE at model
+ * build time; nothing here runs on the tick.
+ */
+function pressureZone(model: ProcessModel, ...from: string[]): Set<string> {
+  const seen = new Set(from)
+  const queue = [...from]
+  while (queue.length > 0) {
+    const n = queue.shift()!
+    for (const e of model.edges) {
+      if (e.kind === 'pump') continue
+      const other = e.from === n ? e.to : e.to === n ? e.from : undefined
+      if (other === undefined || seen.has(other)) continue
+      seen.add(other)
+      queue.push(other)
+    }
+  }
+  return seen
+}
+
+/**
+ * Give a pressure controller with no valve in its loop the VARIABLE-SPEED
+ * machine that makes the pressure it measures.
+ *
+ * A valve in the loop still wins: a plant that has drawn `PIC-101` with
+ * `PV-101` is controlling pressure by throttling, and K14 does not take that
+ * away. This is for the loop that has a transmitter, a machine, and nothing to
+ * throttle — which before K14 was a controller with no output at all.
+ */
+function wirePumps(controllers: ControllerSpec[], defs: TagDef[], model: ProcessModel): ControllerSpec[] {
+  return controllers.map((c) => {
+    if (c.outTag) return c
+    const pvDef = defs.find((d) => d.name === c.pvTag)
+    if (!pvDef) return c
+    const cand = speedLoopCandidate(pvDef, defs, model)
+    // NOT VSD IS NOT WIRED. The controller keeps tracking its measurement and
+    // drives nothing, which is what a loop with no final element does — and
+    // `pump-speed-no-drive` says so rather than leaving it silent.
+    if (!cand || !cand.vsd) return c
+    // the direction comes from the SAME answer that chose the machine, so
+    // `controllerAction` has nothing left to decide for a speed loop
+    return { ...c, outTag: cand.pump, outKind: 'pump' as const, action: cand.action }
+  })
+}
+
+/**
+ * The output range this loop may use.
+ *
+ * Only a speed loop has one that is not 0-100. Its ceiling is 100 % because
+ * that is where the pump curve is defined — `H₀` is the shutoff head AT RATED
+ * SPEED, so asking for more would extrapolate a curve the record does not
+ * describe. Its floor is the turndown the record STATES, and nothing is
+ * invented when it states none.
+ */
+function outputRange(c: ControllerSpec, defs: TagDef[]): { outMin: number; outMax: number } | Record<string, never> {
+  if (c.outKind !== 'pump' || c.outTag === undefined) return {}
+  const d = defs.find((x) => x.name === c.outTag)
+  const floor = d?.minSpeedPct !== undefined && Number.isFinite(d.minSpeedPct)
+    ? clamp(d.minSpeedPct, 0, 100) : 0
+  return { outMin: floor, outMax: 100 }
+}
+
 export function initTags(model: SimModel): Tags {
   // Calm start: a professional screen comes up with nothing moving and no
   // alarms until an operator (or a live control loop) acts. Every hand valve
@@ -292,8 +487,30 @@ export function initTags(model: SimModel): Tags {
       // OP 0, not a placeholder: a controller that has not executed has no
       // output, and whatever sits in this field is what drives a final element
       // on the very first solve. The first tick computes the real one.
-      case 'controller': tags[d.name] = { PV: 0, SP: 50, OP: 0, MODE: 1, I: 0 }; break
+      case 'controller': tags[d.name] = { PV: 0, SP: 50, OP: 0, MODE: 1, I: 0, SAT: 0 }; break
     }
+  }
+
+  /**
+   * A SPEED LOOP STARTS FROM THE SPEED THE MACHINE IS ALREADY AT.
+   *
+   * `OP: 0` above is right for a valve — a controller that has not executed
+   * has no output, and a final element with no command holds its fail-safe
+   * state, which for a throttling valve is shut. A DRIVE's rest state is not
+   * zero: K12 brings a VSD machine up at rated, because that is where the
+   * curve's duty point is defined and what a fixed-speed machine has always
+   * done. Seeding the loop at 0 instead would hand the first MANUAL frame a
+   * command to stop a machine nobody has asked to slow down.
+   *
+   * Seeding `I` to the same number is what makes the first AUTO execution
+   * BUMPLESS: `op = kp·e + I` then starts from the speed the plant is at and
+   * moves off it by the proportional term, rather than jumping from zero.
+   */
+  for (const c of model.controllers) {
+    if (c.outKind !== 'pump' || c.outTag === undefined) continue
+    const seed = clamp(tags[c.outTag]?.SPD ?? 100, c.outMin ?? 0, c.outMax ?? 100)
+    const t = tags[c.tag]
+    if (t) { t.OP = seed; t.I = seed }
   }
 
   // A BOUND transmitter reads its process from the very first frame.
@@ -548,31 +765,60 @@ function step(
     if (!c.outTag) continue // PV-only controller: nothing to drive
     const cd = defByName.get(c.tag)
     const span = Math.abs((cd?.max ?? 100) - (cd?.min ?? 0)) || 100
-    const tune = cd?.measures ? TUNING[cd.measures] : DEFAULT_TUNING
+    // A SPEED loop is tuned as a speed loop. `TUNING` is indexed by what a
+    // controller MEASURES; this one measures pressure like any other and
+    // drives something else entirely. Nothing in `TUNING` changed.
+    const tune = c.outKind === 'pump' ? SPEED_TUNING
+      : cd?.measures ? TUNING[cd.measures] : DEFAULT_TUNING
     const ki = tune.kp / tune.ti
     const errorOf = (sp: number) => (((sp - pv) * (c.action ?? 1)) / span) * 100
+    /** The travel this loop actually has. 0-100 for everything before K14. */
+    const lo = c.outMin ?? 0
+    const hi = c.outMax ?? 100
+    /**
+     * WHERE THE OUTPUT GOES.
+     *
+     * A valve and a heater take `OP`; a drive takes `SPD`, which is the SPEED
+     * COMMAND K12 created and NOT the shaft. The actuator still owns the step
+     * from command to `RAMP`, so command and actual stay two different things
+     * with a controller in the loop exactly as they are without one.
+     */
+    const drive = (v: number) => {
+      const el = tags[c.outTag!]
+      if (!el) return
+      if (c.outKind === 'pump') { if (el.SPD !== undefined) el.SPD = v }
+      else if (el.OP !== undefined) el.OP = v
+    }
 
     if ((t.MODE ?? 0) < 0.5) {
-      const el = tags[c.outTag]
-      if (el && el.OP !== undefined) el.OP = t.OP ?? el.OP
+      drive(clamp(t.OP ?? 0, lo, hi))
       // bumpless transfer: keep the integrator tracking the operator's OP
       // (I = OP − kp·e) so returning to AUTO resumes from here, no kick
       t.I = clamp((t.OP ?? 0) - tune.kp * errorOf(t.SP ?? 50), -100, 100)
+      t.SAT = 0
       continue
     }
     const e = errorOf(t.SP ?? 50)
     // conditional integration (anti-windup): freeze I while the output is
     // saturated in the error's direction, else overshoot on big transitions
     let I = t.I ?? 0
-    let op = clamp(tune.kp * e + I, 0, 100)
-    if (!((op >= 100 && e > 0) || (op <= 0 && e < 0))) {
+    let op = clamp(tune.kp * e + I, lo, hi)
+    if (!((op >= hi && e > 0) || (op <= lo && e < 0))) {
       I = clamp(I + ki * e * dt, -100, 100)
-      op = clamp(tune.kp * e + I, 0, 100)
+      op = clamp(tune.kp * e + I, lo, hi)
     }
     t.I = I
     t.OP = op
-    const el = tags[c.outTag]
-    if (el && el.OP !== undefined) el.OP = op
+    /**
+     * SATURATION, PUBLISHED RATHER THAN IMPLIED.
+     *
+     * +1 at the top of its travel, -1 at the bottom, 0 in between. An operator
+     * looking at an output sitting at 100 % cannot otherwise tell whether the
+     * loop is satisfied there or has run out of machine, and those are very
+     * different things: the second means the setpoint is not reachable.
+     */
+    t.SAT = op >= hi && e > 0 ? 1 : op <= lo && e < 0 ? -1 : 0
+    drive(op)
   }
 
   // 1.5) equipment dynamics: pumps spin up and coast down, valves stroke

@@ -46,6 +46,32 @@ All notable changes to IPD Studio. Format follows
 - `pump-min-flow-config` reports a minimum flow that cannot be read, is
   negative, or leaves the machine no operating range.
 
+- **Closed-loop speed control.** A pressure controller with no valve to
+  throttle now commands the SPEED of the machine that makes the pressure it
+  measures. The whole loop is real: setpoint, error, output, speed command,
+  the drive taking time to get there, the pump curve, the hydraulic solve, the
+  transmitter, and the controller reading that transmitter on the next tick.
+
+  It reads **the transmitter an operator reads** — noise and all — never the
+  solved pressure behind it, and it writes the speed **command**, never the
+  shaft. A drive still takes two seconds to get where it is told.
+
+  The controller is the existing PI. What is new is where its output goes and
+  how far it may travel: a speed loop's floor is the turndown the machine's
+  record states, and **none is invented** where the record states none. An
+  output sitting at its limit says **AT MAXIMUM** or **AT MINIMUM** rather than
+  letting an unreachable setpoint look like a satisfied one.
+
+  Exactly one thing writes a controlled machine's speed, so the pump's own
+  faceplate names the loop and stands aside. MANUAL and AUTO hand over in both
+  directions without a bump.
+
+  A machine whose record declares no drive is **not** quietly made into a final
+  control element: the loop is refused, and `pump-speed-no-drive` says so.
+
+- A driven machine now trends its speed **command** and its **actual shaft**
+  as two series, so a drive taking time to get somewhere is visible.
+
 
 ### Added
 
