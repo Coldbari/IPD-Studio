@@ -6,6 +6,31 @@ All notable changes to IPD Studio. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **A process view, laid out from the topology rather than the drawing.** A new
+  **Process flow** operator page shows the plant the way the fluid runs through
+  it — sources on the left, then the things the fluid meets in the order it
+  meets them, to the vessels and outlets. A P&ID is routed for drafting; this is
+  routed for reading a process.
+
+  It is a presentation of the same engineering model, not a second one: every
+  object on it carries the id of the canonical topology object it came from, and
+  the P&ID is untouched. Devices become boxes and pipes become lines — the
+  inverse of the hydraulic graph, where a pump is an edge between two pressure
+  nodes.
+
+  Everything on it comes from the solve. Flow direction is the **sign** of the
+  solved pipe flow, so a line that reverses reverses on screen; a line animates
+  only while something is actually passing through it; an FT reads **its own**
+  edge and not a branch total; a valve shows position and flow as two separate
+  things, because 100 % open is not 100 % flow; a vessel's level is its
+  inventory. A solve that cannot stand behind its numbers says so in words.
+
+- The operator's two process pages are now named for what they are: **Process
+  flow** (topology-derived) and **Mimic** (the drawn P&ID geometry, live).
+
+
 ### Fixed
 
 - **A P&ID nozzle name could silently disconnect a line.** A pipe end naming a

@@ -956,3 +956,107 @@ tsc -b clean · production build clean
 189 Playwright specs passing · 2 failing, the same two as on a5b9793 and ac1a668
 sample QA baseline UNCHANGED — both new rules are silent on all five bundled files
 ```
+
+## K4 — a process view derived from the topology
+
+K3.2/K3.3 made the runtime correct. The remaining problem was presentational:
+the operator's PROCESS page was the P&ID's own geometry with live values
+painted on it, which is the right picture for an engineer and the wrong one for
+an operator.
+
+### Architecture
+
+```text
+P&ID (engineering source of truth)
+  └─ buildSimModel
+       ├─ ProcessModel          canonical topology — ONE of these
+       │    ├─ solveHydraulics  → signed pipe flows, node pressures
+       │    └─ buildProcessView → ProcessViewModel   (nodes, edges, LAYOUT)
+       └─ TagDef[] / ControllerSpec[]
+                                  ↓                         ↓
+                        simStore: STATIC             simStore: DYNAMIC
+                        processView                  pipeFlows, pipePressures,
+                        (built in enterRun,          tags, quality, alarms,
+                         never on a tick)            hydraulic status
+                                  └──────────┬──────────────┘
+                                             ↓
+                                    ProcessView.tsx (read-only)
+```
+
+The view **inverts** the hydraulic graph: there a pump is an EDGE between two
+pressure nodes, because that is what it is to a solver; here it is a BOX, and
+the pipe is the line between boxes. Device edges collapse into nodes that
+absorb their two port nodes, a vessel's nozzles collapse into one vessel, and
+pipe edges become lines.
+
+### Topology evidence — before and after
+
+`tests/hmi/processView.test.ts` recomputes a full census of the engineering
+model on both sides of building the view and requires them equal, on the K4
+fixture and all three bundled samples: widget count, tag count, pipe count,
+port count, node count, edge count, branch count, `edgeOfPipe` size, vessel
+count, equipment count, every `bindPipe` and `bindTank` binding, every
+controller pairing, and the issue count.
+
+On the K4 fixture the derivation produces:
+
+| | |
+| --- | --- |
+| drawn pipes | 9 → 9 view edges, each pipe appearing exactly once |
+| `ProcessModel` nodes | 17, every one claimed by exactly one box, none twice |
+| devices | 5 (P-101, FV-101, HV-102, T-101, LV-101) → 5 boxes |
+| vessels | 2, each ONE box however many nozzles |
+| inputs | 2, kept separate — `a1` and `b1` reach different boundary objects |
+| inline instruments | FT-101 on `a2`, PT-101 + PG-101 on `a3`, PG-102 on `a1` |
+| vessel instruments | LT-101 on TK-A, LT-102 on TK-B |
+| controllers | LIC-101 placed on LV-101, its final element |
+
+Asserted as invariants rather than counts: **every** node claimed exactly once
+and all of them claimed; every view edge is a real `ProcessModel` edge with the
+identical `pipeIds`; no two boxes overlap; every line starts on the box it
+leaves and ends on the box it enters; every object is downstream in x of what
+feeds it; and **none** of the laid-out coordinates equals the P&ID coordinate
+it came from.
+
+### Runtime evidence
+
+| Scenario | What the solve did | What the view showed |
+| --- | --- | --- |
+| **A** normal | `a2` 14.4 m³/h forward, `a3` 1.4 bar | every line with `abs(q) > SHUT_LEAK_MAX` animated forward and no other; FT-101 drew its own tag's PV, within the instrument's 0.8 % noise of `pipeFlows.a2` and over 1 m³/h away from the two-leg total; PT-101 likewise against `pipePressures.a3`, and 0.5 bar away from the pressure before the valve; TK-A's liquid height = level/100 to 2 dp |
+| **B** valve closure | 100 % → 25 % → 0 %, flow falling to below the leak ceiling | FT-101 fell at each step; the line went `data-flowing=0` and its arrow disappeared; FV-101 showed `POS 100 %` **and** a separate m³/h |
+| **C** pump trip | `a2` below `SHUT_LEAK_MAX` | `data-state=tripped`, the word TRIPPED, `a1`/`a2` still. The remaining motion was gravity redistributing what the pump had already delivered, so the assertion is the invariant — **every** edge animated iff its solved flow exceeds the ceiling |
+| **D** branches | `a3` and `b2` both live and different; `a4` ≠ `a5` | four separate lines, four separate flows; signed mass balance at the tee < 0.01 m³/h |
+| **E** reversal | `a4` positive, then **negative** after the pump stopped over a high TK-A | `data-direction` went `forward` → `reverse`, the overlay's `animationDirection` became `reverse`, the diagram did **not** relay out, and both vessels moved the way the sign said |
+| **F** invalid | `cavitating` non-empty at 400 m³/h on a suction that cannot supply it | the banner appeared in words; PG-102's quality became `uncertain` and carried its glyph. Separately: an instrument forced BAD printed `- - -` while its LINE went on animating, because a failed instrument is not a failed process |
+
+### HMI evidence
+
+Seven captures in `e2e/processView.spec.ts`, inspected:
+
+- **Continuity** — the plant reads left to right as one section: `SUPPLY → P-101 → FV-101 → T-101 → {TK-A, TK-B} → LV-101 → BOUNDARY`, with the second input joining at the tee. No gaps, no floating pipes, no crossings.
+- **Inline instruments** — each on a small plate with a stem down to its pipe. The first cut wrote tag and value end to end on one line and overhung the boxes either side; two stacked lines on an opaque plate fixed it. A tee's tag overflowed its 28 px box, so a fitting is now a circle with its tag beneath.
+- **Branch clarity** — the two destinations leave the tee on separate lines to separately-labelled vessels.
+- **Flow direction** — arrowheads plus dash travel. In capture 1 the second (gravity) source reads `DESTINATION` with its arrow pointing outward, because the pump holds the header above the 1 bar boundary and the passive source receives. That is the **one-boundary limitation** showing honestly rather than being papered over, and it is exactly the behaviour signed flow exists to represent.
+- **Alarm/quality separation** — capture 3 has the only saturated colour on any of them: P-101's alarm outline on a trip. Quality is a dash pattern and a glyph; state is fill and a word. The solve banner was moved OFF the alarm palette onto the quality channel during inspection, for that reason.
+- **Light/dark** — the ISA-101 light theme carries the same layout at ISA-101 contrast; the classic theme is the dark one. Every value is a theme token, so the page follows the workspace rather than holding a palette.
+
+### Performance
+
+| Plant | Nodes/edges | `buildProcessView` |
+| --- | --- | --- |
+| K4 fixture | 17 / 14 | **0.035 ms** |
+| `sample-plant` | 20 / 16 | 0.046 ms |
+| `sample-refinery-unit` | 43 / 31 | 0.107 ms |
+| synthetic, 500 widgets | 501 / 500 | 0.879 ms |
+
+Once per run. `tickOnce` costs 0.101 ms with the view published, and the layout
+object's identity is unchanged across 550 ticks — asserted, not just measured.
+
+### Gate
+
+```text
+3189 tests passing · 7 skipped · 0 failing      (3147 before, +42)
+tsc -b clean · production build clean
+196 Playwright specs passing (+8 new) · 2 failing, the same two as on a5b9793
+sample QA baseline unchanged
+```

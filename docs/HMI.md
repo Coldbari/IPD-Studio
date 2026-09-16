@@ -513,6 +513,97 @@ decision — remove, remap or ignore — stays yours.
 - Reconciliation is an **edit-mode** action. An operator station does not
   reshape its own screens.
 
+## The process view
+
+The operator workstation carries two pictures of the plant, and they answer
+different questions.
+
+| | **Mimic** | **Process flow** |
+| --- | --- | --- |
+| Geometry | the P&ID's own | laid out from the topology |
+| Answers | *where is this on the drawing?* | *what is the fluid doing?* |
+| Built from | the HMI screen | `ProcessModel` → `sim/processView.ts` |
+
+A P&ID is routed for drafting — long runs to keep a sheet tidy, crossings,
+instrument bubbles floated out to where they fit — and none of that says
+anything about the order the fluid passes through things. The **Process flow**
+page derives a second presentation of the same engineering model:
+
+```text
+P&ID  ->  ProcessModel (canonical)  ->  ProcessViewModel  ->  renderer
+                 ^                             ^
+          the one topology              layout + bindings only
+```
+
+**It is not a second topology.** Every node and edge on it carries the id of
+the `ProcessModel` node or edge it came from; nothing is invented and no
+connectivity decision is taken there. Delete the file and the plant still runs.
+
+**The graph is inverted, deliberately.** In the hydraulic model a pump or a
+valve is an EDGE — a conductor between two pressure nodes — because that is
+what it is to a solver. To an operator it is a thing you look at and click, and
+the pipe is the line between things. So each device edge collapses into a box
+that absorbs its two port nodes, each pipe edge becomes a line, and a vessel's
+nozzles collapse into one vessel. The result reads
+
+```text
+SUPPLY -> P-101 -> [FT-101] -> FV-101 -> [PT-101] -> T-101 -+-> TK-A -> LV-101 -> BOUNDARY
+SUPPLY -> HV-102 ------------------------------------------+-> TK-B
+```
+
+Objects are ranked by the **longest** path from anything with nothing feeding
+it, so a junction sits after everything that feeds it rather than beside one of
+them, and lanes are ordered by what feeds them so branches stay near the object
+they came off.
+
+### What is drawn, and where it comes from
+
+| On screen | Read from |
+| --- | --- |
+| Flow direction | the **sign** of `pipeFlows[pipe]` — never the drawn direction |
+| Flow animation | present only while `abs(q) > SHUT_LEAK_MAX`; speed from the magnitude; reversed when the sign is negative |
+| An FT | its own tag's PV, which the engine took from **its** edge — never a branch total |
+| A PT or gauge | its own tag's PV, from the solved pressure of **its** line |
+| A valve | position **and** flow, side by side and never conflated |
+| A pump | `STOPPED / STARTING / RUNNING / STOPPING / TRIPPED / DISABLED`, speed, and what it is actually passing |
+| A vessel | level from inventory, the volume held against its stated capacity, temperature |
+| A boundary | `SUPPLY` or `DESTINATION` **decided at runtime** by which way its line is running |
+
+**An inline instrument sits in its run**, on a small plate with a stem down to
+the pipe, because where a reading is taken is process information. A
+transmitter floated off to one side is a number with no place. Nothing bound to
+a pipe or a vessel is ever dropped for being "only a measurement"; an unbound
+display is *not* placed, because it has no process location, and data quality
+already reports it as having no model behind it.
+
+### Colour stays separated
+
+The only saturated colour on the page is an **alarm**. Equipment state is drawn
+with fill and a word; **quality** is drawn on the outline, as a dash pattern,
+plus its glyph. The banner that reports a solve which cannot stand behind its
+numbers carries the quality glyph and a dashed rule — deliberately *not* an
+alarm colour, because teaching people that orange can mean "the software is
+unsure" is how an alarm system stops working.
+
+`fluidId` is reserved as a future presentation token. There is no fluid
+identity and no mixing physics in this phase, and the view invents neither.
+
+### Static and dynamic are separated
+
+`simStore.processView` holds the nodes, edges and **layout**, built once in
+`enterRun` and never touched by a tick — topology and geometry change when the
+drawing does; flow, pressure, level and quality change five times a second.
+Measured: 0.035 ms to build on the K4 fixture, 0.11 ms on
+`sample-refinery-unit`, 0.88 ms on a synthetic 500-widget plant. A tick costs
+0.10 ms and the layout object's identity is unchanged across hundreds of them.
+
+### It is read-only
+
+The view reads flow, pressure, equipment state, measurements, quality and
+alarms. It writes nothing. Clicking an object hands back the **canonical tag**,
+so the faceplate it opens is the one every other surface opens — there is no
+runtime identity of its own anywhere in it.
+
 ## The hydraulic model
 
 `sim/hydraulic/` is a canonical process topology and a coupled pressure/flow

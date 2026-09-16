@@ -467,3 +467,55 @@ tsc -b clean · production build clean
 189 Playwright specs passing · 2 failing, both pre-existing on a5b9793
 sample QA baseline unchanged
 ```
+
+
+---
+
+## 18. Step K4 — a process view derived from the topology
+
+K3.2/K3.3 made the runtime correct. What was left was that the operator's
+process page was still the P&ID's own geometry with live values painted on it.
+
+`sim/processView.ts` derives a second PRESENTATION of the same engineering
+model — nodes, edges and a layout, every one carrying the id of the
+`ProcessModel` object it came from. It is not a second topology, and the P&ID
+is untouched: a full census of the engineering model is recomputed on both
+sides of building the view and required equal, on the K4 fixture and all three
+bundled samples.
+
+The graph is inverted on purpose. To a solver a pump is an edge between two
+pressure nodes; to an operator it is a thing you look at, and the pipe is the
+line between things. So devices become boxes, pipes become lines, and a
+vessel's nozzles collapse into one vessel.
+
+Everything on it is read from the solve: direction is the **sign** of the pipe
+flow, animation exists only while something is actually passing, an FT reads
+its own edge rather than a branch total, a valve shows position and flow as two
+separate things, and a vessel's level is its inventory. A solve that cannot
+stand behind its numbers says so, in words, on the quality channel rather than
+the alarm palette.
+
+**Static and dynamic are separated**, which §23 asked for and which the
+measurements bear out: the layout is built once per run (0.035–0.88 ms) and its
+object identity is unchanged across hundreds of ticks.
+
+The two operator pages are now named for what they are: **Process flow** (the
+topology-derived view) and **Mimic** (the drawn P&ID geometry, live). Neither
+replaced the other, and the engineering canvas is untouched.
+
+### State after K4
+
+```text
+3189 tests passing · 7 skipped · 0 failing
+tsc -b clean · production build clean
+196 Playwright specs passing · 2 failing, both pre-existing on a5b9793
+sample QA baseline unchanged
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P2 | The Overview page keeps its own linear flowsheet strip over the BRANCH projection. Both are presentations of the same compiled model, but there are now two presentation derivations; folding the strip onto `processView` would leave one. |
+| P2 | Fluid identity is a reserved token only. There is no fluid, no colour coding and no mixing physics, by design for this phase. |
+| P2 | A passive boundary cannot supply against a pumped header — the one-boundary limitation from K3.2, now visible on the process view as a second source reading `DESTINATION`. |

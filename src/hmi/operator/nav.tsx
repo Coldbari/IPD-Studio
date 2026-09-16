@@ -12,15 +12,16 @@ import { alarmCounts } from './summary'
  * this session at this station, and persisting it would put an operator's
  * navigation into the engineering drawing's undo history.
  */
-export type OperatorPage = 'overview' | 'process' | 'equipment' | 'alarms' | 'trends' | 'diagnostics'
+export type OperatorPage = 'overview' | 'flow' | 'process' | 'equipment' | 'alarms' | 'trends' | 'diagnostics'
 
 export const OPERATOR_PAGES: readonly OperatorPage[] = [
-  'overview', 'process', 'equipment', 'alarms', 'trends', 'diagnostics',
+  'overview', 'flow', 'process', 'equipment', 'alarms', 'trends', 'diagnostics',
 ]
 
 export const PAGE_LABEL: Record<OperatorPage, string> = {
   overview: 'Overview',
-  process: 'Process',
+  flow: 'Process flow',
+  process: 'Mimic',
   equipment: 'Equipment',
   alarms: 'Alarms',
   trends: 'Trends',
@@ -30,7 +31,8 @@ export const PAGE_LABEL: Record<OperatorPage, string> = {
 /** What each page is for, so an icon-free bar still explains itself. */
 const PAGE_HINT: Record<OperatorPage, string> = {
   overview: 'Plant status, alarms and key values at a glance',
-  process: 'The mimic screens — operate equipment here',
+  flow: 'The plant laid out the way the process runs, with live flow and pressure',
+  process: 'The drawn mimic screens — the P&ID geometry, with live values',
   equipment: 'Every drive, valve and vessel with its live state',
   alarms: 'The full alarm list, with filters and acknowledgement',
   trends: 'Plot any recorded signal over 1 to 60 minutes',

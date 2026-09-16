@@ -24,6 +24,8 @@ import type { SimSpeed } from './sim/units'
 import { History, qualityCode } from './sim/history'
 import type { FlowPath } from './sim/topology'
 import { projectTopology } from './sim/topology'
+import type { ProcessViewModel } from './sim/processView'
+import { buildProcessView } from './sim/processView'
 
 /**
  * What the hydraulic solve managed this tick, published for the operator.
@@ -126,6 +128,16 @@ interface SimStoreState {
   /** The plant as readable paths. STATIC for a run: topology changes only when
    *  the drawing does, so it is projected once at compile. */
   topology: FlowPath[]
+  /**
+   * The process view's nodes, edges and LAYOUT. Also STATIC for a run.
+   *
+   * Built once in `enterRun` and never touched by a tick, which is the whole
+   * separation: topology and geometry change when the drawing does, and flow,
+   * pressure, level and quality change five times a second. Rebuilding the
+   * layout per tick would lay the diagram out afresh sixty times a frame at
+   * 300×, and — worse — could move a box under an operator's cursor.
+   */
+  processView: ProcessViewModel | null
   /** Live flow through each pump/valve tag — faceplate readout. */
   equipFlows: Record<string, number>
   /** What the hydraulic solve managed this tick. Read it before trusting
@@ -208,7 +220,7 @@ function supSets(shelved: Record<string, number>, oos: Record<string, true>, tag
 
 export const useSimStore = create<SimStoreState>()((set, get) => ({
   mode: 'edit', playing: false, speed: 1, t: 0,
-  tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, topology: [], equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [],
+  tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, topology: [], processView: null, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [],
 
   enterRun: (screens, registry) => {
     model = buildSimModel(screens, registry)
@@ -217,12 +229,12 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
     const tags0 = initTags(model)
     // a fresh History per run: a new identity is how React learns the old
     // trend data is gone, and nothing from the previous run can leak forward
-    set({ mode: 'run', playing: true, t: 0, tags: tags0, defs: tagDefMap(model.defs), quality: qualityMap(model, tags0, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, topology: projectTopology(model.net), equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [] })
+    set({ mode: 'run', playing: true, t: 0, tags: tags0, defs: tagDefMap(model.defs), quality: qualityMap(model, tags0, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, topology: projectTopology(model.net), processView: buildProcessView(model.hydraulic, model.defs, model.controllers), equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [] })
   },
   exitRun: () => {
     model = null
     warm = undefined
-    set({ mode: 'edit', playing: false, t: 0, tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, topology: [], equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [] })
+    set({ mode: 'edit', playing: false, t: 0, tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, topology: [], processView: null, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [] })
   },
   playPause: () => set((s) => ({ playing: !s.playing })),
   setSpeed: (speed) => set({ speed }),

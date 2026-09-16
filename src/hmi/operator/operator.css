@@ -293,3 +293,94 @@
 .rc-preview ul { margin: var(--hmi-space-sm) 0 0; padding-left: var(--hmi-space-xl); }
 .rc-change { font-size: var(--hmi-font-xs); color: var(--hmi-text-muted); }
 .rc-change b { color: var(--hmi-text-secondary); font-weight: var(--hmi-weight-medium); }
+
+/* ── The process view ────────────────────────────────────────────────────────
+ * A flow diagram, not a mimic. Deliberately spare: the only saturated colour on
+ * it is an alarm, because if equipment state, quality and fluid all carried
+ * colour there would be nothing left for the one thing that must be seen from
+ * across a room.
+ *
+ * Every value is a theme token, so this follows the workspace's theme rather
+ * than carrying a palette of its own. */
+.pv-page { display: flex; flex-direction: column; gap: var(--hmi-space-md); min-height: 0; }
+.pv-svg {
+  flex: 1; min-height: 0; width: 100%;
+  background: var(--hmi-surface-sunken);
+  border: var(--hmi-border-thin) solid var(--hmi-border);
+  border-radius: var(--hmi-radius-md);
+}
+
+/* A statement about the SOLVE, not about the plant.
+ *
+ * DELIBERATELY NOT AN ALARM COLOUR. An alarm means a process condition an
+ * operator must act on, and this means "the numbers below are not readings" —
+ * a different thing entirely. Colouring it red or orange would spend the one
+ * palette that has to keep its meaning, and would teach people that orange can
+ * mean "the software is unsure", which is how an alarm system stops working.
+ *
+ * So it carries the QUALITY channel instead, the same one the object outlines
+ * use: a dashed rule and the quality glyph, on a raised surface. Shape and
+ * words, not hue. */
+.pv-banner {
+  display: flex; align-items: baseline; gap: var(--hmi-space-md);
+  padding: var(--hmi-space-sm) var(--hmi-space-lg);
+  background: var(--hmi-surface-raised); color: var(--hmi-text);
+  font-weight: var(--hmi-weight-bold); font-size: var(--hmi-font-base);
+  border: var(--hmi-border-thin) solid var(--hmi-border-strong);
+  border-left: 5px dashed var(--hmi-border-strong);
+  border-radius: var(--hmi-radius-sm);
+}
+.pv-banner .pv-banner-glyph {
+  font-size: var(--hmi-font-lg); line-height: 1; color: var(--hmi-text-secondary);
+}
+
+/* ── Lines ───────────────────────────────────────────────────────────────── */
+.pv-pipe { stroke: var(--hmi-pipe); stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
+/* The moving overlay exists ONLY while the solve says something is passing.
+   `.hmi-flow` is the same dash animation the mimic uses, and it honours
+   prefers-reduced-motion in hmi.css — with the arrowhead below still showing
+   direction, so nothing is conveyed by motion alone. */
+.pv-flowing { stroke: var(--hmi-pipe-flow); stroke-dasharray: 9 13; }
+.pv-arrow { fill: var(--hmi-pipe-flow); }
+
+/* An instrument's stem. Short and attached, so a reading is visibly taken FROM
+   the line it names rather than floating near it. */
+.pv-tap { stroke: var(--hmi-border-strong); stroke-width: 1; }
+/* ...and the plate it is written on, so a reading stays legible over whatever
+   the run happens to pass. */
+.pv-chip { fill: var(--hmi-surface); stroke: var(--hmi-border); stroke-width: 1; }
+
+/* ── Objects ─────────────────────────────────────────────────────────────── */
+.pv-box { fill: var(--hmi-surface); stroke: var(--hmi-border-strong); stroke-width: 1.5; }
+.pv-node { cursor: pointer; }
+.pv-node.term { cursor: default; }
+.pv-node:focus-visible { outline: none; }
+.pv-node:focus-visible .pv-box { stroke: var(--hmi-accent); stroke-width: 3; }
+.pv-node:hover .pv-box { stroke: var(--hmi-accent); }
+/* the liquid a vessel holds: height is the inventory-derived level, nothing else */
+.pv-liquid { fill: var(--hmi-pipe-flow); opacity: 0.35; }
+
+.pv-tag { fill: var(--hmi-text); font-size: 11px; font-weight: var(--hmi-weight-bold); }
+.pv-val { fill: var(--hmi-text-secondary); font-size: 10px; }
+.pv-term { fill: var(--hmi-text-muted); font-size: 10px; font-weight: var(--hmi-weight-bold); letter-spacing: 0.06em; }
+.pv-state { fill: var(--hmi-text-muted); font-size: 9px; font-weight: var(--hmi-weight-bold); letter-spacing: 0.04em; }
+.pv-reading { font-size: 10px; }
+.pv-reading .pv-tag { font-size: 10px; }
+.pv-q { fill: var(--hmi-alarm-medium); font-weight: var(--hmi-weight-bold); }
+
+/* EQUIPMENT STATE is shape and word, never colour on its own: a stopped drive
+   is drawn hollow, a tripped one gets the alarm stroke it has earned. */
+.pv-node[data-state='running'] .pv-box { fill: var(--hmi-surface-raised); }
+.pv-node[data-state='tripped'] .pv-box { stroke: var(--hmi-alarm-high); stroke-width: 2.5; }
+.pv-node[data-state='disabled'] .pv-box { stroke-dasharray: 4 3; }
+
+/* QUALITY is its own channel, drawn on the OUTLINE, so it can never be read as
+   an alarm priority or as a process value. */
+.pv-node[data-quality='uncertain'] .pv-box,
+.pv-node[data-quality='stale'] .pv-box { stroke-dasharray: 5 3; }
+.pv-node[data-quality='bad'] .pv-box { stroke-dasharray: 2 3; }
+
+/* ALARM is the one saturated colour on this page, and it is reserved. */
+.pv-node[data-alarm='high'] .pv-box { stroke: var(--hmi-alarm-high); stroke-width: 3; }
+.pv-node[data-alarm='medium'] .pv-box { stroke: var(--hmi-alarm-medium); stroke-width: 3; }
+.pv-node[data-alarm='low'] .pv-box { stroke: var(--hmi-alarm-low); stroke-width: 3; }
