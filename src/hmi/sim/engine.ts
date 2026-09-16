@@ -252,7 +252,14 @@ export function initTags(model: SimModel): Tags {
       case 'motor':
         // A heater also carries an OUTPUT: an operator starts it, and a
         // temperature controller modulates its duty between 0 and 100 %.
-        tags[d.name] = d.heaterKw !== undefined ? { RUN: 0, RAMP: 0, OP: 100 } : { RUN: 0, RAMP: 0 }
+        tags[d.name] = d.heaterKw !== undefined
+          ? { RUN: 0, RAMP: 0, OP: 100 }
+          // SPD is the speed COMMAND, %, and exists only on a machine whose
+          // record declares a drive. 100 % is not an invented limit: it is
+          // where the pump curve's rated duty is defined, so it is where a
+          // machine runs unless something asks for less — which is exactly
+          // what a fixed-speed one has always done.
+          : d.vsd === true ? { RUN: 0, RAMP: 0, SPD: 100 } : { RUN: 0, RAMP: 0 }
         break
       case 'valve': {
         /**
@@ -380,6 +387,25 @@ function pipePressureMap(model: SimModel, hyd: SolveResult): Record<string, numb
     for (const id of e.pipeIds) out[id] = (a + b) / 2
   }
   return out
+}
+
+/**
+ * The shaft fraction a running machine is aiming at, 0..1.
+ *
+ * A machine with no declared drive aims at rated speed, which is what it has
+ * always done. One with a drive aims at its command, held inside the turndown
+ * its record states — and a command the record cannot honour is CLAMPED here
+ * and REPORTED by `pump-speed-out-of-range`, rather than being obeyed into a
+ * region the machine does not have.
+ */
+function speedTarget(t: Record<string, number>, d: TagDef): number {
+  if (d.vsd !== true) return 1
+  const asked = t.SPD
+  if (asked === undefined || !Number.isFinite(asked)) return 1
+  const floor = d.minSpeedPct !== undefined && Number.isFinite(d.minSpeedPct)
+    ? clamp(d.minSpeedPct / 100, 0, 1)
+    : 0
+  return clamp(asked / 100, floor, 1)
 }
 
 export interface TickOptions {
@@ -543,9 +569,29 @@ function step(
     if (d.kind === 'motor') {
       if ((t.FAULT ?? 0) >= 0.5 && (t.RUN ?? 0) >= 0.5) t.RUN = 0 // a trip opens the breaker
       const commanded = (t.RUN ?? 0) >= 0.5 && (t.FAULT ?? 0) < 0.5
-      t.RAMP = commanded ? Math.min(1, (t.RAMP ?? 0) + dt / RAMP_S)
-        : (t.FAULT ?? 0) >= 0.5 ? 0
-        : Math.max(0, (t.RAMP ?? 0) - dt / COAST_S)
+      /**
+       * THE SHAFT CHASES A TARGET, and the only thing K12 changed is what that
+       * target is.
+       *
+       * A fixed-speed machine's target is 1 when it is told to run — exactly
+       * what this did before, and what every drawing without a declared drive
+       * still gets. A VSD's target is its speed COMMAND, clamped to the
+       * turndown its record states.
+       *
+       * Two rates, and the distinction is physical rather than convenient.
+       * `RAMP_S` is the DRIVE changing the shaft, so it governs any commanded
+       * change while the machine is energised — up or down. `COAST_S` is
+       * nothing driving it: a de-energised shaft freewheeling down. Using the
+       * drive rate for a commanded slow-down is a STATED ASSUMPTION, not a
+       * manufacturer figure; no record in this model carries a deceleration
+       * time.
+       */
+      const target = commanded ? speedTarget(t, d) : 0
+      const cur = t.RAMP ?? 0
+      const rate = commanded ? dt / RAMP_S : dt / COAST_S
+      t.RAMP = (t.FAULT ?? 0) >= 0.5 ? 0
+        : cur < target ? Math.min(target, cur + rate)
+        : Math.max(target, cur - rate)
     }
     if (d.kind === 'valve') {
       const cmd = t.OP ?? 0

@@ -258,7 +258,13 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
       {kind === 'motor' && (
         <>
           <Section title="Process" testId="fp-values">
-            <Value label="Speed" value={(t.RAMP ?? 0) * 100} unit="%" digits={0} />
+            {/* THE SHAFT, always — this is what the pump curve reads and what
+                the plant is actually doing. A command is shown beside it and
+                never in place of it. */}
+            <Value label="Actual speed" value={(t.RAMP ?? 0) * 100} unit="%" digits={0} />
+            {t.SPD !== undefined && (
+              <Value label="Speed command" value={t.SPD} unit="%" digits={0} />
+            )}
             {flow !== undefined && <Value label="Flow" value={flow} unit="m³/h" />}
           </Section>
           <Section title="Command">
@@ -275,6 +281,23 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
               </div>
             )}
           </Section>
+          {/* A DRIVE, only where the record declares one. A machine without a
+              VSD gets no speed control here, because it has none. The command
+              and the shaft are shown apart above: a drive taking time to get
+              somewhere is a ramp, not a deviation, and carries no alarm. */}
+          {t.SPD !== undefined && (
+            <Section title="Speed">
+              <input data-testid="fp-speed" type="range" min={0} max={100} value={t.SPD}
+                aria-label="Pump speed command per cent"
+                onChange={(e) => write(tag, 'SPD', Number(e.target.value))} style={{ width: '100%' }} />
+              <div className="fp-row">
+                {[100, 75, 50].map((v) => (
+                  <button key={v} className="fp-btn" data-testid={`fp-speed-${v}`}
+                    onClick={() => write(tag, 'SPD', v)}>{v} %</button>
+                ))}
+              </div>
+            </Section>
+          )}
         </>
       )}
 

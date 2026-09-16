@@ -827,3 +827,43 @@ tsc -b clean · production build clean
 | P2 | No manufacturer equipment data: valve resistance is a calibrated constant rather than a Cv, and the pump has no NPSH curve. |
 | P2 | A stopped pump blocks — the check valve is assumed, not modelled. |
 | P2 | Boundary dynamics are pressure only (K10); no scenario library (K9); no reservoir model; mixing unsupported. |
+
+
+---
+
+## 26. Step K12 — variable-speed drive
+
+K11's recommended next phase, taken. It found the affinity laws already in the
+curve and the solver already taking a shaft fraction, with the runtime deriving
+that fraction from `RUN` alone — so nothing could ask for part speed.
+
+The change is one line of intent: **the shaft chases a target, and the target is
+now the speed command instead of always being 1.** A machine with no declared
+drive still targets 1, which is why every pre-existing test passed unchanged the
+moment it landed.
+
+Two new fields — `duty.vsd` and `duty.minSpeed` — in the `duty` group beside the
+`duty.speed` already there. Two documented assumptions rather than invented
+data: maximum speed is 100 % because that is where the curve is defined, and the
+drive's ramp rate is used for a commanded slow-down because no record carries a
+deceleration time.
+
+Command, capability and actual shaft are three distinct things and are never
+collapsed. The faceplate shows the shaft first and the command beside it.
+
+### State after K12
+
+```text
+3410 tests passing · 7 skipped · 0 failing
+tsc -b clean · production build clean
+207 Playwright passing · 2 failing, both pre-existing on a5b9793
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P2 | No automatic speed control — no controller commands pump speed, and adding one is a new loop with its own tuning question. |
+| P2 | No deceleration time on the record; the drive rate is used both ways. |
+| P2 | Still no manufacturer equipment data — valve resistance is one calibrated constant for every valve. |
+| P2 | No scenario library (K9); boundary dynamics are pressure only (K10); mixing unsupported (K5). |

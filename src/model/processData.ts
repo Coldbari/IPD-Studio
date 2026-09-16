@@ -34,6 +34,24 @@ export interface ProcessEngineering {
   headBar?: number
   /** Shaft or element power, kW (`duty.power`). */
   powerKw?: number
+  /**
+   * True when the record says this driver is on a VARIABLE SPEED DRIVE.
+   *
+   * Absent — which is every machine drawn before K12 — means a fixed-speed
+   * motor, and it behaves exactly as it always has: commanded on, it runs at
+   * its rated speed. A VSD is a capability a record declares, never something
+   * inferred from a tag or handed out by default.
+   */
+  vsd?: boolean
+  /**
+   * The lowest speed the drive may be commanded to, % of rated
+   * (`duty.minSpeed`).
+   *
+   * A real datasheet figure — a drive has a turndown below which it will not
+   * run. Absent means the record has not stated one and no limit is imposed;
+   * nothing here invents a number for it.
+   */
+  minSpeedPct?: number
   /** Design pressure, bar (`design.pressure`, else `duty.designPressure`). */
   designPressureBar?: number
   /** Operating temperature, °C (`design.operatingTemperature`, else `design.temperature`). */
@@ -127,7 +145,29 @@ export function processFor(registry: Registry | undefined, tag: string | undefin
     designPressureBar: convert(q('design.pressure') ?? q('duty.designPressure'), PRESSURE, 1),
     operatingTempC: convert(q('design.operatingTemperature') ?? q('design.temperature'), TEMPERATURE, 1),
     operatingPressureBarA: operatingPressure(f['design.operatingPressure']),
+    vsd: truthy(f['duty.vsd']),
+    minSpeedPct: percent(f['duty.minSpeed']),
   }
+}
+
+/** A yes/no field as an engineer writes one. `undefined` when unstated, so
+ *  "not said" and "said no" stay different things. */
+function truthy(raw: string | undefined): boolean | undefined {
+  const v = raw?.trim().toLowerCase()
+  if (v === undefined || v === '') return undefined
+  if (['yes', 'y', 'true', '1', 'vsd', 'vfd', 'variable'].includes(v)) return true
+  if (['no', 'n', 'false', '0', 'fixed', 'none'].includes(v)) return false
+  return undefined
+}
+
+/** A percentage. Bare numbers are percent, because that is how a speed is
+ *  written. Returns `undefined` for anything unreadable — never zero. */
+function percent(raw: string | undefined): number | undefined {
+  const q = parseQuantity(raw)
+  if (q === null) return undefined
+  const u = q.unit.trim().toLowerCase()
+  if (u !== '' && u !== '%' && u !== 'pct' && u !== 'percent') return undefined
+  return Number.isFinite(q.value) ? q.value : undefined
 }
 
 /**

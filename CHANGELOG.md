@@ -8,6 +8,25 @@ All notable changes to IPD Studio. Format follows
 
 ### Added
 
+- **Variable-speed pumps.** A machine whose engineering record declares
+  `duty.vsd` can be commanded to part speed, from an operator's faceplate or a
+  runtime scenario, with an optional `duty.minSpeed` turndown. The affinity laws
+  were already in the pump curve; what was missing was a way to ask for a speed.
+
+  **The command and the shaft are different things**, and the faceplate shows
+  both: ask for 30 % and the plant goes on running at the speed the drive has
+  actually reached until it gets there. The solver reads the shaft, never the
+  command.
+
+  A machine that declares nothing is **fixed-speed and unchanged** — and a speed
+  command on one does not quietly switch variable speed on, it is reported.
+
+- `pump-speed-config` reports a minimum speed configured on a machine with no
+  drive to turn down, or a turndown that is not a readable percentage.
+
+
+### Added
+
 - **Equipment runtime state says what is deciding it.** A derivation — not a new
   store — names whether a pump or valve is being driven by a trip, a controller,
   a scenario or the operator, from state that already exists. It also reports the

@@ -1986,3 +1986,126 @@ tsc -b clean · production build clean
 - **A stopped pump blocks** — the check valve is assumed, not modelled.
 - No stiction, no hysteresis, no mechanical dynamics. All out of scope and none
   faked.
+
+## K12 — variable-speed drive
+
+K11 found the affinity laws already in the pump curve and the solver already
+taking a shaft fraction — but the runtime **derived** that fraction from `RUN`
+alone, so nothing could ask for part speed. K12 closes that, and the change is
+one line of intent: **the shaft chases a target, and the target is now the speed
+command instead of always being 1.**
+
+### Engineering fields
+
+| Field | Meaning |
+| --- | --- |
+| `duty.vsd` | **Variable speed drive** — yes/no. Absent means fixed-speed |
+| `duty.minSpeed` | the turndown below which the drive will not run, % |
+
+Both in the existing `duty` group, beside the `duty.speed` that was already
+there. `yes/y/true/1/vsd/vfd/variable` and `no/n/false/0/fixed/none` are read;
+anything else is `undefined`, so **"not said" and "said no" stay different
+things**.
+
+**Two documented assumptions, neither presented as manufacturer data:**
+
+- **Maximum speed is 100 %** — not an invented limit but where the curve is
+  defined: `H₀` is the shutoff head *at rated speed*, so `r > 1` would be
+  extrapolating a curve the record does not describe. No field for it.
+- **Default speed is 100 %** — because that is what a pump told to run has
+  always done here, and a VSD machine with no command must behave like one.
+
+With **no** turndown stated, no limit is imposed: a test asks for 5 % on a drive
+with no `duty.minSpeed` and gets 5 %.
+
+### Runtime state — three distinct things
+
+```text
+duty.vsd          capability   engineering record, static
+SPD               command      %, runtime, operator or scenario
+RAMP              actual       shaft fraction 0..1, what the CURVE reads
+```
+
+Command and actual are never collapsed. The faceplate shows **Actual speed**
+first and **Speed command** beside it, never one in place of the other.
+
+### The pump curve is untouched
+
+`H = H₀·r²·(1 − (Q/(1.5·Q_r·r))²)` is the same equation it has been since K2.
+Measured: halving the speed leaves the head at **under 45 %** of its full-speed
+value — the `r²` doing it, not a linear derating.
+
+### Command precedence — the existing model, extended by one target
+
+```text
+FAULT            → shaft 0                       (unchanged, and still wins)
+RUN off          → coast to 0 at COAST_S         (unchanged)
+RUN on, no VSD   → target 1                      (unchanged: every legacy pump)
+RUN on, VSD      → target clamp(SPD/100, min, 1) (the only new branch)
+```
+
+**Two rates, and the distinction is physical rather than convenient.** `RAMP_S`
+is the *drive* changing the shaft, so it governs any commanded change while
+energised — up or down. `COAST_S` is *nothing* driving it: a de-energised shaft
+freewheeling. Using the drive rate for a commanded slow-down is a **stated
+assumption**; no record in this model carries a deceleration time.
+
+There is **no PID speed loop**. §7 says not to create one to demonstrate the
+feature, and no existing controller commands pump speed. Operator and scenario
+are the command sources.
+
+### Actual versus command
+
+Ask a running machine for 30 % and one second later the shaft is still above
+0.3 and the plant is still running at the shaft — the head at that instant is
+strictly between the full-speed and final values. The solver reads `RAMP`; it
+has never read `SPD` and does not now.
+
+### Causal chain
+
+```text
+operator / scenario ─► SPD ─► speedTarget(clamped to turndown)
+                                  ↓
+                       existing shaft dynamics (RAMP_S / COAST_S)
+                                  ↓
+                        RAMP  ─► pumpHead(duty, RAMP, Q)   ← unchanged curve
+                                  ↓
+                            solveHydraulics
+                                  ↓
+          pressures · SIGNED flows · FT · PT · inventory · alarms · history
+```
+
+FT and PT track *their own* solved quantities within the instrument's 0.8 %
+band at 100, 70, 40 and 20 %, and a 63 % command never appears as a reading.
+
+### Invalid commands
+
+| | |
+| --- | --- |
+| `NaN` / `Infinity` | ignored — the machine stays at rated, **not** at zero, and nothing downstream becomes non-finite |
+| below turndown | **held** at the limit; the command still reads what was asked, so the clamp is visible rather than silent |
+| speed on a **fixed-speed** machine | refused by name — *"has no variable speed drive on its record"* — and behaviour does **not** switch on |
+| outside the stated range | reported, held at the nearest end |
+| `duty.minSpeed` without `duty.vsd` | `pump-speed-config`, `warning` — a turndown with no drive to turn down |
+| unreadable or out-of-range turndown | same rule |
+
+### Gate
+
+```text
+3410 tests passing · 7 skipped · 0 failing      (+23)
+tsc -b clean · production build clean
+207 Playwright passing · 2 failing — the SAME two as on a5b9793
+```
+
+Every pre-existing test passed unchanged the moment the shaft-target change
+landed, which is the backward-compatibility claim in its strongest form: no
+fixed-speed machine anywhere moved.
+
+### Limitations
+
+- **No automatic speed control.** No controller commands speed; that would be a
+  new loop and a new tuning question.
+- **No deceleration time on the record** — the drive's ramp rate is used for
+  both directions, stated as an assumption.
+- **No speed above rated.** The curve is not defined there.
+- **No motor data** — no efficiency, no power draw, no minimum-flow protection.

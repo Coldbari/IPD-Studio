@@ -234,6 +234,9 @@ export interface ScenarioProblem {
 export function validateScenario(
   model: ProcessModel,
   scenario: Scenario | null,
+  /** The compiled tag definitions, so a speed override can be checked against
+   *  the machine's DECLARED capability rather than assumed to apply. */
+  defs: readonly { name: string; vsd?: boolean; minSpeedPct?: number }[] = [],
 ): ScenarioProblem[] {
   const out: ScenarioProblem[] = []
   for (const [tag, r] of terminalPressures(model, scenario)) {
@@ -244,10 +247,30 @@ export function validateScenario(
   const known = new Set<string>()
   for (const [tag] of model.equipment) known.add(tag)
   for (const [tag] of model.vesselNodes) known.add(tag)
+  const byName = new Map(defs.map((d) => [d.name, d]))
   for (const o of scenario?.overrides ?? []) {
     if (o.kind !== 'signal') continue
     if (!Number.isFinite(o.value)) {
       out.push({ tag: o.tag, reason: `${o.tag}.${o.signal} is being set to ${String(o.value)}, which is not a number.` })
+      continue
+    }
+    if (o.signal !== 'SPD') continue
+    /**
+     * A SPEED COMMAND ONLY MEANS SOMETHING ON A DRIVE.
+     *
+     * Asking a fixed-speed machine for 60 % must NOT quietly switch variable
+     * speed on — the record says what the machine is, and a scenario cannot
+     * re-specify it. So the command is refused by name rather than obeyed.
+     */
+    const d = byName.get(o.tag)
+    if (d === undefined) continue // an unknown tag is already someone else's problem
+    if (d.vsd !== true) {
+      out.push({ tag: o.tag, reason: `${o.tag} has no variable speed drive on its record, so a speed command does nothing. Declare "Variable speed drive" on it, or command RUN instead.` })
+      continue
+    }
+    const floor = d.minSpeedPct ?? 0
+    if (o.value < floor || o.value > 100) {
+      out.push({ tag: o.tag, reason: `${o.tag} was commanded to ${o.value} %, outside its ${floor}-100 % range. It is being held at the nearest end.` })
     }
   }
   return out.sort((a, b) => a.tag.localeCompare(b.tag) || a.reason.localeCompare(b.reason))
@@ -353,6 +376,12 @@ export interface EquipmentState {
   source: CommandSource
   /** True while the two disagree by more than the deviation limit. */
   deviating: boolean
+  /**
+   * A VSD pump only: the speed COMMAND, %, as against `actual` which is the
+   * shaft. They differ for as long as the drive takes to get there, and that
+   * is a ramp rather than a fault.
+   */
+  speedCommand?: number
 }
 
 export function resolveEquipment(
@@ -380,6 +409,7 @@ export function resolveEquipment(
     return {
       tag, source,
       command: (t.RUN ?? 0) >= 0.5 ? 1 : 0,
+      ...(t.SPD !== undefined ? { speedCommand: t.SPD } : {}),
       // the SHAFT, which lags the command through spin-up and coast-down and
       // is zero the instant a trip opens the breaker
       actual: (t.FAULT ?? 0) >= 0.5 ? 0 : (t.RAMP ?? ((t.RUN ?? 0) >= 0.5 ? 1 : 0)),

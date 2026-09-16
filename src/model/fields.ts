@@ -109,6 +109,10 @@ export const FIELD_CATALOG: Record<EntityKind, FieldSection[]> = {
         { key: 'duty.head', label: 'Head / differential' },
         { key: 'duty.power', label: 'Driver power' },
         { key: 'duty.speed', label: 'Speed' },
+        // A driver that can be run at part speed says so here. Absent means a
+        // fixed-speed machine, which is what every pump drawn before K12 is.
+        { key: 'duty.vsd', label: 'Variable speed drive' },
+        { key: 'duty.minSpeed', label: 'Minimum speed' },
         { key: 'duty.designPressure', label: 'Design pressure' },
         { key: 'duty.designTemperature', label: 'Design temperature' },
       ],

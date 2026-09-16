@@ -293,8 +293,59 @@ export const terminalBadSignal: Rule = {
   },
 }
 
+/**
+ * A DRIVE CONFIGURED ON A MACHINE THAT HAS NOT DECLARED ONE.
+ *
+ * `duty.minSpeed` is a turndown limit, and a turndown limit is meaningless
+ * without a variable speed drive to turn down. A record carrying one without
+ * `duty.vsd` has been half filled in: the machine will run fixed-speed and the
+ * limit will never apply, which is the sort of thing nobody notices until a
+ * scenario built around part-speed operation quietly does not happen.
+ *
+ * Also catches a limit that is not a percentage, because a turndown of "low"
+ * is not data.
+ */
+export const pumpSpeedConfig: Rule = {
+  id: 'pump-speed-config',
+  title: 'Drive speed configured without a drive',
+  severity: 'warning',
+  discipline: 'process',
+  why: 'A minimum speed only means something on a variable speed drive. Without one the machine runs at rated speed and the limit is never applied.',
+  run(ix) {
+    const out = []
+    const seen = new Set<string>()
+    for (const screen of ix.doc.hmiScreens ?? []) {
+      for (const w of screen.widgets) {
+        if (w.type !== 'pump' && w.type !== 'equip') continue
+        if (!w.tag || seen.has(w.tag)) continue
+        seen.add(w.tag)
+        const f = ix.doc.registry?.[w.tag]?.fields
+        const stated = f?.['duty.minSpeed']
+        if (stated === undefined || stated.trim() === '') continue
+        const proc = processFor(ix.doc.registry, w.tag)
+        if (proc.minSpeedPct === undefined) {
+          out.push(finding(pumpSpeedConfig, w.tag,
+            `${w.tag}'s minimum speed reads "${stated}", which is not a percentage. Give it one — "20 %".`))
+          continue
+        }
+        if (proc.minSpeedPct < 0 || proc.minSpeedPct > 100) {
+          out.push(finding(pumpSpeedConfig, w.tag,
+            `${w.tag}'s minimum speed is ${proc.minSpeedPct} %, which is outside 0-100 %.`))
+          continue
+        }
+        if (proc.vsd !== true) {
+          out.push(finding(pumpSpeedConfig, w.tag,
+            `${w.tag} states a minimum speed of ${proc.minSpeedPct} % but does not declare a variable speed drive, so it will run at rated speed and the limit will never apply. Set "Variable speed drive" to Yes.`))
+        }
+      }
+    }
+    return out
+  },
+}
+
 export const PROCESS_RULES: Rule[] = [
   noRelief, lineNoService, tankCapacityDefaulted,
   pumpSuctionInsufficient, pumpSuctionUnsupplied,
   terminalNoPressure, terminalBadPressure, terminalBadSignal,
+  pumpSpeedConfig,
 ]

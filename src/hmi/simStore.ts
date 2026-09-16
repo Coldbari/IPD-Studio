@@ -404,7 +404,7 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
     set({
       scenario,
       terminals: Object.fromEntries(resolved),
-      scenarioProblems: validateScenario(m.hydraulic, scenario),
+      scenarioProblems: validateScenario(m.hydraulic, scenario, m.defs),
     })
     // EQUIPMENT goes through the ordinary write path — the same one an operator
     // uses — so the journal records it, quality recomputes, and there is no

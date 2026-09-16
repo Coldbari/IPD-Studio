@@ -101,6 +101,21 @@ export interface TagDef {
   /** Pump: rated flow m³/h and shutoff head bar at rated speed. */
   ratedFlow?: number
   head?: number
+  /**
+   * The driver runs on a VARIABLE SPEED DRIVE, from `duty.vsd`.
+   *
+   * Absent means fixed-speed, which is every machine drawn before K12: told to
+   * run, it goes to rated speed and stays there. A speed command on a machine
+   * that has not declared this does NOT quietly switch the behaviour on — it is
+   * reported, by `pump-speed-not-supported`.
+   */
+  vsd?: boolean
+  /**
+   * The lowest speed the drive may be commanded to, % of rated, from
+   * `duty.minSpeed`. Absent means the record states no turndown limit and none
+   * is imposed; no figure is invented for it.
+   */
+  minSpeedPct?: number
   /** Heater duty kW. Its PRESENCE is what marks a driven tag as a heater
    *  rather than a pump, so the flow network never treats it as a driver. */
   heaterKw?: number
@@ -182,6 +197,10 @@ function defFor(w: HmiWidget, registry: Registry | undefined): TagDef | null {
         name: w.tag, kind: 'motor', min: 0, max: 1,
         ratedFlow: proc.ratedFlowM3h ?? DEFAULTS.pumpFlowM3h,
         head: proc.headBar ?? DEFAULTS.pumpHeadBar,
+        // a DECLARED capability, never a default: a machine whose record says
+        // nothing is fixed-speed and behaves exactly as it always has
+        ...(proc.vsd === true ? { vsd: true } : {}),
+        ...(proc.minSpeedPct !== undefined ? { minSpeedPct: proc.minSpeedPct } : {}),
       }
     }
     case 'valve':
