@@ -119,10 +119,24 @@ describe('a control-valve plate', () => {
   })
 
   it('reports deviation when the position is not following the command', async () => {
-    sim().writeTag('PV-101', 'STUCK', 1)
-    sim().writeTag('PV-101', 'OP', 100)
+    // PIC-101 drives PV-101, so the COMMAND has to come from the loop — a
+    // write straight to the valve's OP is overwritten on the next tick. In
+    // MANUAL the operator's output is the command, which is what this test
+    // means by one.
+    //
+    // It used to write to the valve directly and still pass, because a
+    // controller-driven valve was seeded 40 % open at RUN and the controller
+    // then drove its output away from that: the deviation came from the seed,
+    // not from the stuck valve. That seed is gone (K3.3, Finding 3) — every
+    // throttling valve now starts shut — so the fixture has to state the
+    // command it means.
+    sim().writeTag('PIC-101', 'MODE', 0)
+    sim().writeTag('PV-101', 'STUCK', 1) // jammed at 0 %
+    sim().writeTag('PIC-101', 'OP', 100) // ...while being told to open fully
     tick(10)
     const host = await plate(w('v'))
+    expect(sim().tags['PV-101']!.POS).toBe(0)   // it really did not move
+    expect(sim().tags['PV-101']!.DEVT!).toBeGreaterThan(0)
     expect(has(host, 'fp-v-deviation')).not.toBeNull()
   })
 

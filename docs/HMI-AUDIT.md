@@ -802,3 +802,157 @@ The two Playwright failures (`equip.spec.ts` compressor faceplate,
 `screenshot.spec.ts` faceplate v2) were verified to fail identically on the
 parent commit `a5b9793`. They are not caused by this step and are not fixed by
 it.
+
+## K3.3 — closing the three findings K3.2 carried forward
+
+A narrow closure phase. No new phase, no solver change, no controller change.
+Two of the three turned out to sit on top of defects worse than the findings
+themselves.
+
+### Finding 1 — pump suction / cavitation
+
+**Root cause.** A pump's rated flow is engineering data; the path that has to
+deliver it is drawing data; nothing compared them. The only signal was
+`SolveResult.cavitating` at RUN time, on a plant already drawn and issued.
+
+**Engineering decision.** A static check, in the **existing Checks engine** —
+two `Rule`s in `validate/rules/process.ts` adapting one pure derivation in
+`model/suction.ts`, the same split `validate/rules/diagnostics.ts` already
+uses. No new framework, no new diagnostic category, no change to the
+seven-category ledger or the reconciliation view.
+
+**It is not an NPSH calculation**, and says so in the finding text. NPSHa needs
+the fluid, its vapour pressure at the pumping temperature, its density and the
+static lift; NPSHr needs the machine's NPSH curve. The model holds none of
+them — one incompressible fluid with no identity, no suction temperature, no
+elevation beyond a vessel's own liquid head. What it computes is hydraulic
+capacity: the lowest-resistance route from the suction nozzle to a pressure
+source, over the canonical `ProcessModel`, priced with that model's own
+`ΔP = R·Q·|Q|`. The most such a path can pass is `√(P_source / R)`.
+
+**The threshold is the physics, and it had to be.** The measurement that
+decided this:
+
+| drawing | pump | source | `Q_max` | rated | verdict |
+| --- | --- | --- | --- | --- | --- |
+| `sample-plant` | P-101 | vessel TK-101 @ 40 % (1.120 bar) | 52.92 | 50 | ok, 5.8 % margin |
+| `sample-refinery-unit` | P-201 | vessel TK-201 @ 40 % | 52.92 | 50 | ok, 5.8 % margin |
+| `template-hmi-demo` | P-101 | boundary (1.000 bar) | **50.00** | **50** | exactly at capability |
+
+That last row is not a coincidence:
+
+```text
+√(supplyPressureBar / PIPE_K) = √(1 / 4e-4) = 50 m³/h = DEFAULTS.pumpFlowM3h
+```
+
+exactly, in IEEE754. `PIPE_K` was calibrated against that same default machine
+(see `model.ts`), so **the default pump on a single-run suction has zero
+suction margin by construction**. Any margin term added to the check would
+therefore fire on the demo and on every drawing like it, for a reason no
+draughtsman can act on — and tuning the margin until the bundled samples went
+quiet is precisely what the QA baseline contract forbids. So the check reports
+only `rated > Q_max`, strictly: a path at capability is at capability, not
+beyond it. Where "enough margin" begins is the question NPSH answers, and this
+model cannot.
+
+**States.** `unsupplied` (no source at all — a broken drawing) and
+`insufficient` (a source, but the path cannot pass the rated flow) are the two
+static ones; `cavitating` remains the live one, already carried into data
+quality by K3.2. Each finding names the machine, its duty and whether that duty
+was assumed, the source and its pressure, what the path can pass, where the
+nozzle would sit, and what to do about it.
+
+**Remaining limitation.** Only drawings that carry HMI screens are judged, because
+the process model is compiled from them — four of the five bundled files have
+none. And a pump reached only *through another machine* is not priced: a pump
+is a source of head, not a resistance, so the walk stops at it.
+
+### Finding 2 — declared nozzle roles
+
+**Root cause, and a worse one underneath it.** `declaredRole` answered from a
+flat table that did not know what kind of equipment the line had landed on.
+Two consequences, the second not previously known:
+
+1. `aPort: 'top'` on a tank was **ignored** whenever the line was drawn low on
+   the shell. The geometry won silently and a vent became a drain.
+2. `aPort: 'outlet'` on a tank returned a role the vessel schema does not list,
+   so the builder attached the edge to a node id (`…:t:outlet`) **that nothing
+   ever created**. Measured: the line carried **0.0000 m³/h** instead of
+   12.25, **no issue was raised**, and the solve still reported `converged`
+   with an empty `undetermined`. An ordinary P&ID label silently disconnected a
+   branch, and every surface in the product said the plant was fine. The same
+   held for `inlet`, `suction` and `discharge` on a vessel — and for `in`/`out`
+   on a **pump**, which has no `inlet` either.
+
+**Engineering decision.** `declaredRole(portId, kind)`. A role is only a role if
+the kind's `PORT_SCHEMA` offers it; otherwise it is refused, the existing
+`stream-to-missing-port` issue is raised, and the documented positional
+fallback answers. Names are read in two groups:
+
+- **generic** (`in`/`inlet`, `out`/`outlet`) ask the kind, through the
+  `INLET_ROLE`/`OUTLET_ROLE` tables that already existed — so a vessel's
+  `inlet` is its top nozzle and its `outlet` its bottom one;
+- **literal** (`suction`, `discharge`, `top`, `bottom`, `vent`, `drain`) name
+  one port and mean nothing elsewhere. `vent`→`top` and `drain`→`bottom`
+  because hydraulically that is what they are; they are **not** added to
+  `PortRole`, since the solver cannot distinguish a vent from any other opening
+  and a role it could not honour would be a false claim.
+
+**Compass ids stay positional, deliberately.** `n` on a vessel rotated 180°
+points at the floor, so a compass id cannot be read as a process role. That is
+a decision, and the fallback is recorded as `anchored` rather than passed off
+as `declared`.
+
+**Backward compatibility.** Nothing in the five bundled drawings changes: none
+carries a vessel-attached `aPort`/`bPort`, and no dangling endpoint exists in
+any of them before or after. Drawings that state nothing keep the documented
+positional fallback exactly as before.
+
+### Finding 3 — LV-101's calm-start movement
+
+**Classification: C, an actuator default problem** (with a B component — the
+valve was seeded from a controller output that did not exist yet).
+
+**Root cause, traced end to end.**
+
+```text
+initTags: controller seeded  OP = 40   ← a placeholder; no controller has run
+   -> driven throttling valve seeded OP = POS = 40 to match it
+   -> initTags SOLVES the network, so the valve is genuinely 40 % open
+   -> the solve gives that line flow
+   -> the vessel's inventory integrates it
+   -> tick 1: the controller finally executes, computes its real output (0),
+      and the actuator strokes shut over ~1.6 s at 25 %/s, passing flow all
+      the way down
+   -> 5e-5 % of a 200 m³ vessel, and LT-101 reads it
+```
+
+The 40 was never an output. It was a default sitting in a field that the first
+tick overwrites — but `initTags` solves the network, so between seeding and
+that first tick the number was load-bearing.
+
+**Engineering decision.** A final element has **no command until its controller
+has run**, so it holds its rest position — and for every throttling valve in
+this model that is shut. `initTags` now seeds every throttling valve at 0 %,
+driven or not, and a controller's output at 0. The first tick computes the real
+output and the actuator strokes towards it at its real rate, which is what an
+actuator does. Nothing is frozen, nothing is hidden from the solver, no history
+is suppressed.
+
+**One test changed, and it is worth naming.** `faceplateVisual` ›
+*reports deviation when the position is not following the command* wrote
+straight to a controller-driven valve's `OP` — which the loop overwrites each
+tick — and passed only because the valve was seeded 40 % open while the
+controller drove its output away from that. **The deviation came from the seed,
+not from the stuck valve.** The fixture now puts PIC-101 in MANUAL so the
+operator's output is genuinely the command, and asserts the position really did
+not move.
+
+### Gate
+
+```text
+3147 tests passing · 7 skipped · 0 failing      (3120 before, +27)
+tsc -b clean · production build clean
+189 Playwright specs passing · 2 failing, the same two as on a5b9793 and ac1a668
+sample QA baseline UNCHANGED — both new rules are silent on all five bundled files
+```

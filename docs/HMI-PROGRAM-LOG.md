@@ -348,8 +348,9 @@ qaFor @ 500 / 2000 objects   0.337 / 1.730 ms  (Phase 0: 0.9 / 5.7 ms)
 | P2 | The unbound-display idle wander, the one remaining value-producing fallback. Disclosed four ways. |
 | P3 | Trend axis prints `00:00` twice while the run is shorter than the span. |
 | **P1** | One boundary pressure: `supplyPressureBar` is both the battery-limit header and the atmosphere, so a boundary cannot fill a vented vessel (K3.2). |
-| P2 | No NPSH check — a drawing can carry a pump duty its drawn suction cannot supply; the solve flags the cavitation but no diagnostic reports it (K3.2). |
-| P2 | `declaredRole` has no `bottom`/`top`, so a stated vessel nozzle still resolves its role by geometry (K3.2). |
+| P2 | Suction capacity is checked (K3.3) but **NPSH is not** — the model has no fluid, vapour pressure, suction temperature or elevation, so it reports only the arithmetically unachievable case and says so. |
+| P2 | The suction check judges only drawings that carry HMI screens, because the process model is compiled from them (K3.3). |
+| P2 | A pump reached only through another machine is not priced by the suction check: a pump is a source of head, not a resistance, so the walk stops at it (K3.3). |
 
 ## 14. What this is, and is not
 
@@ -428,4 +429,41 @@ arriving.
 3120 tests passing · 7 skipped · 0 failing
 tsc -b clean · production build clean
 189 Playwright specs passing · 2 failing, both pre-existing on a5b9793
+```
+
+
+---
+
+## 17. Step K3.3 — the three K3.2 findings, closed
+
+| Finding | Outcome |
+|---|---|
+| Pump suction / cavitation | **CLOSED** — two rules in the existing Checks engine over one pure derivation, `model/suction.ts`. Explicitly *not* an NPSH calculation. |
+| `declaredRole` nozzle semantics | **CLOSED** — and a worse defect underneath it fixed: a vessel port name the schema did not offer produced an edge pointing at a node that was never created, so the line carried zero flow with nothing reported. |
+| LV-101 calm-start movement | **CLOSED** — classification C. A final element has no command until its controller has run, so every throttling valve now comes up shut. |
+
+Full reasoning, measurements and the one changed test in `docs/HMI-AUDIT.md`
+§ *K3.3*.
+
+**The result that most deserves carrying forward** is an identity of the
+model's own constants, found while deciding where the suction check's threshold
+belongs:
+
+```text
+√(supplyPressureBar / PIPE_K) = √(1 / 4e-4) = 50 m³/h = DEFAULTS.pumpFlowM3h
+```
+
+exactly. `PIPE_K` was calibrated against the default machine, so the default
+pump on a single-run suction has **zero suction margin by construction**. Any
+margin term in a suction check would fire on every such drawing for a reason no
+draughtsman can fix, which is why the check reports only the strictly
+unachievable case.
+
+### State after K3.3
+
+```text
+3147 tests passing · 7 skipped · 0 failing
+tsc -b clean · production build clean
+189 Playwright specs passing · 2 failing, both pre-existing on a5b9793
+sample QA baseline unchanged
 ```

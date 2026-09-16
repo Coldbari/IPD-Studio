@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildSimModel, initTags, tick } from '../../src/hmi/sim/engine'
 import { makeRng } from '../../src/hmi/sim/noise'
 import { SHUT_LEAK_MAX } from '../../src/hmi/sim/hydraulic/solver'
-import { DEFAULTS } from '../../src/hmi/sim/units'
+import { DEFAULTS, volumeMoved } from '../../src/hmi/sim/units'
 import type { HmiScreen } from '../../src/hmi/model'
 
 // source -> pump P-1 -> throttling valve LV-1 -> tank TK-1, plus TK-1 -> on/off valve HV-1 -> sink
@@ -39,6 +39,27 @@ const run = (mut?: (tags: ReturnType<typeof initTags>) => void, seconds = 10, dt
   return { tags, flows, model }
 }
 
+/** source -> P-4 -> LV-4 -> TK-4 -> LV-5 -> sink, with LIC-4 driving a valve.
+ *  The shape K3.3's Finding 3 was about: a THROTTLING valve a controller owns. */
+const withLoop: HmiScreen = {
+  id: 's4', name: 'S4', theme: 'classic',
+  widgets: [
+    { id: 'p', type: 'pump', x: 100, y: 90, w: 56, h: 56, tag: 'P-4' },
+    { id: 'v', type: 'valve', x: 300, y: 95, w: 48, h: 32, tag: 'LV-4', props: { throttle: true } },
+    { id: 't', type: 'tank', x: 500, y: 40, w: 96, h: 128, tag: 'TK-4', props: { capacity: 200, level0: 60 } },
+    { id: 'd', type: 'valve', x: 650, y: 150, w: 48, h: 32, tag: 'LV-5', props: { throttle: true } },
+    { id: 'lt', type: 'display', x: 800, y: 40, w: 96, h: 40, tag: 'LT-4', props: { bindTank: 'TK-4' } },
+    { id: 'lic', type: 'display', x: 800, y: 90, w: 96, h: 40, tag: 'LIC-4', props: { controller: true } },
+  ],
+  pipes: [
+    { id: 'a', points: [{ x: 0, y: 118 }, { x: 110, y: 118 }] },
+    { id: 'b', points: [{ x: 150, y: 118 }, { x: 310, y: 111 }] },
+    { id: 'c', points: [{ x: 340, y: 111 }, { x: 510, y: 100 }] },
+    { id: 'd1', points: [{ x: 590, y: 160 }, { x: 660, y: 166 }] },
+    { id: 'd2', points: [{ x: 692, y: 166 }, { x: 800, y: 166 }] },
+  ],
+}
+
 describe('engine tick', () => {
   it('initTags seeds a CALM plant: pumps off, undriven valves shut, drains closed', () => {
     const model = buildSimModel(screen)
@@ -51,6 +72,50 @@ describe('engine tick', () => {
     // doesn't silently empty itself at RUN start
     expect(tags['HV-1']!.OPEN).toBe(0)
   })
+  it('a final element has NO command until its controller has run', () => {
+    // K3.3, Finding 3. A controller-driven throttling valve used to be seeded
+    // 40 % open, to match a placeholder sitting in the controller's OP field.
+    // No controller had executed at that point, so the 40 was not an output —
+    // but `initTags` solves the network, so the valve was genuinely open and
+    // the vessel genuinely lost liquid while the actuator stroked shut.
+    //
+    // A valve with no command holds its rest position, and for a throttling
+    // valve that is SHUT.
+    const m = buildSimModel(withLoop)
+    expect(m.controllers.length, 'the fixture must actually have a loop').toBeGreaterThan(0)
+    const driven = new Set(m.controllers.filter((c) => c.outKind === 'valve').map((c) => c.outTag))
+    expect([...driven], 'LIC-4 must actually drive a throttling valve').toContain('LV-4')
+    const tags = initTags(m)
+    // the controller has produced nothing...
+    for (const c of m.controllers) expect(tags[c.tag]!.OP, c.tag).toBe(0)
+    // ...so every throttling valve is at its rest position, DRIVEN OR NOT
+    for (const d of m.defs) {
+      if (d.kind !== 'valve') continue
+      expect(tags[d.name]!.OP, d.name).toBe(0)
+      expect(tags[d.name]!.POS, d.name).toBe(0)
+    }
+  })
+
+  it('and the vessel behind that valve loses nothing but the blocked-element leak', () => {
+    // The consequence, measured where it showed. NOT "exactly zero": a shut
+    // valve and a stopped pump are steep FINITE conductances in this model, so
+    // a calm plant seeps a fraction of a millilitre an hour and that is the
+    // floor. The bound below is the model's own ceiling on that seepage, so
+    // this passes only while the ONLY thing moving is the leak.
+    //
+    // The seeded 40 % valve was two orders above this bound in the first tick
+    // alone, which is what makes the assertion discriminating rather than
+    // generous.
+    const m = buildSimModel(withLoop)
+    let tags = initTags(m)
+    const v0 = tags['TK-4']!.V!
+    const rng = makeRng(1)
+    tags = tick(m, tags, 1, rng).tags
+    expect(Math.abs(tags['TK-4']!.V! - v0), 'first tick').toBeLessThan(volumeMoved(SHUT_LEAK_MAX, 1))
+    for (let i = 0; i < 299; i++) tags = tick(m, tags, 1, rng).tags
+    expect(Math.abs(tags['TK-4']!.V! - v0), '300 s').toBeLessThan(volumeMoved(SHUT_LEAK_MAX, 300))
+  })
+
   it('a calm start moves nothing at all', () => {
     const { tags, flows } = run(undefined, 5)
     // NOT `=== 0`. A blocked element in the hydraulic model is a huge FINITE

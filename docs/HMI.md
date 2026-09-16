@@ -553,11 +553,25 @@ A pressure-node / flow-edge graph, compiled once per document
 
 - **Explicit ports.** Every piece of equipment offers named process ports —
   `suction`/`discharge`, `inlet`/`outlet`, `bottom`/`top` — and a stream
-  attaches to a port, not to a rectangle. Where the P&ID states the port
-  (`aPort`/`bPort`, carried across by the importer) that is used; otherwise the
-  role comes from the end's position on the widget and is recorded as a
-  lower-confidence attachment. A port fixes only *which node* a stream joins;
-  **direction is an output of the solve**.
+  attaches to a port, not to a rectangle. A port fixes only *which node* a
+  stream joins; **direction is an output of the solve**.
+
+  Where the P&ID states the port (`aPort`/`bPort`, carried across by the
+  importer) **that is what is used, wherever the line happens to be drawn**. A
+  nozzle the drawing calls `top` stays the vapour space even if the line is
+  drawn low on the shell, and `vent`/`drain` are read as `top`/`bottom` — they
+  are not roles of their own, because the solver treats every opening alike and
+  saying otherwise would be a claim it does not honour.
+
+  A name is only a role **on equipment that offers it**: `suction` describes a
+  machine, so a line landing on a tank carrying that word is not a statement
+  about the tank, and the model declines to read it as one. Generic names ask
+  the kind — `in` on a pump is its suction, on a vessel its top nozzle.
+
+  Where the drawing states nothing this model can act on — including a compass
+  id like `n`, which points at the floor on a vessel rotated 180° — the end's
+  position decides, and the attachment is **recorded as inferred** rather than
+  passed off as stated.
 - **Two lines that merely cross do not connect.** Only an explicit attachment
   joins anything.
 
@@ -697,6 +711,43 @@ data quality degrades on all three:
 
 A measurement bound to a line inherits its edge's two nodes; a level inherits
 its vessel's nozzles, because its inventory was integrated across them.
+
+### Before it runs: can the suction supply the pump?
+
+A pump's rated flow comes from the engineering record; the path that has to
+deliver it comes from the P&ID. Two Checks rules ask whether the two are
+compatible, on the drawing, before anybody runs it:
+
+| Rule | Fires when |
+| --- | --- |
+| `pump-suction-unsupplied` | the suction reaches no vessel and no boundary — nothing can arrive at all |
+| `pump-suction-insufficient` | at the **rated flow**, the drawn suction path needs more pressure than its source has |
+
+**This is not an NPSH calculation and never says it is.** NPSHa needs the
+fluid, its vapour pressure at the pumping temperature, its density and the
+static lift; NPSHr needs the machine's own NPSH curve. The model holds none of
+them. What it computes is hydraulic capacity: walking the canonical topology
+for the lowest-resistance route to a source and applying the model's own
+`ΔP = R·Q·|Q|`, the most that path can pass is `√(P_source / R)`. A duty
+**strictly greater** than that is arithmetically unachievable, and that is the
+only claim made.
+
+The threshold is the physics rather than a chosen number, and it has to be,
+because of an identity worth knowing about this model:
+
+```text
+√(supplyPressureBar / PIPE_K) = √(1 / 4e-4) = 50 m³/h = DEFAULTS.pumpFlowM3h
+```
+
+`PIPE_K` was calibrated against that same default machine, so **the default
+pump on a single-run suction sits exactly at capability** — zero margin, by
+construction. Any margin added to the check would therefore fire on it and on
+every drawing like it, for a reason no draughtsman can fix. Where "enough
+margin" begins is precisely the question NPSH answers and this model cannot, so
+it declines to guess and reports only the unachievable case.
+
+`SolveResult.cavitating` is the live counterpart, at whatever the plant is
+doing now; it feeds data quality as above.
 
 ### Known limitation: one boundary pressure
 

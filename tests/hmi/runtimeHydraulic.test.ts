@@ -167,12 +167,12 @@ describe('flow follows pressure through the running plant', () => {
     for (const [id, f] of Object.entries(sim().pipeFlows)) {
       expect(Math.abs(f), `pipe ${id}`).toBeLessThan(SHUT_LEAK_MAX)
     }
-    // 30.000 rather than 30.000000: LIC-101 comes up in AUTO with its output
-    // at 40 %, so LV-101 is 40 % open for the one second its actuator takes to
-    // stroke shut. That second moves 5e-5 % of a 200 m³ vessel — a tenth of a
-    // litre — and then the line is dead. A real start-up transient, measured
-    // rather than tolerated blindly.
-    expect(pv('TK-101')).toBeCloseTo(30, 3)
+    // EXACT. This used to read `toBeCloseTo(30, 3)`, because LIC-101 came up
+    // in AUTO with a placeholder 40 % in its output field and LV-101 was
+    // seeded to match it — so the vessel lost 5e-5 % over the second the
+    // actuator took to stroke shut. K3.3 removed the placeholder: a valve has
+    // no command until its controller has run, and a calm start is still.
+    expect(pv('TK-101')).toBeCloseTo(30, 6)
     expect(pv('TK-102')).toBeCloseTo(10, 6)
   })
 

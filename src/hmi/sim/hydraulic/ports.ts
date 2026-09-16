@@ -105,18 +105,78 @@ export const OUTLET_ROLE: Record<EquipmentKind, PortRole> = {
  * Port ids the SYMBOL LIBRARY uses that name a process role outright.
  *
  * The catalogue is mostly compass-based (`n`/`s`/`e`/`w`), which says where a
- * nozzle is on the icon and not what it is for; those fall through to the
- * positional rule below. A handful of symbols name the role directly, and
- * where they do it is engineering intent and outranks any geometry.
+ * nozzle is on the icon and NOT what it is for. Those deliberately fall
+ * through to the positional rule below, and that is not a gap: `n` on a vessel
+ * rotated 180° points at the floor, so the only honest reading of a compass id
+ * is where the line actually lands. Where a symbol names the ROLE, that is
+ * engineering intent and outranks any geometry.
+ *
+ * Two groups, because they are answered differently:
  */
-const DECLARED_ROLE: Record<string, PortRole> = {
+
+/**
+ * GENERIC ids — they name a SIDE, and each kind says which of its own ports
+ * that side is. `INLET_ROLE`/`OUTLET_ROLE` already hold that answer, so a
+ * vessel's `inlet` is its top nozzle and its `outlet` is its bottom one.
+ */
+const UPSTREAM_IDS = new Set(['in', 'inlet'])
+const DOWNSTREAM_IDS = new Set(['out', 'outlet'])
+
+/**
+ * LITERAL ids — they name one specific port, and mean nothing anywhere else.
+ *
+ * `suction` and `discharge` are MACHINE terms: a vessel does not have them, and
+ * a line landing on a tank labelled `suction` is not a statement about the tank.
+ * Keeping them literal means the schema check below refuses them there, the
+ * position decides instead, and the drawing is told so — rather than this table
+ * quietly inventing a reading for a word that was about something else.
+ *
+ * `vent` and `drain` are mapped onto `top`/`bottom` rather than added to
+ * `PortRole`, deliberately. A vent opens on the vapour space and a drain takes
+ * liquid off the bottom, so hydraulically they ARE those two nozzles — and this
+ * model has no way to treat them as anything else (see the note on `PortRole`).
+ * Giving them roles of their own would be a claim the solver does not honour;
+ * mapping them keeps the P&ID's word and the model's behaviour in step.
+ */
+const LITERAL_IDS: Record<string, PortRole> = {
   suction: 'suction', discharge: 'discharge',
-  in: 'inlet', out: 'outlet', inlet: 'inlet', outlet: 'outlet',
+  top: 'top', vent: 'top',
+  bottom: 'bottom', drain: 'bottom',
 }
 
-/** A role the P&ID stated outright, or undefined when the id is positional. */
-export const declaredRole = (portId: string | undefined): PortRole | undefined =>
-  portId === undefined ? undefined : DECLARED_ROLE[portId.toLowerCase()]
+/**
+ * The role a P&ID stated outright for this port, ON THIS KIND of equipment.
+ *
+ * `undefined` means the drawing said nothing this model can act on, and the
+ * caller falls back to the positional rule — which it must then RECORD as a
+ * lower-confidence attachment rather than pass off as stated.
+ *
+ * THE KIND IS NOT OPTIONAL, and that is the fix for a real defect. A role is
+ * only a role if the equipment offers it: a vessel has no `suction` nozzle. The
+ * previous version answered from a flat table and returned `suction` for a line
+ * landing on a tank, so the builder attached the edge to a node id
+ * (`…:t:suction`) that no schema lists and nothing ever created. The line went
+ * dead — zero flow — while the solve still reported `converged` and raised no
+ * issue at all. A perfectly ordinary P&ID label silently disconnected a branch.
+ *
+ * It also fixes the same defect on a pump: `in` used to return `inlet`, which
+ * a pump does not offer either, so `…:p:inlet` dangled exactly the same way.
+ * Now `in` asks the kind, and a pump answers `suction`.
+ */
+export function declaredRole(
+  portId: string | undefined,
+  kind: EquipmentKind,
+): PortRole | undefined {
+  if (portId === undefined) return undefined
+  const id = portId.trim().toLowerCase()
+  const role =
+    UPSTREAM_IDS.has(id) ? INLET_ROLE[kind]
+    : DOWNSTREAM_IDS.has(id) ? OUTLET_ROLE[kind]
+    : LITERAL_IDS[id]
+  if (role === undefined) return undefined
+  // Offered by this kind, or it is not a role here.
+  return (PORT_SCHEMA[kind] as readonly PortRole[]).includes(role) ? role : undefined
+}
 
 /**
  * Which role a pipe end takes on a piece of equipment, from where it lands.

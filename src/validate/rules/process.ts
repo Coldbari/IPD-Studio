@@ -7,6 +7,7 @@ import { finding } from '../rules'
 import { edgesOf, neighboursOf } from '../../model/projectIndex'
 import { processFor } from '../../model/processData'
 import { DEFAULTS } from '../../hmi/sim/units'
+import { suctionFor } from '../../model/suction'
 
 const RELIEF_SYMBOLS = new Set(['psv', 'pse', 'pvsv', 'psv.pilot', 'vacuum-breaker', 'breather', 'flame-arrestor'])
 
@@ -111,4 +112,80 @@ export const tankCapacityDefaulted: Rule = {
   },
 }
 
-export const PROCESS_RULES: Rule[] = [noRelief, lineNoService, tankCapacityDefaulted]
+/**
+ * CAN THE DRAWN SUCTION SUPPLY THE PUMP SPECIFIED ON IT?
+ *
+ * Detection is in `model/suction.ts`; both rules below are adapters, the same
+ * split `validate/rules/diagnostics.ts` uses. Two rules rather than one because
+ * a `Rule` declares ONE severity and these two states are not equally serious:
+ * a suction that reaches no source at all is a broken drawing, while a duty
+ * the path cannot pass is a specification that needs revisiting.
+ *
+ * NEITHER IS AN NPSH CHECK. `model/suction.ts` says at length why the model
+ * cannot make one and what it computes instead; the messages below say so to
+ * the reader as well, because a finding that sounds like NPSH would be read as
+ * NPSH.
+ */
+const m3h = (v: number) => `${v.toFixed(v < 10 ? 1 : 0)} m³/h`
+
+export const pumpSuctionInsufficient: Rule = {
+  id: 'pump-suction-insufficient',
+  title: 'Pumps whose suction cannot supply their rated duty',
+  // A warning, not critical. The finding is about the specification rather
+  // than about the drawing being unreadable, and the remedy is often a line
+  // size or a duty that is still being settled. `no-relief` carries the same
+  // reasoning: a check that blocks issue on work in progress gets switched off.
+  severity: 'warning',
+  discipline: 'process',
+  why: 'A pump cannot deliver a duty its suction line cannot bring to it. Specifying past that point is a commissioning problem found on site rather than on the drawing.',
+  run(ix) {
+    const out = []
+    for (const s of suctionFor(ix)) {
+      if (s.state !== 'insufficient') continue
+      const src = s.source?.kind === 'vessel'
+        ? `${s.source.tag ?? 'a vessel'} at ${s.source.levelPct ?? 0}%`
+        : 'the process boundary'
+      out.push(
+        finding(
+          pumpSuctionInsufficient,
+          s.tag,
+          `${s.tag} is rated ${m3h(s.ratedFlow)}${s.ratedDefaulted ? ' (assumed — no duty on its record)' : ''}, ` +
+          `but its suction path from ${src} can pass at most ${m3h(s.maxFlow ?? 0)} on ` +
+          `${(s.sourcePressure ?? 0).toFixed(2)} bar. At the rated flow the nozzle would sit at ` +
+          `${(s.suctionAtRated ?? 0).toFixed(2)} bar absolute. ` +
+          `Lower the duty, shorten or enlarge the suction, or raise the source. ` +
+          `(Hydraulic capacity only — this is not an NPSH calculation; the model has no fluid, vapour pressure or elevation.)`,
+        ),
+      )
+    }
+    return out
+  },
+}
+
+export const pumpSuctionUnsupplied: Rule = {
+  id: 'pump-suction-unsupplied',
+  title: 'Pumps whose suction reaches no source',
+  severity: 'warning',
+  discipline: 'process',
+  why: 'A suction that connects to no vessel and no boundary has nothing to draw from. The machine has no supply at all, not merely a poor one.',
+  run(ix) {
+    const out = []
+    for (const s of suctionFor(ix)) {
+      if (s.state !== 'unsupplied') continue
+      out.push(
+        finding(
+          pumpSuctionUnsupplied,
+          s.tag,
+          `${s.tag}'s suction reaches no vessel and no process boundary, so nothing can arrive at it. ` +
+          `Connect the suction to its source, or terminate the line at a battery limit.`,
+        ),
+      )
+    }
+    return out
+  },
+}
+
+export const PROCESS_RULES: Rule[] = [
+  noRelief, lineNoService, tankCapacityDefaulted,
+  pumpSuctionInsufficient, pumpSuctionUnsupplied,
+]

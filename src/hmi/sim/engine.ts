@@ -232,11 +232,10 @@ export function initTags(model: SimModel): Tags {
   // alarms until an operator (or a live control loop) acts. Every hand valve
   // that actually sits in a flow path starts CLOSED (lining up the valves IS
   // the operator's job — and an open drain stub or transfer line would
-  // silently empty its tank before anyone touched a thing); a throttling
-  // valve no controller drives starts at 0%. Unpiped decorative valves stay
-  // open so they don't read as faults.
+  // silently empty its tank before anyone touched a thing); EVERY throttling
+  // valve starts at 0%, whether a controller drives it or not. Unpiped
+  // decorative valves stay open so they don't read as faults.
   const piped = new Set(model.net.branches.flatMap((b) => b.valves))
-  const driven = new Set(model.controllers.map((c) => c.outTag).filter(Boolean))
   const tags: Tags = {}
   for (const d of model.defs) {
     switch (d.kind) {
@@ -254,13 +253,37 @@ export function initTags(model: SimModel): Tags {
         tags[d.name] = d.heaterKw !== undefined ? { RUN: 0, RAMP: 0, OP: 100 } : { RUN: 0, RAMP: 0 }
         break
       case 'valve': {
-        const op = driven.has(d.name) ? 40 : 0
-        tags[d.name] = { OP: op, POS: op, DEVT: 0 }
+        /**
+         * EVERY throttling valve comes up SHUT, controller or no controller.
+         *
+         * A controller-driven one used to be seeded at 40 % to match the
+         * placeholder in the `controller` case below — but that 40 was never a
+         * controller output. No controller has executed at this point; the
+         * number was a default sitting in a field the first tick overwrites.
+         *
+         * The cost was not cosmetic. `initTags` solves the network, so a level
+         * valve seeded at 40 % was genuinely open: the solve gave it flow, the
+         * inventory integrated that flow, and the vessel lost liquid during the
+         * ~1.6 s its actuator took to stroke shut once the controller finally
+         * ran. Measured on a 200 m³ vessel that is 5e-5 % — small, and entirely
+         * fictitious, because nothing had asked the valve to be open.
+         *
+         * Closed is also the right REST position. A final element with no
+         * command holds its fail-safe state, and for every throttling valve in
+         * this model that is shut: an outlet valve cannot drain a vessel nobody
+         * has lined up, and an inlet valve cannot fill one. The first tick then
+         * computes a real output and the actuator STROKES towards it at its
+         * real rate, which is what an actuator does.
+         */
+        tags[d.name] = { OP: 0, POS: 0, DEVT: 0 }
         break
       }
       case 'valveOnOff': tags[d.name] = { OPEN: piped.has(d.name) ? 0 : 1 }; break
       case 'display': tags[d.name] = { PV: d.base ?? (d.min + d.max) / 2 }; break // reseeded below if bound
-      case 'controller': tags[d.name] = { PV: 0, SP: 50, OP: 40, MODE: 1, I: 0 }; break
+      // OP 0, not a placeholder: a controller that has not executed has no
+      // output, and whatever sits in this field is what drives a final element
+      // on the very first solve. The first tick computes the real one.
+      case 'controller': tags[d.name] = { PV: 0, SP: 50, OP: 0, MODE: 1, I: 0 }; break
     }
   }
 

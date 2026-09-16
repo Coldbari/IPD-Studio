@@ -404,7 +404,7 @@ export function buildProcessModel(screens: HmiScreen | HmiScreen[]): ProcessMode
     const kind = kindOf(widget)
     if (!kind) return { node: ns(`free:${pipe.id}:${which}`) }
 
-    const stated = declaredRole(declaredPort)
+    const stated = declaredRole(declaredPort, kind)
     const role: PortRole = stated ?? roleFromGeometry(kind, widget, point)
     if (stated) resolution = 'declared'
     else if (declaredPort !== undefined && resolution === 'anchored') {

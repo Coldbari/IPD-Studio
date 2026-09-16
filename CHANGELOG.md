@@ -6,6 +6,39 @@ All notable changes to IPD Studio. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A P&ID nozzle name could silently disconnect a line.** A pipe end naming a
+  port its equipment does not offer — `outlet` or `suction` on a vessel, `in`
+  on a pump — resolved to a role no schema lists, so the edge pointed at a node
+  nothing had created. The line carried **zero flow**, no issue was raised, and
+  the hydraulic solve still reported `converged`. Port roles are now resolved
+  against the equipment's own schema.
+- **An explicit nozzle role is no longer overruled by where the line is drawn.**
+  A vessel nozzle the drawing calls `top` stays the vapour space even when the
+  line lands low on the shell. `vent` and `drain` are read as `top`/`bottom`.
+  Generic names (`in`, `out`) ask the equipment kind. Compass ids (`n`, `s`)
+  remain positional — they point at the floor on a rotated vessel — and the
+  fallback is recorded as inferred rather than stated.
+- **A calm start no longer moves liquid.** A controller-driven throttling valve
+  was seeded 40 % open to match a placeholder in the controller's output field,
+  before any controller had run — and since start-up solves the network, the
+  valve was genuinely open and the vessel genuinely drained while the actuator
+  stroked shut. Every throttling valve now comes up at its rest position, shut,
+  and the first tick computes a real output for the actuator to stroke towards.
+
+### Added
+
+- **Two suction checks, on the drawing rather than at RUN time.**
+  `pump-suction-unsupplied` fires when a pump's suction reaches no vessel and
+  no boundary; `pump-suction-insufficient` when, at the pump's rated flow, the
+  drawn suction path needs more pressure than its source has. Each names the
+  machine, its duty and whether that duty was assumed, the source and its
+  pressure, what the path can pass, where the nozzle would sit, and what to do.
+  **Neither is an NPSH calculation** — the model has no fluid, vapour pressure,
+  suction temperature or elevation — and both say so in the finding text.
+
+
 ### Changed
 
 - **The simulation runs on the hydraulic solver.** `sim/engine.ts` solves the
