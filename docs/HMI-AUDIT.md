@@ -1854,3 +1854,135 @@ tsc -b clean · production build clean
 - **Three shapes.** No repeating, no schedule, no external driver.
 - **No persistence of the active value** — it is recomputed from the declaration
   and the clock, and is never written back to `design.operatingPressure`.
+
+## K11 — equipment operating-state dynamics
+
+A verification phase. Almost nothing here is new: the pump curve, the valve
+resistance law, the spin-up, the coast-down, the stroke rate and the trip have
+been in the model since K3. What K11 adds is the **evidence that the whole chain
+is causal**, one **derivation** naming what is deciding each command, and three
+documented findings.
+
+### §15 — what the engineering model actually contains
+
+| Pump | Where it comes from |
+| --- | --- |
+| rated flow | `duty.capacity` (registry) → `TagDef.ratedFlow` |
+| head at rated | `duty.head` (registry) → `TagDef.head` |
+| curve | `H = H₀·r²·(1 − (Q/(1.5·Q_r·r))²)`, `H₀ = duty.head/(1−1/1.5²)` |
+| affinity laws | **already in the curve** — head as `r²`, capacity as `r` |
+| runtime | `RUN` (command), `RAMP` (shaft fraction), `FAULT` (trip) |
+| dynamics | spin-up `RAMP_S = 2 s`, coast-down `COAST_S = 3 s` |
+
+| Valve | |
+| --- | --- |
+| characteristic | `R = VALVE_K / max(SHUT_FRACTION, f)⁴`, so `Q ∝ f²` at fixed ΔP |
+| resistance | calibrated (`VALVE_K = 4e-4`), **not** manufacturer Cv |
+| runtime | `OP` (command), `POS` (position), `OPEN`, `STUCK`, `DEVT` |
+| dynamics | `STROKE_RATE = 25 %/s`; `DEV_LIMIT = 10 %` |
+
+**No manufacturer data was invented.** There is no Cv, no pump NPSH curve, no
+valve characteristic table; the two calibrated constants are documented as
+calibrations and are what the tests assert against.
+
+### §7 — the precedence that already exists, documented
+
+It was never ambiguous, only unwritten:
+
+```text
+PUMP shaft    FAULT → 0        (a trip opens the breaker and clears RUN too)
+              else RAMP        (the shaft: lags the command both ways)
+              else RUN ? 1 : 0
+
+VALVE opening POS              (the ACTUAL position — what a stuck valve proves)
+              else OP          (the command)
+              else OPEN ? 1 : 0
+```
+
+The hydraulics read **`POS`, not `OP`** — the position, not the command. That is
+the whole reason a stuck valve behaves like one.
+
+`resolveEquipment` is added as a **derivation, not a store**: it names which of
+`tripped` / `controller` / `scenario` / `operator` is deciding a command, from
+state that already exists. A second place to keep equipment state would be the
+competing store §2 forbids.
+
+### Runtime data flow
+
+```text
+controller (AUTO)  ─┐
+operator (MANUAL)  ─┼─► element.OP ─► actuator (25 %/s, STUCK) ─► POS
+scenario signal    ─┘                                              │
+                                                    valveResistance(POS/100)
+RUN ─► shaft dynamics ─► RAMP ──────────────► pumpHead(duty, RAMP, Q)
+                                                              ↓
+                                                     solveHydraulics
+                                                              ↓
+              node pressures · SIGNED flows → inventory · instruments
+                                                              ↓
+                                           controller's PV on the NEXT tick
+```
+
+### Three findings
+
+**1. There is no runtime speed command.** The affinity laws are in the curve and
+the solver takes a shaft fraction, but the runtime *derives* that fraction from
+`RUN` alone — ramping to 1 while commanded, coasting to 0 when not. Writing
+`RAMP` is overwritten by the equipment dynamics on the next tick. §4 says to
+test speed where it is already represented and not to invent it where it is not,
+so it is tested **in the curve, through the solver's own input**, and monotone
+across 1.0 → 0.2 → 0. A variable-speed setpoint would be new engineering data.
+
+**2. A stopped pump BLOCKS its own line**, and that is a stated assumption
+rather than a forcing: `docs/HMI.md` records it under *Assumptions, stated* —
+the model assumes the discharge check valve a pumped system carries. With BL-S
+at 3 barg on the far side, a stopped machine still isolates it.
+
+So the distinction §3 demands is demonstrated where it is actually visible:
+**stopping the pump does not zero the plant.** TK-1 stands above BL-D and goes
+on draining by gravity with the machine stopped, and the inventory keeps falling
+— the solver's answer, not a rule.
+
+**3. A controller acts on the previous tick's measurement.** `LIC-1.PV` is the
+transmitter's last reported value, not the vessel's instantaneous level. A real
+DCS is the same, the loop is stable across it, and the test asserts the two
+agree within the instrument's own band rather than exactly.
+
+### Evidence
+
+| | |
+| --- | --- |
+| **A** RUN | head develops, discharge above suction, `RAMP → 1` |
+| **B** STOP | head gone; the machine blocks; **the rest of the plant carries on draining** |
+| **C** speed | monotone in the curve across 1.0/0.8/0.6/0.4/0.2 and zero at 0 |
+| **D-G** valve | 100 → 50 → 25 → 0 falls each step; shut is below `SHUT_LEAK_MAX`; **not linear** (½ opening ≠ ½ flow), and `R(0.5)/R(1) = 16` exactly |
+| **H** reopen | 0 → 25 → 100 returns to the original flow; nothing latches |
+| **I** trip | `RUN` cleared, shaft 0, flow redistributes, instruments follow |
+| **J** loop | controller off both stops, element follows, drain passes what the solve says, level within 8 % of SP |
+| **K/L** | FT and PT within the instrument's 0.8 % band of *their own* solved quantity across five equipment states; a 63 % command never appears as a reading |
+| **M** reversal | stopping the pump and dropping BL-S below the vessel reverses the feed line |
+| **N** degenerate | a two-valve ring with no free end is `undetermined`; a shut line is `converged` with zero flow — **different states, both explicit** |
+| **O** determinism | the same commands twice give a bit-identical run |
+| **P** legacy | a drawing with no terminals is untouched |
+
+**§12** — a stopped pump raises nothing, a shut valve raises nothing, a **trip**
+raises an alarm through the existing device logic, and every command lands in
+the journal.
+
+### Gate
+
+```text
+3387 tests passing · 7 skipped · 0 failing      (+27)
+tsc -b clean · production build clean
+207 Playwright passing · 2 failing — the SAME two as on a5b9793
+```
+
+### Limitations
+
+- **No variable-speed drive.** Shaft speed is derived from `RUN`; there is no
+  setpoint for it.
+- **No manufacturer data.** Valve resistance is a calibrated constant, not a Cv
+  or a characteristic curve; the pump has no NPSH curve.
+- **A stopped pump blocks** — the check valve is assumed, not modelled.
+- No stiction, no hysteresis, no mechanical dynamics. All out of scope and none
+  faked.

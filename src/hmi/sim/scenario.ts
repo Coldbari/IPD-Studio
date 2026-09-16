@@ -314,3 +314,79 @@ export function scenarioFindings(problems: readonly ScenarioProblem[]): Scenario
     message: p.reason,
   }))
 }
+
+// ── Equipment runtime state ─────────────────────────────────────────────────
+
+/**
+ * WHAT IS CURRENTLY DECIDING A PIECE OF EQUIPMENT'S COMMAND.
+ *
+ * A derivation, NOT a store. Every value below already exists in `tags` or in
+ * the applied scenario; this only says which of them is in charge, the way
+ * `resolveTerminal` does for a boundary. Adding a second place to keep
+ * equipment state would be exactly the competing store K11 forbids.
+ *
+ * Ordered, first match wins, and the order is the one the engine already
+ * implements rather than a new policy:
+ *
+ *  1. `tripped`    — `FAULT` is set. The breaker is open, `RUN` is forced to 0
+ *                    and the shaft is 0 whatever anything else says.
+ *  2. `controller` — a control loop is driving this final element in AUTO, and
+ *                    writes its output every tick. An operator write to the
+ *                    element's `OP` is overwritten on the next tick, which is
+ *                    why a real DCS makes you go to MANUAL first.
+ *  3. `scenario`   — the applied runtime scenario names this tag and signal.
+ *  4. `operator`   — nobody else is deciding it, so whoever wrote it last is:
+ *                    the operator, or the calm-start default if nobody has.
+ */
+export type CommandSource = 'tripped' | 'controller' | 'scenario' | 'operator'
+
+export interface EquipmentState {
+  tag: string
+  /** What it has been told to do: a valve's `OP` %, a pump's `RUN` 0/1. */
+  command: number
+  /**
+   * What it is ACTUALLY doing — a valve's stroked position, a pump's shaft
+   * fraction. This is the number the hydraulic model reads, and it is not the
+   * command: an actuator takes time, and a stuck one never arrives.
+   */
+  actual: number
+  source: CommandSource
+  /** True while the two disagree by more than the deviation limit. */
+  deviating: boolean
+}
+
+export function resolveEquipment(
+  tags: Record<string, Record<string, number>>,
+  controllers: readonly { tag: string; outTag?: string }[],
+  scenario: Scenario | null,
+  tag: string,
+  kind: 'pump' | 'valve',
+): EquipmentState | undefined {
+  const t = tags[tag]
+  if (!t) return undefined
+
+  const driver = controllers.find((c) => c.outTag === tag)
+  const inAuto = driver !== undefined && (tags[driver.tag]?.MODE ?? 1) >= 0.5
+  const named = (scenario?.overrides ?? []).some(
+    (o) => o.kind === 'signal' && o.tag === tag)
+
+  const source: CommandSource =
+    (t.FAULT ?? 0) >= 0.5 ? 'tripped'
+    : inAuto ? 'controller'
+    : named ? 'scenario'
+    : 'operator'
+
+  if (kind === 'pump') {
+    return {
+      tag, source,
+      command: (t.RUN ?? 0) >= 0.5 ? 1 : 0,
+      // the SHAFT, which lags the command through spin-up and coast-down and
+      // is zero the instant a trip opens the breaker
+      actual: (t.FAULT ?? 0) >= 0.5 ? 0 : (t.RAMP ?? ((t.RUN ?? 0) >= 0.5 ? 1 : 0)),
+      deviating: false,
+    }
+  }
+  const command = t.OP ?? ((t.OPEN ?? 0) >= 0.5 ? 100 : 0)
+  const actual = t.POS ?? command
+  return { tag, source, command, actual, deviating: (t.DEVT ?? 0) > 0 }
+}

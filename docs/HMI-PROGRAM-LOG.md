@@ -786,3 +786,44 @@ tsc -b clean · production build clean
 | P2 | Three signal shapes; no repeating, no schedule, no external driver. |
 | P2 | No scenario persistence or library (K9). |
 | P2 | No reservoir model; fluid identity informational; mixing unsupported. |
+
+
+---
+
+## 25. Step K11 — equipment operating-state dynamics
+
+A verification phase. The pump curve, the valve resistance law, the spin-up,
+the coast-down, the stroke rate and the trip have been in the model since K3;
+K11 is the evidence that the whole chain is causal, one derivation naming what
+decides each command, and three findings.
+
+**The precedence was never ambiguous, only unwritten.** A pump's shaft is
+`FAULT → 0`, else the ramped shaft, else `RUN`. A valve's opening is its
+POSITION rather than its command — which is exactly why a stuck valve behaves
+like one, and the hydraulics have always read it that way.
+
+**Three findings.** There is no runtime speed command: the affinity laws are in
+the curve, but the shaft fraction is derived from `RUN` alone, so speed is
+tested where it lives rather than invented where it does not. A stopped pump
+blocks its own line, which is a stated assumption (the discharge check valve)
+rather than a forcing — so the "stop is not zero" distinction is demonstrated
+where it is visible, on a vessel that goes on draining by gravity with the
+machine stopped. And a controller acts on the PREVIOUS tick's measurement,
+which is what a real DCS does and what the loop is stable across.
+
+### State after K11
+
+```text
+3387 tests passing · 7 skipped · 0 failing
+tsc -b clean · production build clean
+207 Playwright passing · 2 failing, both pre-existing on a5b9793
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P2 | No variable-speed drive — shaft speed is derived from RUN, with no setpoint. |
+| P2 | No manufacturer equipment data: valve resistance is a calibrated constant rather than a Cv, and the pump has no NPSH curve. |
+| P2 | A stopped pump blocks — the check valve is assumed, not modelled. |
+| P2 | Boundary dynamics are pressure only (K10); no scenario library (K9); no reservoir model; mixing unsupported. |

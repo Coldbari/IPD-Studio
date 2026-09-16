@@ -8,6 +8,28 @@ All notable changes to IPD Studio. Format follows
 
 ### Added
 
+- **Equipment runtime state says what is deciding it.** A derivation — not a new
+  store — names whether a pump or valve is being driven by a trip, a controller,
+  a scenario or the operator, from state that already exists. It also reports the
+  command and the ACTUAL position separately, because an actuator takes time and
+  a stuck one never arrives.
+
+### Documented
+
+- The precedence the engine has always implemented, now written down and tested:
+  a pump's shaft is `FAULT → 0`, else the ramped shaft, else the RUN command; a
+  valve's opening is its **position**, not its command — which is precisely why
+  a stuck valve behaves like one.
+- **Stopping a pump is not zeroing the plant.** The machine's head goes away and
+  the machine itself blocks (the discharge check valve is a stated assumption),
+  but whatever else can move fluid still does — a vessel above its outlet goes
+  on draining, because the solver says so rather than a rule.
+- There is **no variable-speed command**: the affinity laws are in the pump
+  curve, but the runtime derives the shaft fraction from RUN alone.
+
+
+### Added
+
 - **A battery limit can change during a run.** A terminal's engineering record
   may declare that its pressure is `constant`, `step`s at a stated time, or
   `ramp`s over a stated duration — a utility header that trips, or sags when the
