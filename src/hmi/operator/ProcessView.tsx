@@ -29,7 +29,8 @@
 import { useMemo } from 'react'
 import { useSimStore } from '../simStore'
 import { SHUT_LEAK_MAX } from '../sim/hydraulic/solver'
-import { midpointOf } from '../sim/processView'
+import { boundaryRole, midpointOf } from '../sim/processView'
+import { fluidLabel } from '../sim/fluids'
 import type { ProcessViewModel, ViewEdge, ViewInstrument, ViewNode } from '../sim/processView'
 import { equipmentState, EQUIP_LABEL } from '../sim/state'
 import { QUALITY_GLYPH, hasNumber } from '../sim/quality'
@@ -167,11 +168,25 @@ function Edge({ edge, live }: { edge: ViewEdge; live: Live }) {
     ? (q < 0 ? [edge.points[1]!, edge.points[0]!] : [edge.points[edge.points.length - 2]!, edge.points[edge.points.length - 1]!])
     : undefined
   const angle = seg ? (Math.atan2(seg[1]!.y - seg[0]!.y, seg[1]!.x - seg[0]!.x) * 180) / Math.PI : 0
+  /**
+   * The SERVICE is drawn on the static pipe and never on the moving overlay.
+   *
+   * That keeps the two questions apart: what a line carries is a property of
+   * the plant, and whether it is moving is a property of this second. Tinting
+   * the overlay would make a fluid's tone read as flow. `data-fluid-token` is a
+   * TOKEN, not a colour — the stylesheet resolves it, from a closed palette
+   * with no warm hues in it, because warm hues belong to the alarm system.
+   */
+  const fluid = edge.fluid
   return (
     <g className="pv-edge" data-testid="pv-edge" data-edge={edge.id}
       data-pipes={edge.pipeIds.join(' ')}
       data-flowing={moving ? 1 : 0}
-      data-direction={!moving ? 'still' : q < 0 ? 'reverse' : 'forward'}>
+      data-direction={!moving ? 'still' : q < 0 ? 'reverse' : 'forward'}
+      data-fluid-state={fluid.state}
+      {...(fluid.fluidId ? { 'data-fluid': fluid.fluidId } : {})}
+      {...(fluid.displayToken ? { 'data-fluid-token': fluid.displayToken } : {})}>
+      <title>{fluidLabel(fluid)}</title>
       <polyline points={d} className="pv-pipe" fill="none" />
       {moving && (
         <polyline points={d} className="pv-pipe pv-flowing hmi-flow" fill="none"
@@ -192,17 +207,6 @@ function Edge({ edge, live }: { edge: ViewEdge; live: Live }) {
 
 const KIND_WORD: Record<string, string> = {
   boundary: 'BOUNDARY', junction: 'JUNCTION', fitting: 'TEE',
-}
-
-/** What a boundary is DOING: supplying the plant, or receiving from it. The
- *  drawing cannot say — the sign of the flow at its one line can. */
-function boundaryRole(node: ViewNode, model: ProcessViewModel, live: Live): string {
-  const e = model.edges.find((x) => x.from === node.id || x.to === node.id)
-  if (!e || !live.solved) return 'BOUNDARY'
-  const q = edgeFlow(e, live)
-  if (Math.abs(q) <= STILL) return 'BOUNDARY'
-  const outward = e.from === node.id ? q > 0 : q < 0
-  return outward ? 'SUPPLY' : 'DESTINATION'
 }
 
 /** One object. A box with its tag, its state and the value that matters for
@@ -267,12 +271,18 @@ function Node({ node, model, live, onOpen }: {
         ? <text x={node.w / 2} y={node.kind === 'fitting' || node.kind === 'junction' ? node.h + 11 : 14}
             textAnchor="middle" className="pv-tag">{node.tag}</text>
         : <text x={node.w / 2} y={node.h / 2 + 4} textAnchor="middle" className="pv-term">
-            {node.kind === 'boundary' ? boundaryRole(node, model, live) : (KIND_WORD[node.kind] ?? '')}
+            {node.kind === 'boundary'
+              ? (live.solved ? boundaryRole(node, model.edges, (e) => edgeFlow(e, live), STILL) : 'BOUNDARY')
+              : (KIND_WORD[node.kind] ?? '')}
           </text>}
       {lines.map((l, i) => (
         <text key={i} x={node.w / 2} y={28 + i * 12} textAnchor="middle" className="pv-val">{l}</text>
       ))}
       {state && <text x={node.w / 2} y={node.h - 5} textAnchor="middle" className="pv-state">{EQUIP_LABEL[state]}</text>}
+      {model.mixingPoints.includes(node.id) && (
+        <text x={node.w / 2} y={-6} textAnchor="middle" className="pv-mixing"
+          data-testid="pv-mixing">MIXING</text>
+      )}
       {node.instruments.map((inst, i) => (
         <text key={inst.tag} x={node.w / 2} y={node.h + 13 + i * 13} textAnchor="middle"
           className="pv-reading" data-testid="pv-instrument" data-tag={inst.tag}>
@@ -299,6 +309,9 @@ function Node({ node, model, live, onOpen }: {
     ...(state ? { 'data-state': state } : {}),
     ...(q && q !== 'good' ? { 'data-quality': q } : {}),
     ...(node.tag && live.worst.get(node.tag) ? { 'data-alarm': live.worst.get(node.tag) } : {}),
+    // where two services meet. NOT an alarm and NOT a quality flag — a fact
+    // about the process that an operator should be able to see.
+    ...(model.mixingPoints.includes(node.id) ? { 'data-mixing': '1' } : {}),
   }
   return node.tag ? (
     <g className="pv-node" transform={`translate(${node.x} ${node.y})`} {...attrs}

@@ -125,7 +125,7 @@ export default function HmiToolbar({ onExit, tool, setTool, onImport, onUndo, on
     // between pages while running keeps the same live plant
     // The run reads engineering values from the registry; widget props are
     // only a fallback for screens authored before it owned them.
-    sim().enterRun(doc.hmiScreens, doc.registry)
+    sim().enterRun(doc.hmiScreens, doc.registry, doc.fluids)
     // an operator station comes up on its home page
     const home = doc.hmiScreens.find((sc) => sc.home)
     if (home) useStore.getState().setActiveScreen(home.id)

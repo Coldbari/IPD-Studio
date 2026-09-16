@@ -118,6 +118,20 @@ export interface ProcessEdge {
   /** Pipe edges: the drawn polylines this edge represents, so the HMI can
    *  paint the solved flow onto what the operator can see. */
   pipeIds: string[]
+  /**
+   * The SERVICES the drawing states for those pipes, distinct and sorted.
+   *
+   * Carried, not used: nothing in this module reads it, and the solver does not
+   * know a fluid exists. It is here because a service belongs to the stream
+   * that carries it, and this is the stream. `hmi/sim/fluids.ts` propagates
+   * from these statements; see `PART E` — fluid identity is informational and
+   * changes no equation.
+   *
+   * More than one entry means the drawing states different services on pipes
+   * this model has compiled into ONE conductor, which is a contradiction the
+   * fluid derivation reports rather than resolves.
+   */
+  fluidIds: string[]
 }
 
 // ── The model ───────────────────────────────────────────────────────────────
@@ -343,6 +357,9 @@ export function buildProcessModel(screens: HmiScreen | HmiScreen[]): ProcessMode
           // A pump's own resistance is nil — its curve already falls with
           // flow. A valve's is set every tick from its position.
           resistance: kind === 'pump' ? 0 : kind === 'heater' ? FITTING_K : kind === 'valve' ? VALVE_K : FITTING_K,
+          // a device is not a drawn line, so the drawing states no service for
+          // it; it takes whatever the runs either side of it carry
+          fluidIds: [],
           pipeIds: [],
         })
       }
@@ -362,6 +379,7 @@ export function buildProcessModel(screens: HmiScreen | HmiScreen[]): ProcessMode
         from: a.node, to: b.node,
         resistance: PIPE_K,
         pipeIds: [pipe.id],
+        fluidIds: pipe.fluidId !== undefined ? [pipe.fluidId] : [],
       })
       edgeOfPipe.set(pipe.id, id)
       // A free end is a BOUNDARY, not a dead end: a battery-limit supply or a

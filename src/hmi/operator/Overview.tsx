@@ -14,41 +14,56 @@ import {
   kpisByQuantity, measurementRows, processStatus, standingAlarms, worstByTag,
 } from './summary'
 import type { Measures } from '../sim/tags'
-import type { FlowNode, FlowPath } from '../sim/topology'
+import type { ProcessRoute, ViewEdge, ViewNode } from '../sim/processView'
+import { boundaryRole } from '../sim/processView'
+import { SHUT_LEAK_MAX } from '../sim/hydraulic/solver'
 import { equipmentState } from '../sim/state'
 import type { Tags } from '../sim/engine'
 import type { TagDef } from '../sim/tags'
 import type { AlarmPriority } from '../sim/alarms'
 
-const TERMINAL_WORD: Record<string, string> = { source: 'SUPPLY', sink: 'DESTINATION' }
+
 
 /**
  * THE SIMPLIFIED PROCESS FLOW.
  *
- * Situational awareness, not a P&ID. It shows only what the fluid passes
- * through — supply, the drives and valves on the way, the vessel it lands in —
- * with each object's live state and its key value, and an arrow that is lit
- * only where something is actually flowing.
+ * Situational awareness, not a P&ID. It shows what the fluid passes through —
+ * supply, the drives and valves on the way, the vessel it lands in — with each
+ * object's live state and its key value, and an arrow lit only where something
+ * is actually flowing.
  *
- * The topology is the SAME one the solver uses, projected read-only in
- * `sim/topology.ts`. Nothing here re-derives process connectivity, and the
- * picture therefore cannot drift from the plant it describes: change the
- * drawing and this changes with it.
+ * IT IS A PROJECTION OF THE PROCESS VIEW, not a second description of the
+ * plant. `sim/processView.ts` derives the routes from the same nodes and edges
+ * the Process flow page draws, which are themselves derived from the canonical
+ * `ProcessModel`. Before K5 this walked the branch model and laid out its own
+ * strip, so a change to the drawing had to be understood by two independent
+ * algorithms and they could disagree. One graph, one layout, two presentations.
  */
-function Flowsheet({ paths, defs, tags, flows, oos, worst, onJumpTag }: {
-  paths: FlowPath[]
+function Flowsheet({ routes, defs, tags, flows, oos, worst, onJumpTag }: {
+  routes: ProcessRoute[]
   defs: Record<string, TagDef>
   tags: Tags
+  /** Signed flow per drawn pipe, straight from the solve. */
   flows: Record<string, number>
   oos: Record<string, true>
   worst: Map<string, AlarmPriority>
   onJumpTag(tag: string): void
 }) {
-  const nodeOf = (n: FlowNode, key: string) => {
+  /** Signed flow in an edge, from the one map the solve publishes. */
+  const edgeFlow = (e: ViewEdge): number =>
+    e.pipeIds.reduce((v, p) => (v !== 0 ? v : (flows[p] ?? 0)), 0)
+
+  const nodeOf = (n: ViewNode, key: string, route: ProcessRoute) => {
     if (n.tag === undefined) {
       return (
         <div key={key} className="op-node term" data-testid="flow-node" data-kind={n.kind}>
-          <div className="nt">{TERMINAL_WORD[n.kind] ?? n.kind.toUpperCase()}</div>
+          <div className="nt">
+            {n.kind === 'boundary'
+              // the SAME rule the Process flow page uses, so a battery limit
+              // never reads SUPPLY on one screen and DESTINATION on the other
+              ? boundaryRole(n, route.edges, edgeFlow, SHUT_LEAK_MAX)
+              : n.kind.toUpperCase()}
+          </div>
         </div>
       )
     }
@@ -57,10 +72,10 @@ function Flowsheet({ paths, defs, tags, flows, oos, worst, onJumpTag }: {
     const state = n.kind === 'pump' || n.kind === 'heater'
       ? equipmentState(t, { oos: oos[n.tag] === true })
       : undefined
-    const value = n.kind === 'tank' ? t?.PV
+    const value = n.kind === 'vessel' ? t?.PV
       : n.kind === 'valve' ? (t?.POS ?? t?.OP ?? ((t?.OPEN ?? 0) >= 0.5 ? 100 : 0))
       : undefined
-    const unit = n.kind === 'tank' ? (def?.unit ?? '%') : '%'
+    const unit = n.kind === 'vessel' ? (def?.unit ?? '%') : '%'
     return (
       <button key={key} className="op-node" data-testid="flow-node"
         data-tag={n.tag} data-kind={n.kind}
@@ -73,25 +88,34 @@ function Flowsheet({ paths, defs, tags, flows, oos, worst, onJumpTag }: {
       </button>
     )
   }
+  /** What a route is actually passing: its NARROWEST edge. A route with a shut
+   *  valve anywhere along it is passing nothing, whatever the rest of it is
+   *  doing, and that is the number an operator wants from a summary strip. */
+  const routeFlow = (r: ProcessRoute): number =>
+    r.edges.length === 0 ? 0 : Math.min(...r.edges.map((e) => Math.abs(edgeFlow(e))))
+
   return (
     <div className="op-flow" data-testid="op-flowsheet">
-      {paths.map((p) => {
-        const q = flows[p.branchId] ?? 0
+      {routes.map((r) => {
+        const q = routeFlow(r)
+        // the same threshold the process view uses: a blocked element is a
+        // steep FINITE conductance, so a dead line carries a trace
+        const moving = q > SHUT_LEAK_MAX
         return (
-          <div key={p.branchId} className="op-flow-path" data-testid="flow-path" data-flow={q > 0 ? 1 : 0}>
-            {p.nodes.map((n, i) => (
+          <div key={r.id} className="op-flow-path" data-testid="flow-path" data-flow={moving ? 1 : 0}>
+            {r.nodes.map((n, i) => (
               <span key={i} style={{ display: 'contents' }}>
                 {i > 0 && (
-                  <span className="op-flow-arrow" data-flowing={q > 0 ? 1 : 0} aria-hidden
-                    title={q > 0 ? `${q.toFixed(1)} m³/h` : 'no flow'}>
-                    {q > 0 ? '\u2192' : '\u22ef'}
+                  <span className="op-flow-arrow" data-flowing={moving ? 1 : 0} aria-hidden
+                    title={moving ? `${q.toFixed(1)} m³/h` : 'no flow'}>
+                    {moving ? '\u2192' : '\u22ef'}
                   </span>
                 )}
-                {nodeOf(n, `${p.branchId}-${i}`)}
+                {nodeOf(n, `${r.id}-${i}`, r)}
               </span>
             ))}
             <span className="op-flow-arrow" style={{ marginLeft: 'var(--hmi-space-md)' }}>
-              <span className="nv" data-testid="flow-rate">{q > 0 ? `${fmt(q)} m\u00b3/h` : 'no flow'}</span>
+              <span className="nv" data-testid="flow-rate">{moving ? `${fmt(q)} m\u00b3/h` : 'no flow'}</span>
             </span>
           </div>
         )
@@ -130,8 +154,8 @@ export default function Overview({ onPage, onGoToScreen, onJumpTag }: {
   const quality = useSimStore((s) => s.quality)
   const oos = useSimStore((s) => s.oos)
   const equipFlows = useSimStore((s) => s.equipFlows)
-  const topology = useSimStore((s) => s.topology)
-  const branchFlows = useSimStore((s) => s.branchFlows)
+  const routes = useSimStore((s) => s.routes)
+  const pipeFlows = useSimStore((s) => s.pipeFlows)
   const screens = useStore((s) => s.doc.hmiScreens)
 
   const counts = alarmCounts(alarms)
@@ -178,10 +202,10 @@ export default function Overview({ onPage, onGoToScreen, onJumpTag }: {
         </div>
       </section>
 
-      {topology.length > 0 && (
+      {routes.length > 0 && (
         <section>
           <h3>Process flow</h3>
-          <Flowsheet paths={topology} defs={defs} tags={tags} flows={branchFlows}
+          <Flowsheet routes={routes} defs={defs} tags={tags} flows={pipeFlows}
             oos={oos} worst={worst} onJumpTag={onJumpTag} />
         </section>
       )}

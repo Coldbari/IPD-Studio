@@ -8,6 +8,7 @@ import type { HmiScreen } from './model'
 import type { SimModel } from './sim/engine'
 import { buildSimModel, initTags, processFaultOf, tick } from './sim/engine'
 import type { Registry } from '../model/registry'
+import type { Fluid } from '../model/types'
 import type { TagDef } from './sim/tags'
 import { tagDefMap } from './sim/tags'
 import type { AlarmRecord, JournalEntry, SuppressionSets } from './sim/alarms'
@@ -22,10 +23,8 @@ import { makeRng } from './sim/noise'
 import { parseSignalRef } from './tagIndex'
 import type { SimSpeed } from './sim/units'
 import { History, qualityCode } from './sim/history'
-import type { FlowPath } from './sim/topology'
-import { projectTopology } from './sim/topology'
-import type { ProcessViewModel } from './sim/processView'
-import { buildProcessView } from './sim/processView'
+import type { ProcessRoute, ProcessViewModel } from './sim/processView'
+import { buildProcessView, processRoutes } from './sim/processView'
 
 /**
  * What the hydraulic solve managed this tick, published for the operator.
@@ -125,9 +124,16 @@ interface SimStoreState {
    *  overview flowsheet and a vessel's inlet/outlet readout can read the flows
    *  the engine already computed rather than deriving their own. */
   branchFlows: Record<string, number>
-  /** The plant as readable paths. STATIC for a run: topology changes only when
-   *  the drawing does, so it is projected once at compile. */
-  topology: FlowPath[]
+  /**
+   * The plant as readable routes — where from, through what, to where.
+   *
+   * STATIC for a run, and PROJECTED FROM `processView` rather than derived
+   * independently. Before K5 the Overview walked the branch model and laid out
+   * its own strip, so the two process pictures in the product could be changed
+   * apart from each other. There is one graph, one layout, and this is a view
+   * of it.
+   */
+  routes: ProcessRoute[]
   /**
    * The process view's nodes, edges and LAYOUT. Also STATIC for a run.
    *
@@ -165,7 +171,9 @@ interface SimStoreState {
   /** Pass every screen for a plant-wide run (navigation keeps simulating). */
   /** `registry` carries the engineering signal/alarm data the run must
    *  prefer over anything a widget holds. */
-  enterRun(screens: HmiScreen | HmiScreen[], registry?: Registry): void
+  /** `fluids` is the project's service list — used to name and present a
+   *  stream's service, never to decide it. Identity comes from the drawing. */
+  enterRun(screens: HmiScreen | HmiScreen[], registry?: Registry, fluids?: readonly Fluid[]): void
   exitRun(): void
   playPause(): void
   setSpeed(s: SimSpeed): void
@@ -220,21 +228,21 @@ function supSets(shelved: Record<string, number>, oos: Record<string, true>, tag
 
 export const useSimStore = create<SimStoreState>()((set, get) => ({
   mode: 'edit', playing: false, speed: 1, t: 0,
-  tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, topology: [], processView: null, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [],
+  tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [],
 
-  enterRun: (screens, registry) => {
+  enterRun: (screens, registry, fluids) => {
     model = buildSimModel(screens, registry)
     rng = makeRng(SEED)
     warm = undefined // a different plant's pressure field is not a guess
     const tags0 = initTags(model)
     // a fresh History per run: a new identity is how React learns the old
     // trend data is gone, and nothing from the previous run can leak forward
-    set({ mode: 'run', playing: true, t: 0, tags: tags0, defs: tagDefMap(model.defs), quality: qualityMap(model, tags0, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, topology: projectTopology(model.net), processView: buildProcessView(model.hydraulic, model.defs, model.controllers), equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [] })
+    set({ mode: 'run', playing: true, t: 0, tags: tags0, defs: tagDefMap(model.defs), quality: qualityMap(model, tags0, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, ...(() => { const pv = buildProcessView(model.hydraulic, model.defs, model.controllers, fluids ?? []); return { processView: pv, routes: processRoutes(pv) } })(), equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [] })
   },
   exitRun: () => {
     model = null
     warm = undefined
-    set({ mode: 'edit', playing: false, t: 0, tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, topology: [], processView: null, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [] })
+    set({ mode: 'edit', playing: false, t: 0, tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [] })
   },
   playPause: () => set((s) => ({ playing: !s.playing })),
   setSpeed: (speed) => set({ speed }),

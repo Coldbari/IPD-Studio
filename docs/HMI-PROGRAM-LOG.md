@@ -519,3 +519,52 @@ sample QA baseline unchanged
 | P2 | The Overview page keeps its own linear flowsheet strip over the BRANCH projection. Both are presentations of the same compiled model, but there are now two presentation derivations; folding the strip onto `processView` would leave one. |
 | P2 | Fluid identity is a reserved token only. There is no fluid, no colour coding and no mixing physics, by design for this phase. |
 | P2 | A passive boundary cannot supply against a pumped header — the one-boundary limitation from K3.2, now visible on the process view as a second source reading `DESTINATION`. |
+
+
+---
+
+## 19. Step K5 — one process picture, and what each stream carries
+
+Two objectives, both closed.
+
+**Consolidation.** K4's carried-forward P2 is gone: `sim/topology.ts` is
+deleted and the Overview strip, the Process flow page and the faceplate's
+vessel flows all read the one `ProcessViewModel`. The tests hold it by
+reference — a route's objects ARE the page's objects — so there is nothing to
+fall out of step. Inspecting the Overview capture turned up a real disagreement
+while this was being done: the same battery limit read SUPPLY on the strip
+(decided by position in the route) and DESTINATION on the page (decided by the
+sign of the flow). Both now call one `boundaryRole`.
+
+**Fluid identity.** The P&ID has had `Fluid` and `PlantEdge.fluidId` for a long
+time; what it did not have was any way for the operator layer to know about
+them, because the importer resolved the id to a COLOUR and dropped it. The
+identity now comes across, propagates along runs through the canonical
+topology, and reaches the screen as a token from a closed six-slot palette.
+
+Two things this phase deliberately did NOT do:
+
+- **No mixture physics.** Where two services meet the stream is MIXED and its
+  components are named. No density, no viscosity, no heat capacity is computed
+  for it.
+- **No physics change at all.** The solver does not know a fluid exists, and a
+  test solves the same plant with and without services stated and requires
+  every pressure and flow to be identical to the last bit. Wiring density into
+  the hydraulics is a physics change and has to be validated as one.
+
+### State after K5
+
+```text
+3225 tests passing · 7 skipped · 0 failing
+tsc -b clean · production build clean
+199 Playwright specs passing · 2 known failures, both pre-existing on a5b9793
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| **P1** | One boundary pressure: a passive boundary cannot supply against a pumped header (K3.2). Shown truthfully on the process view rather than patched. |
+| P2 | Fluid identity is INFORMATIONAL. Density and viscosity are carried but change no pressure drop, no pump head and no temperature. |
+| P2 | Mixing is explicitly unsupported — MIXED names its components and computes no properties. |
+| P2 | Only water has stated properties; the other starter services carry none, because none can be stated without data the model does not hold. |

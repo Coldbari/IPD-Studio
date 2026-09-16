@@ -109,15 +109,61 @@ export interface PlantEdge {
   fluidId?: string
 }
 
-/** A process service/medium the user defines once and assigns to lines —
- *  water blue, steam red, slurry brown. Assignment auto-spreads along the
- *  connected run (see src/model/fluidFlow.ts). */
+/**
+ * A process service/medium the user defines once and assigns to lines.
+ * Assignment auto-spreads along the connected run (see `model/fluidFlow.ts`).
+ *
+ * The IDENTITY is `id`. Everything else describes it. `color` draws the line on
+ * the P&ID, which is a drafting convention and NOT the identity — the operator
+ * layer reads `displayToken` instead, so that a fluid can be recognised on a
+ * screen without the HMI inheriting a palette chosen for paper.
+ *
+ * The physical properties are OPTIONAL and usually absent, deliberately. A
+ * density for "Steam" or "Gas" is meaningless without a pressure and a
+ * temperature this model does not carry, and one for "Slurry" or "Fuel / Oil"
+ * depends entirely on a composition nobody has stated. Writing a plausible
+ * number into those fields would be inventing engineering data. Where the
+ * properties are absent the product says the fluid's properties are unknown;
+ * see `hmi/sim/fluids.ts`.
+ */
 export interface Fluid {
   id: string
   name: string
-  /** CSS color for the line stroke. */
+  /** CSS color for the line stroke ON THE P&ID. A drafting convention. */
   color: string
+  /**
+   * Which slot of the operator layer's CONTROLLED categorical palette this
+   * service takes. Not a colour: a token the HMI resolves for itself, so fluid
+   * presentation can never collide with the alarm or quality palettes.
+   *
+   * Absent means the project has not said how to show this service, and the
+   * stream is drawn neutrally rather than being given a colour at random.
+   */
+  displayToken?: StreamToken
+  /** Density at the stated reference condition, kg/m³. */
+  densityKgM3?: number
+  /** Dynamic viscosity at the stated reference condition, mPa·s (= cP). */
+  viscosityMPaS?: number
+  /** Specific heat capacity, kJ/(kg·K). */
+  heatCapacityKJkgK?: number
+  /** The condition the three properties above are quoted at. Required
+   *  whenever any of them is present — a property with no basis is not data. */
+  referenceCondition?: string
 }
+
+/**
+ * The operator layer's controlled categorical palette for process streams.
+ *
+ * SIX SLOTS AND NO MORE, because a screen that distinguishes twelve services by
+ * hue distinguishes none of them. Deliberately a closed set of tokens rather
+ * than free colour: the renderer resolves them to muted tones that cannot be
+ * confused with the alarm palette, and a project cannot introduce a red stream
+ * that reads as a trip.
+ */
+export type StreamToken = 'stream-a' | 'stream-b' | 'stream-c' | 'stream-d' | 'stream-e' | 'stream-f'
+
+export const STREAM_TOKENS: readonly StreamToken[] =
+  ['stream-a', 'stream-b', 'stream-c', 'stream-d', 'stream-e', 'stream-f']
 
 /**
  * What the document IS, as a controlled deliverable.

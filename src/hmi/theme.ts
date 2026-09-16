@@ -69,6 +69,28 @@ export interface ThemeTokens {
   liquid: string
   pipe: string
   pipeFlow: string
+  /**
+   * THE PROCESS SERVICE PALETTE — six slots, resolved from a `StreamToken`.
+   *
+   * Closed on purpose. A screen that tells twelve services apart by hue tells
+   * none of them apart, and a project free to pick its own stream colours will
+   * eventually pick one that reads as an alarm.
+   *
+   * NO WARM HUES IN EITHER THEME. Red, orange and yellow belong to the alarm
+   * system; a stream must never borrow them. That leaves only the cool half of
+   * the wheel to hold six services apart, so they are separated by LIGHTNESS
+   * as well as hue — `streamA` and `streamE` are both blue and would have been
+   * indistinguishable at pipe width had they only differed in tint.
+   *
+   * Applied to the static pipe only — the moving overlay keeps `pipeFlow`, so
+   * what a line carries never blurs with whether it is moving.
+   */
+  streamA: string
+  streamB: string
+  streamC: string
+  streamD: string
+  streamE: string
+  streamF: string
 
   // ── Abnormal ─────────────────────────────────────────────────────────────
   /** Highest priority: act now. */
@@ -152,6 +174,13 @@ const dark: ThemeTokens = (() => {
     pipe: '#5c666f',
     pipeFlow: '#7fa8c4',
 
+    streamA: '#4d7ea8',
+    streamB: '#3f8c8c',
+    streamC: '#5f8f5f',
+    streamD: '#8b76c4',
+    streamE: '#86bcd0',
+    streamF: '#6d7b85',
+
     alarmHigh: '#e03e3e',
     alarmMedium: '#d98324',
     alarmLow: '#c9a227',
@@ -211,6 +240,13 @@ const hp: ThemeTokens = (() => {
     liquid: '#9aa8b2',
     pipe: '#7a7a7a',
     pipeFlow: '#55636d',
+
+    streamA: '#2f5c80',
+    streamB: '#246666',
+    streamC: '#3d6b3d',
+    streamD: '#6b4f9e',
+    streamE: '#5b93a8',
+    streamF: '#4e5a63',
 
     alarmHigh: '#c62222',
     alarmMedium: '#c06a00',

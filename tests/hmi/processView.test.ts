@@ -278,6 +278,13 @@ describe('building the view changes nothing about the engineering model', () => 
       bindPipe: s.defs.filter((d) => d.bindPipe).map((d) => `${d.name}:${d.bindPipe}`).sort(),
       bindTank: s.defs.filter((d) => d.bindTank).map((d) => `${d.name}:${d.bindTank}`).sort(),
       controllers: s.controllers.map((c) => `${c.tag}->${c.outTag}`).sort(),
+      // K5: the SERVICE each stream carries is engineering data too, and must
+      // survive a presentation being derived from it like everything else
+      fluids: screens.flatMap((sc) => sc.pipes
+        .filter((p) => p.fluidId !== undefined)
+        .map((p) => `${p.id}:${p.fluidId}`)).sort(),
+      edgeFluids: m.edges.filter((e) => e.fluidIds.length > 0)
+        .map((e) => `${e.id}:${e.fluidIds.join('+')}`).sort(),
       issues: m.issues.length,
     }
   }

@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useSimStore } from './simStore'
+import { vesselFlows } from './sim/processView'
 import type { HmiWidget } from './model'
 import type { AlarmLevel } from './sim/alarms'
 import { alarmMessage } from './sim/alarms'
@@ -166,8 +167,8 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
   const history = useSimStore((s) => s.history)
   useSimStore((s) => s.historyVersion)
   const flow = useSimStore((s) => s.equipFlows[tag])
-  const branchFlows = useSimStore((s) => s.branchFlows)
-  const topology = useSimStore((s) => s.topology)
+  const processView = useSimStore((s) => s.processView)
+  const pipeFlows = useSimStore((s) => s.pipeFlows)
   const write = useSimStore((s) => s.writeTag)
   const ack = useSimStore((s) => s.ack)
   const [pos, setPos] = useState(fpPos)
@@ -357,7 +358,7 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
       {kind === 'measure' && isTank && (() => {
         const cap = eng?.capacity
         const level = t.PV ?? 0
-        const flows = tankFlowsFromStore(tag, branchFlows, topology)
+        const flows = processView ? vesselFlows(processView, pipeFlows, tag) : { inlet: 0, outlet: 0 }
         return (
           <Section title="Process" testId="fp-values">
             <Value label="Level" value={level} unit={unit} quality={q} />
@@ -441,21 +442,3 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
   )
 }
 
-/** Inlet and outlet for a vessel, summed from the branch flows the engine
- *  solved. The topology projection says which branches touch it. */
-function tankFlowsFromStore(
-  tag: string,
-  branchFlows: Record<string, number>,
-  topology: { branchId: string; nodes: { kind: string; tag?: string }[] }[],
-): { inlet: number; outlet: number } {
-  let inlet = 0
-  let outlet = 0
-  for (const p of topology) {
-    const f = branchFlows[p.branchId] ?? 0
-    const first = p.nodes[0]
-    const last = p.nodes[p.nodes.length - 1]
-    if (last && last.kind === 'tank' && last.tag === tag) inlet += f
-    if (first && first.kind === 'tank' && first.tag === tag) outlet += f
-  }
-  return { inlet, outlet }
-}

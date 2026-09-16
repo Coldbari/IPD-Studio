@@ -44,10 +44,12 @@ export const plant: HmiScreen = {
     { id: 'lic', type: 'display', x: 1300, y: 310, w: 96, h: 40, tag: 'LIC-101', props: { controller: true } },
   ],
   pipes: [
-    { id: 'a1', points: [{ x: 40, y: 408 }, { x: 176, y: 408 }], bId: 'p', bPort: 'suction' },
+    // TWO SERVICES, stated by the drawing on the two inlets. They stay
+    // distinct up to T-101 and the stream beyond it reads MIXED.
+    { id: 'a1', points: [{ x: 40, y: 408 }, { x: 176, y: 408 }], bId: 'p', bPort: 'suction', fluidId: 'fl-water' },
     { id: 'a2', points: [{ x: 240, y: 408 }, { x: 456, y: 408 }], aId: 'p', aPort: 'discharge', bId: 'fv', bPort: 'in' },
     { id: 'a3', points: [{ x: 512, y: 408 }, { x: 696, y: 408 }], aId: 'fv', aPort: 'out', bId: 'tee' },
-    { id: 'b1', points: [{ x: 40, y: 716 }, { x: 456, y: 716 }], bId: 'hv', bPort: 'in' },
+    { id: 'b1', points: [{ x: 40, y: 716 }, { x: 456, y: 716 }], bId: 'hv', bPort: 'in', fluidId: 'fl-oil' },
     { id: 'b2', points: [{ x: 512, y: 716 }, { x: 708, y: 716 }, { x: 708, y: 420 }], aId: 'hv', aPort: 'out', bId: 'tee' },
     // TK-A is filled through a BOTTOM nozzle and TK-B through a top one, so
     // the two destinations are genuinely different hydraulic loads: what is

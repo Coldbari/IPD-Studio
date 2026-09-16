@@ -43,6 +43,9 @@
 import type { ProcessModel } from './hydraulic/model'
 import type { Measures, TagDef } from './tags'
 import type { ControllerSpec } from './engine'
+import type { Fluid } from '../../model/types'
+import type { StreamFluid } from './fluids'
+import { deriveFluids } from './fluids'
 
 /** What a box on the process view IS. */
 export type ViewNodeKind =
@@ -113,6 +116,15 @@ export interface ViewEdge {
    *  their place in the sequence — an FT between a pump and a valve is drawn
    *  between the pump and the valve, not floated off to one side. */
   instruments: ViewInstrument[]
+  /**
+   * The SERVICE this stream carries, and how confident the model is about it.
+   *
+   * Presentation metadata like the rest of this file: the renderer resolves
+   * `displayToken` to a muted tone from a closed palette. It never decides
+   * whether a line is flowing, which is the sign and magnitude of the solved
+   * flow and nothing else.
+   */
+  fluid: StreamFluid
   /** Polyline through the laid-out nodes, in view units. */
   points: { x: number; y: number }[]
 }
@@ -125,6 +137,9 @@ export interface ProcessViewModel {
   height: number
   /** Node id -> index, so the renderer can resolve an edge end in O(1). */
   indexOf: Map<string, number>
+  /** Nodes where two services meet. Reported, never resolved into a mixture:
+   *  see `sim/fluids.ts`. */
+  mixingPoints: string[]
 }
 
 // ── Layout constants ────────────────────────────────────────────────────────
@@ -167,7 +182,9 @@ export function buildProcessView(
   model: ProcessModel,
   defs: TagDef[],
   controllers: ControllerSpec[] = [],
+  fluids: readonly Fluid[] = [],
 ): ProcessViewModel {
+  const services = deriveFluids(model, fluids)
   const nodes: ViewNode[] = []
   const byId = new Map<string, ViewNode>()
   /** ProcessModel node id -> the view node that absorbed it. */
@@ -216,7 +233,10 @@ export function buildProcessView(
     const from = owner.get(e.from)
     const to = owner.get(e.to)
     if (from === undefined || to === undefined) continue
-    edges.push({ id: e.id, from, to, pipeIds: [...e.pipeIds], instruments: [], points: [] })
+    edges.push({
+      id: e.id, from, to, pipeIds: [...e.pipeIds], instruments: [], points: [],
+      fluid: services.byEdge.get(e.id) ?? { state: 'unknown' },
+    })
   }
 
   // 5. INSTRUMENTS, at the place the drawing installed them.
@@ -257,7 +277,11 @@ export function buildProcessView(
   layout(nodes, edges, byId)
   const width = Math.max(...nodes.map((n) => n.x + n.w), 0) + MARGIN
   const height = Math.max(...nodes.map((n) => n.y + n.h), 0) + MARGIN
-  return { nodes, edges, width, height, indexOf: new Map(nodes.map((n, i) => [n.id, i])) }
+  return {
+    nodes, edges, width, height,
+    indexOf: new Map(nodes.map((n, i) => [n.id, i])),
+    mixingPoints: services.mixingPoints.filter((n) => owner.has(n)).map((n) => owner.get(n)!),
+  }
 }
 
 // ── Layout ──────────────────────────────────────────────────────────────────
@@ -397,3 +421,144 @@ export function midpointOf(points: { x: number; y: number }[]): { x: number; y: 
 
 const seg = (a: { x: number; y: number }, b: { x: number; y: number }): number =>
   Math.abs(b.x - a.x) + Math.abs(b.y - a.y)
+
+// ── Readable routes ─────────────────────────────────────────────────────────
+
+/**
+ * ONE process route, as a person reads it: where the fluid comes from, what it
+ * passes through in order, and where it ends up.
+ *
+ * This is what the Overview's summary strip draws. It is a PROJECTION of the
+ * view model above — the same graph, the same order, the same objects — and
+ * not a second description of the plant. Before K5 the Overview walked the
+ * branch model and laid its own strip out, so a drawing change had to be
+ * understood by two independent algorithms; now there is one.
+ *
+ * A route runs between TERMINALS, and a vessel is a terminal: fluid arriving in
+ * a tank has arrived, and what leaves it later is a different stream. That is
+ * the same rule the branch projection used, kept because it is what makes a
+ * strip readable rather than one route through the whole plant.
+ */
+export interface ProcessRoute {
+  /** Stable id: the first and last object on the route. */
+  id: string
+  /** The objects passed through, in order, terminals included. */
+  nodes: ViewNode[]
+  /** The edges between them, in the same order — `nodes.length - 1` of them.
+   *  Live flow is looked up per edge, so a route reports what actually gets
+   *  through rather than one number chosen for it. */
+  edges: ViewEdge[]
+}
+
+/** Is this an object a route starts or stops at? */
+const isTerminal = (n: ViewNode): boolean => n.kind === 'boundary' || n.kind === 'vessel'
+
+/**
+ * Every route through the plant, longest first.
+ *
+ * Enumerated by walking forward from each terminal along the NOMINAL edge
+ * direction. Nominal because a route is a description of the plant, not of
+ * what it is doing this second: an operator reading the strip should see the
+ * same list from one tick to the next, and the arrows on it move instead.
+ *
+ * A route carrying no equipment at all is dropped — a bare boundary-to-boundary
+ * stub tells an operator nothing and would only crowd the strip. `limit` caps
+ * what a very large plant can put on one summary.
+ */
+export function processRoutes(model: ProcessViewModel, limit = 6): ProcessRoute[] {
+  const out = new Map<string, ViewEdge[]>()
+  for (const e of model.edges) {
+    if (!out.has(e.from)) out.set(e.from, [])
+    out.get(e.from)!.push(e)
+  }
+  const node = (id: string): ViewNode | undefined => model.nodes[model.indexOf.get(id) ?? -1]
+  const routes: ProcessRoute[] = []
+
+  const walk = (at: ViewNode, path: ViewNode[], edges: ViewEdge[], seen: Set<string>): void => {
+    const next = (out.get(at.id) ?? []).filter((e) => !seen.has(e.id))
+    // a terminal reached with something behind it ends a route
+    if (path.length > 1 && isTerminal(at)) {
+      routes.push({ id: `${path[0]!.id}>${at.id}`, nodes: [...path], edges: [...edges] })
+      return
+    }
+    if (next.length === 0) {
+      if (path.length > 1) routes.push({ id: `${path[0]!.id}>${at.id}`, nodes: [...path], edges: [...edges] })
+      return
+    }
+    for (const e of next) {
+      const to = node(e.to)
+      if (!to) continue
+      seen.add(e.id)
+      walk(to, [...path, to], [...edges, e], seen)
+      seen.delete(e.id)
+    }
+  }
+
+  for (const start of model.nodes) {
+    if (!isTerminal(start)) continue
+    walk(start, [start], [], new Set())
+  }
+  return routes
+    .filter((r) => r.nodes.some((n) => !isTerminal(n)))
+    .sort((a, b) => b.nodes.length - a.nodes.length || a.id.localeCompare(b.id))
+    .slice(0, limit)
+}
+
+/**
+ * What a vessel is taking in and giving out, m³/h, from the SIGNED flows the
+ * solve produced.
+ *
+ * Reads the vessel's own edges rather than summing whole branches, so a line
+ * that reverses moves from one figure to the other instead of staying on the
+ * side the drawing put it. Nothing is recomputed here: it only adds up flows
+ * the solver already gave.
+ */
+export function vesselFlows(
+  model: ProcessViewModel,
+  pipeFlows: Record<string, number>,
+  tag: string,
+): { inlet: number; outlet: number } {
+  const box = model.nodes.find((n) => n.kind === 'vessel' && n.tag === tag)
+  if (!box) return { inlet: 0, outlet: 0 }
+  let inlet = 0
+  let outlet = 0
+  for (const e of model.edges) {
+    if (e.from !== box.id && e.to !== box.id) continue
+    const q = e.pipeIds.reduce((v, p) => (v !== 0 ? v : (pipeFlows[p] ?? 0)), 0)
+    // positive runs `from` -> `to`, so an edge ENTERING the vessel with a
+    // positive flow is an inlet, and the same edge with a negative one is an
+    // outlet — which is the whole reason the sign is carried
+    const into = e.to === box.id ? q : -q
+    if (into > 0) inlet += into
+    else outlet += -into
+  }
+  return { inlet, outlet }
+}
+
+/**
+ * What a boundary is DOING: supplying the plant, or receiving from it.
+ *
+ * The drawing cannot say — a free pipe end is a battery limit and which way it
+ * runs depends on the pressures either side. The SIGN of the solved flow on its
+ * one line can say, and it is the only thing that can.
+ *
+ * Shared by both presentations on purpose. They used to answer this
+ * differently: the Process flow page from the sign, and the Overview strip from
+ * where the boundary sat in the route — so the same battery limit could read
+ * SUPPLY on one screen and DESTINATION on the other while a leg ran backwards.
+ * One question, one answer.
+ */
+export function boundaryRole(
+  node: ViewNode,
+  edges: ViewEdge[],
+  flowOf: (edge: ViewEdge) => number,
+  still: number,
+): 'SUPPLY' | 'DESTINATION' | 'BOUNDARY' {
+  const e = edges.find((x) => x.from === node.id || x.to === node.id)
+  if (!e) return 'BOUNDARY'
+  const q = flowOf(e)
+  if (Math.abs(q) <= still) return 'BOUNDARY'
+  // leaving the boundary means it is supplying; arriving means it receives
+  const outward = e.from === node.id ? q > 0 : q < 0
+  return outward ? 'SUPPLY' : 'DESTINATION'
+}

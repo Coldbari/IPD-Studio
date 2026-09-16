@@ -413,9 +413,14 @@ export function importSheet(doc: ProjectDoc, sheetId: string): HmiScreen {
       return solidRect.has(id) ? id : undefined
     }
     const aId = anchor(e.source), bId = anchor(e.target)
+    // The IDENTITY comes across, not only the colour it was drawn in. A screen
+    // that knows a line is `fl-water` can say so; one that knows only that the
+    // line is blue can infer a service from a palette, which is exactly what
+    // process identity must never be read from.
     const color = e.fluidId !== undefined ? fluidColorById.get(e.fluidId) : undefined
     return {
       id: ulid(), flowRef: e.id, width: 5, points,
+      ...(e.fluidId !== undefined ? { fluidId: e.fluidId } : {}),
       ...(color !== undefined ? { color } : {}),
       ...(aId !== undefined ? { aId } : {}), ...(bId !== undefined ? { bId } : {}),
     }

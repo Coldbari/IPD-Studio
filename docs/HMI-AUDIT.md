@@ -1060,3 +1060,178 @@ tsc -b clean · production build clean
 196 Playwright specs passing (+8 new) · 2 failing, the same two as on a5b9793
 sample QA baseline unchanged
 ```
+
+## K5 — one process picture, and what each stream carries
+
+Two objectives: fold the duplicate presentation derivation into one, and turn
+`fluidId` from a reserved token into an explicit engineering concept.
+
+### 1. Process-view consolidation
+
+K4 left a P2: the Overview's summary strip walked the BRANCH model and laid
+itself out, while the Process flow page walked the hydraulic topology and laid
+ITSELF out. One plant, two algorithms, free to drift — and a drawing change had
+to be understood twice.
+
+```text
+BEFORE                              AFTER
+ProcessModel ─┬─ ProcessViewModel   ProcessModel ─ ProcessViewModel ─┬─ ProcessView
+              │      └─ ProcessView                     │            └─ processRoutes ─ Overview
+FlowNetwork ──┴─ projectTopology                        └─ vesselFlows ─ Faceplate
+                     └─ Overview
+```
+
+`sim/topology.ts` is **deleted**, not left beside the new one. Three consumers
+moved onto the shared derivation:
+
+| Consumer | Was | Now |
+| --- | --- | --- |
+| Overview strip | `projectTopology(net)` + its own layout | `processRoutes(processView)` |
+| Faceplate vessel flows | summed whole BRANCHES, unsigned | `vesselFlows(...)`, from the **signed** edge flows, so a line that reverses moves from inlet to outlet instead of staying where the drawing put it |
+| Boundary SUPPLY/DESTINATION | strip decided by POSITION in the route, page by the sign of the flow | one shared `boundaryRole`, from the sign, on both |
+
+That last one was a real disagreement found while inspecting the Overview
+capture: with the second source being overpowered by the pump, the same battery
+limit read `SUPPLY` on the strip and `DESTINATION` on the page.
+
+The tests hold consolidation *by reference*: a route's nodes and edges **are**
+the objects the page draws (`expect(view.nodes).toContain(n)`), so there is no
+copy to fall out of step. Held under a branch added, a branch removed, a second
+input, a reversal, and a shut plant.
+
+### 2. The fluid model
+
+The P&ID already had `Fluid { id, name, color }` and `PlantEdge.fluidId`. What
+it did not have was a way for the operator layer to know any of it: **the
+importer resolved `fluidId` to a COLOUR and dropped the id**, so the only thing
+the HMI knew about a service was what shade it had been drawn in. Anything
+built on that would have been inferring process identity from a palette.
+
+```ts
+interface Fluid {
+  id: string                      // THE IDENTITY
+  name: string
+  color: string                   // draws the P&ID line — a drafting convention
+  displayToken?: StreamToken      // the HMI's controlled categorical slot
+  densityKgM3?: number
+  viscosityMPaS?: number
+  heatCapacityKJkgK?: number
+  referenceCondition?: string     // required whenever any property is present
+}
+type StreamToken = 'stream-a' | ... | 'stream-f'   // six, closed
+```
+
+**Only water carries properties**, and that is the honest state rather than an
+omission: 1000 kg/m³, 1.0 mPa·s, 4.186 kJ/(kg·K) at 20 °C, 1 atm. A density for
+Steam, Air or Gas needs a pressure and temperature this model does not carry;
+Slurry and Fuel / Oil are whatever a project says they are. Filling those in
+would be inventing engineering data.
+
+Water's definition is not a second truth either: `LIQUID_CP_KJ_PER_M3_K = 4186`
+in `sim/units.ts` is exactly `densityKgM3 × heatCapacityKJkgK`, and a test fails
+if they ever part company.
+
+### 3. Propagation
+
+```text
+PlantEdge.fluidId  →  HmiPipe.fluidId  →  ProcessEdge.fluidIds  →  deriveFluids
+     (P&ID)            (importer, K5)         (carried, unused)      (sim/fluids.ts)
+                                                                          ↓
+                                                            ViewEdge.fluid → renderer
+```
+
+The rule is **the one the P&ID already uses**: a service travels along a RUN —
+pipe carried through two-port hardware — and a run ends where the pipe branches
+or enters a vessel. Stated wins; an unstated run takes the service of the runs
+it touches at a junction; touching two makes it MIXED; MIXED spreads; nothing
+crosses a vessel.
+
+**An earlier attempt propagated edge to edge and got the central case wrong:**
+the leg *feeding* a junction took the service of the other leg back across the
+junction, so two clean inputs both read as mixed and the mixture had swallowed
+its own causes. A junction is where services meet; it is not somewhere a service
+travels through. Runs fix it because a run stops at the branch.
+
+It is **direction-free and static** — a reversed water line is still water, and
+the derivation is never handed a flow.
+
+### 4. Multiple inputs
+
+On the K5 fixture (`fl-water` on one inlet, `fl-oil` on the other, meeting at a
+tee):
+
+| stream | service |
+| --- | --- |
+| `a1`, `a2` — the water leg through HV-A | **Water**, `stream-a` |
+| `b1`, `b2` — the oil leg through HV-B | **Fuel / Oil**, `stream-e` |
+| `c1` — past the junction | **MIXED (Fuel / Oil + Water)** |
+
+Neither collapses into the other, and neither wins. Where both inlets state the
+SAME service, the downstream stream is that service and there is no mixing
+point — the model only reports a mixture when there is one.
+
+### 5. Mixing: EXPLICITLY UNSUPPORTED
+
+Option 2 of the brief, and stated as such. A mixed stream carries **what it is
+made of** — component ids and names — and **nothing about how it behaves**. No
+density, no viscosity, no heat capacity is computed for a mixture, because this
+model has no mixture physics. Pinned by a test that asserts those fields are
+absent.
+
+### PART E — fluid identity changes no physics, and that is pinned
+
+The solver does not know a fluid exists. `tests/hmi/fluids.test.ts` solves the
+same plant with and without services stated and requires every pressure and
+every flow to be **identical to the last bit**. A half-applied viscosity
+correction would be worse than none, because the numbers would still look right.
+
+### HMI evidence
+
+| Capture | Shows |
+| --- | --- |
+| `pv-9-fluids.png` | two services, visibly distinct; the mixed streams past the tee drawn broken; `MIXING` on T-101 |
+| `pv-10-fluid-reversed.png` | the same stream reversed and its pump tripped — the service is unchanged |
+| `pv-11-fluid-quality.png` | TK-A in alarm (red outline), FT-101 BAD (`- - - ✕`), **both stream colours intact** |
+| `pv-12-overview.png` | the strip showing the same objects as the page |
+
+The palette is six theme tokens with **no warm hues in either theme** — red,
+orange and yellow belong to the alarm system. Cool hues alone cannot hold six
+services apart, so they are separated by LIGHTNESS as well: `streamA` and
+`streamE` are both blue and were indistinguishable at pipe width until the
+inspection caught it. Applied to the STATIC pipe only, never the moving overlay,
+so what a line carries never blurs with whether it is moving.
+
+### Preservation
+
+The census in `processView.test.ts` now includes fluid assignments (per pipe and
+per compiled edge) alongside widgets, tags, pipes, ports, nodes, edges,
+branches, every binding and every controller pairing — recomputed on both sides
+and required equal, on the fixture and all three bundled samples. Separately:
+the topology built with services stated is **node-for-node and edge-for-edge
+identical** to the one built without them.
+
+### PART M — the one-boundary limitation is not hidden
+
+Unchanged and still shown truthfully. On the K5 captures the gravity-fed second
+source reads `DESTINATION` with its arrow pointing outward, because the pump
+holds the header above the 1 bar boundary and a passive source cannot supply
+against it. Nothing was reversed to make the diagram look intuitive. No evidence
+emerged that this is a modelling defect rather than the documented
+single-boundary consequence.
+
+### Gate
+
+```text
+3225 tests passing · 7 skipped · 0 failing      (3189 before, +36)
+tsc -b clean · production build clean
+199 Playwright specs passing (+1)
+```
+
+**A THIRD Playwright failure appeared and it is not ours.** `e2e/home.spec.ts`
+passes at the parent `739b773` and fails in the working tree, because a
+CONCURRENT session is mid-redesign of the homepage in the same checkout —
+`src/home/`, `index.html`, `src/EditorRoot.tsx` and `.gitignore` are modified by
+work that is not part of K5. None of those files is in this commit. The two
+known failures (`equip.spec`, `screenshot.spec`) are unchanged;
+`controlledExport` flakes under parallel load and passes in isolation, as in K2
+onwards.

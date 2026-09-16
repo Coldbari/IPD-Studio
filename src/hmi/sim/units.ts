@@ -93,9 +93,16 @@ export const clamp = (v: number, lo: number, hi: number): number => Math.max(lo,
 /**
  * Volumetric heat capacity of the process liquid, kJ/(m³·K).
  *
- * Water: 4.186 kJ/(kg·K) × 1000 kg/m³. One fluid, stated here rather than
- * assumed in the equations. A multi-fluid model would read this off the
- * service, which this simulation does not attempt.
+ * Water: 4.186 kJ/(kg·K) × 1000 kg/m³ — and those two numbers are not written
+ * twice. They are the canonical water definition in `model/doc.ts`
+ * (`DEFAULT_FLUIDS`), whose `heatCapacityKJkgK × densityKgM3` is exactly this
+ * figure; `tests/hmi/fluids.test.ts` fails if they ever part company.
+ *
+ * ONE FLUID, stated here rather than assumed in the equations. K5 gave streams
+ * an explicit IDENTITY, and that identity is informational: the thermal model
+ * and the hydraulic solver still run on this single liquid, and neither reads a
+ * density or a viscosity off the service. Making them do so is a physics change
+ * and would have to be validated as one.
  */
 export const LIQUID_CP_KJ_PER_M3_K = 4186
 

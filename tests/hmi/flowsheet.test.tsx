@@ -6,10 +6,16 @@
 /**
  * STEP H — the overview's simplified process flow.
  *
- * This is the limitation Step G reported and this step closes. What matters is
- * that it is a PROJECTION of the solver's own network rather than a second
- * description of the plant: change the drawing, and the picture changes with
- * it, because there is only one topology.
+ * What matters is that it is a PROJECTION rather than a second description of
+ * the plant: change the drawing, and the picture changes with it, because
+ * there is only one topology.
+ *
+ * K5 made that literally true. This strip used to walk the BRANCH model and
+ * lay itself out, while the Process flow page walked the hydraulic topology
+ * and laid ITSELF out — one plant, two independent algorithms, free to drift.
+ * Both now read `processRoutes`, which projects the same `ProcessViewModel`
+ * the Process flow page draws. The tests below are the old ones, moved onto
+ * the shared derivation with their claims unchanged.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -21,7 +27,7 @@ import { useStore } from '../../src/store/store'
 import { createEmptyDoc } from '../../src/model/doc'
 import Overview from '../../src/hmi/operator/Overview'
 import { buildSimModel } from '../../src/hmi/sim/engine'
-import { projectTopology } from '../../src/hmi/sim/topology'
+import { buildProcessView, processRoutes } from '../../src/hmi/sim/processView'
 import type { HmiScreen } from '../../src/hmi/model'
 
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
@@ -63,14 +69,23 @@ beforeEach(() => {
   sim().enterRun(screen)
 })
 
+/** The routes for a screen, through the one derivation both pages use. */
+const routesOf = (sc: HmiScreen) => {
+  const m = buildSimModel(sc)
+  return processRoutes(buildProcessView(m.hydraulic, m.defs, m.controllers))
+}
+
 describe('the projection', () => {
-  it('reads a path the way a person does: where from, through what, to where', () => {
-    const model = buildSimModel(screen)
-    const paths = projectTopology(model.net)
-    expect(paths).toHaveLength(1)
-    expect(paths[0]!.nodes.map((n) => `${n.kind}:${n.tag ?? ''}`)).toEqual([
-      'source:', 'pump:P-101', 'valve:LV-101', 'tank:TK-101',
+  it('reads a route the way a person does: where from, through what, to where', () => {
+    const routes = routesOf(screen)
+    expect(routes).toHaveLength(1)
+    expect(routes[0]!.nodes.map((n) => `${n.kind}:${n.tag ?? ''}`)).toEqual([
+      'boundary:', 'pump:P-101', 'valve:LV-101', 'vessel:TK-101',
     ])
+    // and it carries the EDGES between them, so the strip reads live flow per
+    // line rather than one number chosen for the whole route
+    expect(routes[0]!.edges).toHaveLength(3)
+    expect(routes[0]!.edges.flatMap((e) => e.pipeIds)).toEqual(['e1', 'e2', 'e3'])
   })
 
   it('drops a bare stub that carries no equipment — it tells an operator nothing', () => {
@@ -78,7 +93,7 @@ describe('the projection', () => {
       ...screen, id: 's2',
       pipes: [...screen.pipes, { id: 'z', points: [{ x: 0, y: 400 }, { x: 900, y: 400 }] }],
     }
-    expect(projectTopology(buildSimModel(stub).net)).toHaveLength(1)
+    expect(routesOf(stub)).toHaveLength(1)
   })
 
   it('is the SOLVER’s topology, so a changed drawing changes the picture', () => {
@@ -90,9 +105,25 @@ describe('the projection', () => {
         { id: 'e4', points: [{ x: 548, y: 160 }, { x: 660, y: 210 }] },
         { id: 'e5', points: [{ x: 692, y: 210 }, { x: 860, y: 210 }] }],
     }
-    const paths = projectTopology(buildSimModel(extended).net)
-    const drain = paths.find((p) => p.nodes.some((n) => n.tag === 'HV-102'))!
-    expect(drain.nodes.map((n) => n.kind)).toEqual(['tank', 'valve', 'sink'])
+    const drain = routesOf(extended).find((r) => r.nodes.some((n) => n.tag === 'HV-102'))!
+    expect(drain.nodes.map((n) => n.kind)).toEqual(['vessel', 'valve', 'boundary'])
+  })
+
+  it('a vessel ENDS a route: what arrives has arrived, and what leaves is another stream', () => {
+    const extended: HmiScreen = {
+      ...screen, id: 's5',
+      widgets: [...screen.widgets,
+        { id: 'h', type: 'valve', x: 650, y: 200, w: 48, h: 32, tag: 'HV-102' }],
+      pipes: [...screen.pipes,
+        { id: 'e4', points: [{ x: 548, y: 160 }, { x: 660, y: 210 }] },
+        { id: 'e5', points: [{ x: 692, y: 210 }, { x: 860, y: 210 }] }],
+    }
+    const routes = routesOf(extended)
+    expect(routes).toHaveLength(2)
+    for (const r of routes) {
+      const middle = r.nodes.slice(1, -1)
+      expect(middle.some((n) => n.kind === 'vessel')).toBe(false)
+    }
   })
 })
 
@@ -101,10 +132,24 @@ describe('the drawn flowsheet', () => {
     const host = await view()
     expect(host.querySelector('[data-testid="op-flowsheet"]')).not.toBeNull()
     const ns = nodes(host)
-    expect(ns.map((n) => n.getAttribute('data-kind'))).toEqual(['source', 'pump', 'valve', 'tank'])
-    expect(ns[0]!.textContent).toContain('SUPPLY')
+    // the kinds are the PROCESS VIEW's, because that is where they now come
+    // from: a boundary rather than a 'source', a vessel rather than a 'tank'
+    expect(ns.map((n) => n.getAttribute('data-kind'))).toEqual(['boundary', 'pump', 'valve', 'vessel'])
+    // BOUNDARY, not SUPPLY: nothing is running, so this battery limit is not
+    // supplying anything. Which it IS comes from the sign of the solved flow —
+    // the same rule the Process flow page uses — and not from where it happens
+    // to sit in the route.
+    expect(ns[0]!.textContent).toContain('BOUNDARY')
     expect(ns[1]!.textContent).toContain('P-101')
     expect(ns[3]!.textContent).toContain('TK-101')
+  })
+
+  it('a battery limit says SUPPLY once it is actually supplying', async () => {
+    sim().writeTag('P-101', 'RUN', 1)
+    sim().writeTag('LV-101', 'OP', 100)
+    tick(20)
+    const host = await view()
+    expect(nodes(host)[0]!.textContent).toContain('SUPPLY')
   })
 
   it('carries each object’s live state and key value', async () => {

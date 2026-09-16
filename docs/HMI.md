@@ -576,17 +576,58 @@ a pipe or a vessel is ever dropped for being "only a measurement"; an unbound
 display is *not* placed, because it has no process location, and data quality
 already reports it as having no model behind it.
 
+### What a stream carries
+
+Every process line has a SERVICE, and it comes from the drawing. The P&ID's
+fluid assignment (`doc.fluids`, `PlantEdge.fluidId`) is carried across by the
+importer and propagated through the canonical topology by `sim/fluids.ts`, using
+the rule the P&ID itself uses: a service travels along a **run** — pipe carried
+through two-port hardware — and a run ends where the pipe branches or enters a
+vessel.
+
+| | |
+| --- | --- |
+| A run the drawing gives a service | IS that service |
+| An unstated run touching one service | takes it |
+| An unstated run touching **two** | **MIXED**, and the junction is a mixing point |
+| Anything downstream of a mixture | the mixture |
+| Across a vessel | nothing — a tank's contents are its own, so the far side is UNKNOWN unless stated |
+
+It is **static and direction-free**. A reversed water line is still water; the
+derivation is never handed a flow.
+
+**Mixing is explicitly unsupported.** A mixed stream carries what it is made of
+— the component services, by name — and nothing about how it behaves. No
+density, no viscosity, no heat capacity is computed for a mixture, because this
+model has no mixture physics and will not pretend to.
+
+**Only water has properties**, and that is the honest state rather than a gap.
+1000 kg/m³, 1.0 mPa·s, 4.186 kJ/(kg·K) at 20 °C and 1 atm — and the thermal
+model's own `LIQUID_CP_KJ_PER_M3_K` is exactly the product of the first and the
+third, so there is one answer and not two. A density for Steam, Air or Gas needs
+a pressure and a temperature this model does not carry; Slurry and Fuel / Oil
+are whatever a project says they are.
+
+**Fluid identity is informational.** The hydraulic solver does not know a fluid
+exists, and a test solves the same plant with and without services stated and
+requires every pressure and every flow to be identical. Wiring density into the
+hydraulics is a physics change and would have to be validated as one.
+
 ### Colour stays separated
 
 The only saturated colour on the page is an **alarm**. Equipment state is drawn
 with fill and a word; **quality** is drawn on the outline, as a dash pattern,
-plus its glyph. The banner that reports a solve which cannot stand behind its
+plus its glyph. A **service** tints the static pipe from a closed palette of six
+theme tokens with **no warm hues in either theme** — red, orange and yellow
+belong to the alarm system. Cool hues alone cannot hold six services apart, so
+they differ in lightness too. The moving overlay keeps the neutral flow tone, so
+what a line carries never blurs with whether it is moving. The banner that reports a solve which cannot stand behind its
 numbers carries the quality glyph and a dashed rule — deliberately *not* an
 alarm colour, because teaching people that orange can mean "the software is
 unsure" is how an alarm system stops working.
 
-`fluidId` is reserved as a future presentation token. There is no fluid
-identity and no mixing physics in this phase, and the view invents neither.
+`fluidId` is a real identity as of K5 — see *What a stream carries* above.
+There is still no mixing physics, and the view invents none.
 
 ### Static and dynamic are separated
 

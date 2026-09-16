@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { plant, registry, starvedRegistry } from '../tests/hmi/processView.fixture'
 import type { Registry } from '../src/model/registry'
+import { DEFAULT_FLUIDS } from '../src/model/doc'
 
 /**
  * K4 — the process view, captured for design inspection and asserted for the
@@ -19,6 +20,7 @@ const docOf = (reg: Registry, theme: 'classic' | 'hp') => ({
   sheets: [{ id: 'sh1', name: 'S1', drawingNumber: '', revision: '0', sheetSize: 'A3', nodes: [], edges: [] }],
   hmiScreens: [{ ...plant, theme }],
   registry: reg,
+  fluids: DEFAULT_FLUIDS,
 })
 
 type Sim = { writeTag(t: string, s: string, v: number): void }
@@ -141,4 +143,74 @@ test('8. clicking an object opens ITS faceplate, by canonical tag', async ({ pag
   await page.waitForTimeout(400)
   await page.screenshot({ path: '/tmp/pv-8-faceplate.png' })
   await expect(page.locator('text=P-101').first()).toBeVisible()
+})
+
+
+test('9. two services stay distinct, and where they meet says MIXED', async ({ page }) => {
+  await open(page)
+  await runPlant(page, 45, 100)
+  await page.waitForTimeout(2500)
+  await page.screenshot({ path: '/tmp/pv-9-fluids.png' })
+
+  // each inlet keeps its OWN service, drawn from the controlled palette
+  const water = page.locator('[data-testid="pv-edge"][data-pipes~="a1"]')
+  const oil = page.locator('[data-testid="pv-edge"][data-pipes~="b1"]')
+  await expect(water).toHaveAttribute('data-fluid', 'fl-water')
+  await expect(oil).toHaveAttribute('data-fluid', 'fl-oil')
+  await expect(water).toHaveAttribute('data-fluid-token', 'stream-a')
+  await expect(oil).toHaveAttribute('data-fluid-token', 'stream-e')
+  // ...and they are NOT the same token, so they are told apart on sight
+  expect(await water.getAttribute('data-fluid-token'))
+    .not.toBe(await oil.getAttribute('data-fluid-token'))
+
+  // the stream past the junction is MIXED — not one of them, and not a colour
+  const mixed = page.locator('[data-testid="pv-edge"][data-pipes~="a4"]')
+  await expect(mixed).toHaveAttribute('data-fluid-state', 'mixed')
+  await expect(mixed).not.toHaveAttribute('data-fluid-token', /.+/)
+  await expect(page.getByTestId('pv-mixing').first()).toBeVisible()
+})
+
+test('10. a service survives its stream reversing and its equipment tripping', async ({ page }) => {
+  await open(page)
+  await runPlant(page, 100, 0)
+  await page.waitForTimeout(1500)
+  const water = page.locator('[data-testid="pv-edge"][data-pipes~="a4"]')
+  const before = await water.getAttribute('data-fluid-state')
+
+  // trip the pump and let TK-A push back down the line that filled it
+  await write(page, [['P-101', 'FAULT', 1], ['TK-A', 'PV', 90], ['TK-B', 'PV', 2]])
+  await page.waitForTimeout(2500)
+  await page.screenshot({ path: '/tmp/pv-10-fluid-reversed.png' })
+  // the DIRECTION changed; the SERVICE did not. A reversed stream of water is
+  // still water, and a tripped pump does not change what is in the pipe.
+  await expect(water).toHaveAttribute('data-fluid-state', before!)
+  await expect(page.locator('[data-testid="pv-node"][data-tag="P-101"]'))
+    .toHaveAttribute('data-state', 'tripped')
+})
+
+test('11. a bad-quality stream is still visibly bad, whatever it carries', async ({ page }) => {
+  await open(page)
+  await runPlant(page, 100, 100)
+  await page.waitForTimeout(1500)
+  await write(page, [['FT-101', 'BAD', 1], ['TK-A', 'PV', 97]])
+  await page.waitForTimeout(1500)
+  await page.screenshot({ path: '/tmp/pv-11-fluid-quality.png' })
+  // the service is unchanged and the instrument is unmistakably bad
+  await expect(page.locator('[data-testid="pv-edge"][data-pipes~="a2"]'))
+    .toHaveAttribute('data-fluid', 'fl-water')
+  await expect(page.locator('[data-testid="pv-instrument"][data-tag="FT-101"]'))
+    .toContainText('- - -')
+})
+
+test('12. the Overview strip is the same picture, summarised', async ({ page }) => {
+  await open(page)
+  await runPlant(page, 45, 100)
+  await page.waitForTimeout(2000)
+  await page.getByTestId('op-nav-overview').click()
+  await page.waitForTimeout(600)
+  await page.screenshot({ path: '/tmp/pv-12-overview.png' })
+  await expect(page.getByTestId('op-flowsheet')).toBeVisible()
+  // the objects on the strip are the objects on the page — one derivation
+  const strip = page.locator('[data-testid="flow-node"][data-tag]')
+  expect(await strip.count()).toBeGreaterThan(2)
 })

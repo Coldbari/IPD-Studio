@@ -8,6 +8,48 @@ All notable changes to IPD Studio. Format follows
 
 ### Added
 
+- **Process streams carry an explicit service.** A fluid is now an engineering
+  definition — identity, name, and where they can honestly be stated, density,
+  viscosity and heat capacity at a named reference condition — propagated from
+  the P&ID through the process topology to the operator screen. Water is defined
+  completely; the other starter services carry no properties, because a density
+  for "Steam" or "Slurry" needs data nobody has stated and inventing one would
+  be worse than saying so.
+- **Where two services meet, the model says MIXED and names them.** It does not
+  pick one, and it does not compute a mixture's properties: mixture physics is
+  not implemented and is not pretended. The junction is marked on the process
+  view and the streams beyond it are drawn broken.
+- Streams are distinguished on screen by a **closed palette of six**, resolved
+  from a token rather than a colour, with no warm hues in either theme — red,
+  orange and yellow stay reserved for alarms. A bad-quality stream is still
+  visibly bad and an object in alarm is still visibly in alarm, whatever the
+  line carries.
+
+### Changed
+
+- **One process picture, two presentations.** The Overview's summary strip used
+  to walk the branch model and lay itself out while the Process flow page walked
+  the hydraulic topology and laid itself out — one plant described by two
+  independent algorithms. Both now project the same view model, and the vessel
+  flows on a faceplate come from the same signed edge flows. A battery limit can
+  no longer read SUPPLY on one screen and DESTINATION on the other.
+
+### Fixed
+
+- **The P&ID's fluid assignment reached the HMI as a colour and nothing else.**
+  The importer resolved `fluidId` to a line colour and dropped the id, so the
+  only thing the operator layer knew about a service was what shade it had been
+  drawn in. The identity comes across now, and the colour comes with it.
+
+### Removed
+
+- `sim/topology.ts` — the branch-model projection, superseded by the process
+  view. Deleted rather than left beside it: a dead derivation with live tests
+  reads as coverage.
+
+
+### Added
+
 - **A process view, laid out from the topology rather than the drawing.** A new
   **Process flow** operator page shows the plant the way the fluid runs through
   it — sources on the left, then the things the fluid meets in the order it

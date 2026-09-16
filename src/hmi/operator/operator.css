@@ -384,3 +384,34 @@
 .pv-node[data-alarm='high'] .pv-box { stroke: var(--hmi-alarm-high); stroke-width: 3; }
 .pv-node[data-alarm='medium'] .pv-box { stroke: var(--hmi-alarm-medium); stroke-width: 3; }
 .pv-node[data-alarm='low'] .pv-box { stroke: var(--hmi-alarm-low); stroke-width: 3; }
+
+/* ── Process services ────────────────────────────────────────────────────────
+ * A CLOSED palette of six, resolved from a token the process model supplies.
+ * The renderer never names a colour; it says which service a stream carries
+ * and this decides how that looks. The tones themselves are THEME TOKENS
+ * (`streamA..F` in theme.ts), so each theme picks values that work on its own
+ * ground and no colour is written down twice.
+ *
+ * Applied to the STATIC pipe only. The moving overlay keeps the neutral flow
+ * tone, so "what is in it" and "is it moving" never blur. */
+.pv-edge[data-fluid-token='stream-a'] .pv-pipe { stroke: var(--hmi-stream-a); }
+.pv-edge[data-fluid-token='stream-b'] .pv-pipe { stroke: var(--hmi-stream-b); }
+.pv-edge[data-fluid-token='stream-c'] .pv-pipe { stroke: var(--hmi-stream-c); }
+.pv-edge[data-fluid-token='stream-d'] .pv-pipe { stroke: var(--hmi-stream-d); }
+.pv-edge[data-fluid-token='stream-e'] .pv-pipe { stroke: var(--hmi-stream-e); }
+.pv-edge[data-fluid-token='stream-f'] .pv-pipe { stroke: var(--hmi-stream-f); }
+
+/* A stream carrying a mixture is NOT given a colour of its own, because it has
+   no single identity to show. It is drawn broken, which reads as "this is not
+   one thing" rather than as a seventh service. */
+.pv-edge[data-fluid-state='mixed'] .pv-pipe { stroke-dasharray: 2 4; }
+/* ...and an unstated one is simply the default pipe: no colour is invented for
+   a service the drawing never named. */
+
+/* Where two services meet. A word, above the object, in the neutral tone —
+   not an alarm, not a quality flag, a fact about the process. */
+.pv-mixing {
+  fill: var(--hmi-text-muted); font-size: 8px;
+  font-weight: var(--hmi-weight-bold); letter-spacing: 0.08em;
+}
+.pv-node[data-mixing='1'] .pv-box { stroke-dasharray: 2 4; }

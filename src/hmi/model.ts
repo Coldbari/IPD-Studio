@@ -113,8 +113,20 @@ export interface HmiPipe {
   /** P&ID edge id when imported (informational). */
   flowRef?: string
   width?: number
-  /** Service color inherited from the P&ID fluid assignment. */
+  /** Service color inherited from the P&ID fluid assignment. A DRAFTING
+   *  convention carried across so the mimic looks like the drawing. */
   color?: string
+  /**
+   * The SERVICE this line carries — a `doc.fluids` id.
+   *
+   * The identity, as against `color`, which is a rendering of it. Before K5 the
+   * importer resolved the P&ID's `fluidId` to a colour and dropped the id, so
+   * the only thing the operator layer knew about a service was what shade it
+   * had been drawn in — and anything built on that would have been inferring
+   * process identity from a palette. The id comes across now and the colour
+   * comes with it.
+   */
+  fluidId?: string
   /** End-widget anchors set by the P&ID import: the network attaches these
    *  ends to the named widgets instead of guessing from geometry (packed
    *  imports put several widgets within attach range of one nozzle). */
