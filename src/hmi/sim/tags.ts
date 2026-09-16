@@ -41,6 +41,14 @@ const MEASURE_DEFAULTS: Record<Measures, { unit: string; min: number; max: numbe
  *  stops, but it must never be treated as a pump by the flow network. */
 export const HEATER_SYMBOLS = new Set(['heater.fired', 'heater.electric', 'boiler'])
 
+/**
+ * Symbols that are a BATTERY LIMIT — the edge of the drawing, held at a stated
+ * pressure. One entry today; a set because a project may draw a tie-in, an
+ * off-page continuation and a utility connection with different symbols and
+ * mean the same thing by all three.
+ */
+export const TERMINAL_SYMBOLS = new Set(['bl.terminal'])
+
 /** What a tag measures, from its ISA letter — with the stated unit as a
  *  fallback for hand-built screens whose tags follow no convention. */
 export function measuresOf(tag: string, unit: string | undefined): Measures | undefined {

@@ -62,6 +62,15 @@ export type PortRole =
   | 'bottom'
   /** Vessel: a top nozzle. Sees vapour space, not liquid head. */
   | 'top'
+  /**
+   * A TERMINAL's single connection.
+   *
+   * Deliberately not `inlet` or `outlet`: those name a side, and a terminal has
+   * no sides — it is one end of the drawing held at a stated pressure, and
+   * whether it supplies or receives is the sign of the solved flow. Naming it
+   * for a direction would be the SOURCE/SINK mistake in another costume.
+   */
+  | 'process'
 
 /** How confident the model is that this attachment is what the engineer drew. */
 export type PortResolution = 'declared' | 'anchored' | 'geometric'
@@ -86,6 +95,8 @@ export const PORT_SCHEMA = {
   heater: ['inlet', 'outlet'],
   /** A vessel: bottom nozzles see liquid head, top nozzles do not. */
   vessel: ['bottom', 'top'],
+  /** A battery limit: exactly one connection, held at a stated pressure. */
+  terminal: ['process'],
   /** An imported graphic with no process model — a fitting, a sight glass. It
    *  still passes fluid, so it has two ports and no behaviour. */
   passthrough: ['inlet', 'outlet'],
@@ -96,9 +107,12 @@ export type EquipmentKind = keyof typeof PORT_SCHEMA
 /** The upstream-side role for a two-port kind, and the downstream-side one. */
 export const INLET_ROLE: Record<EquipmentKind, PortRole> = {
   pump: 'suction', valve: 'inlet', heater: 'inlet', vessel: 'top', passthrough: 'inlet',
+  // a terminal has one port, so both "sides" of it are that port
+  terminal: 'process',
 }
 export const OUTLET_ROLE: Record<EquipmentKind, PortRole> = {
   pump: 'discharge', valve: 'outlet', heater: 'outlet', vessel: 'bottom', passthrough: 'outlet',
+  terminal: 'process',
 }
 
 /**

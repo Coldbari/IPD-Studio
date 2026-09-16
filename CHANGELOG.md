@@ -6,6 +6,27 @@ All notable changes to IPD Studio. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Battery limits are engineering objects with a stated pressure.** Draw a
+  *Battery Limit / Terminal*, tag it, and give its record an operating
+  pressure — `3 barg`, `4 bara`, `50 psig` — and the hydraulic model holds that
+  connection there. Until now every boundary in a drawing was the atmosphere,
+  because a free pipe end has no tag and so nothing to state a pressure with.
+
+  A terminal states a **pressure, never a direction**. Two terminals at 3 and
+  1 barg drive flow one way; swap the two records and the same drawing runs the
+  other way, because the solver decides which end supplies. It is not a vessel
+  (no volume, no level) and not a pump (it holds a pressure rather than adding
+  head).
+
+- **Two checks for an unfinished terminal.** `terminal-no-pressure` when a
+  tagged terminal's record states none, and `terminal-bad-pressure` when what it
+  states cannot be read as a pressure. Both hold the connection at atmosphere so
+  the plant still runs, and say so. A legacy free pipe end is *not* reported —
+  the drawing never claimed anything about it.
+
+
 ### Changed
 
 - **The boundary conditions of the hydraulic model are explicit.** Every place a

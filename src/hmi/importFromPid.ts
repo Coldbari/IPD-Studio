@@ -17,6 +17,7 @@ import { baselineFor } from '../model/fingerprint'
 import type { Dir, Rect } from './routePipes'
 // side-effect: fill the symbol registry (same import the catalog tests use)
 import '../symbols/lib/index'
+import { TERMINAL_SYMBOLS } from './sim/tags'
 
 export interface ImportCtx { nameOf: Map<string, string> }
 
@@ -57,6 +58,10 @@ function widgetTypeFor(node: PlantNode, category: string): { type: WidgetType; p
   // instruments are decided by their tag, never by category — a VFD box is
   // category 'rotating' but it is not a pump you can start
   if (node.kind !== 'instrument') {
+    // A BATTERY LIMIT is a process object, not a graphic: it carries the
+    // boundary condition the hydraulic model holds that connection at, so it
+    // has to survive the import with its symbol and its tag intact.
+    if (TERMINAL_SYMBOLS.has(node.symbolId)) return { type: 'equip', props: { symbolId: node.symbolId } }
     if (EQUIP_MOTOR.has(node.symbolId)) return { type: 'equip', props: { symbolId: node.symbolId } }
     if (category === 'rotating') return { type: 'pump', props: undefined }
     if (category === 'control-valves') return { type: 'valve', props: { throttle: true } }

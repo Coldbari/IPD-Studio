@@ -5,9 +5,10 @@
 import type { Rule } from '../rules'
 import { finding } from '../rules'
 import { edgesOf, neighboursOf } from '../../model/projectIndex'
-import { processFor } from '../../model/processData'
+import { operatingPressure, processFor } from '../../model/processData'
 import { DEFAULTS } from '../../hmi/sim/units'
 import { suctionFor } from '../../model/suction'
+import { TERMINAL_SYMBOLS } from '../../hmi/sim/tags'
 
 const RELIEF_SYMBOLS = new Set(['psv', 'pse', 'pvsv', 'psv.pilot', 'vacuum-breaker', 'breather', 'flame-arrestor'])
 
@@ -185,7 +186,79 @@ export const pumpSuctionUnsupplied: Rule = {
   },
 }
 
+/**
+ * A TERMINAL THAT HAS DECLARED ITSELF AND THEN SAID NOTHING.
+ *
+ * An untagged free pipe end is atmospheric and needs no comment — the drawing
+ * says nothing about what lies beyond it and the model reads that honestly. A
+ * TERMINAL is different: someone has drawn a battery limit, tagged it, and
+ * thereby asserted that this connection terminates at a known condition. If the
+ * record then gives no pressure, the assertion is incomplete, and falling back
+ * to atmosphere silently would hide a half-finished specification behind a
+ * plausible number.
+ *
+ * So the fallback still happens — the plant must still solve — and this says so.
+ */
+export const terminalNoPressure: Rule = {
+  id: 'terminal-no-pressure',
+  title: 'Terminals with no stated pressure',
+  severity: 'warning',
+  discipline: 'process',
+  why: 'A battery limit asserts that the connection ends at a known condition. Without an operating pressure on its record the simulation holds it at atmosphere, which is a guess standing where a specification should be.',
+  run(ix) {
+    const out = []
+    const seen = new Set<string>()
+    for (const screen of ix.doc.hmiScreens ?? []) {
+      for (const w of screen.widgets) {
+        if (!isTerminalWidget(w) || !w.tag || seen.has(w.tag)) continue
+        seen.add(w.tag)
+        const raw = ix.doc.registry?.[w.tag]?.fields?.['design.operatingPressure']
+        if (raw !== undefined && raw.trim() !== '') continue
+        out.push(finding(terminalNoPressure, w.tag,
+          `${w.tag} is a terminal with no operating pressure on its record, so the simulation is holding it at ${DEFAULTS.atmosphericPressureBar} bar (atmosphere). Set Operating pressure — "3 barg" or "4 bara".`))
+      }
+    }
+    return out
+  },
+}
+
+/**
+ * A terminal whose stated pressure cannot be read as one.
+ *
+ * Separated from the rule above because it is a different problem: the first is
+ * a specification nobody finished, this is one somebody got wrong, and only the
+ * second means the value on the record is actively misleading.
+ */
+export const terminalBadPressure: Rule = {
+  id: 'terminal-bad-pressure',
+  title: 'Terminals with an unreadable pressure',
+  severity: 'critical',
+  discipline: 'process',
+  why: 'A pressure the model cannot parse is not a pressure. The simulation falls back to atmosphere, so the record and the behaviour disagree — and the record is the one people will believe.',
+  run(ix) {
+    const out = []
+    const seen = new Set<string>()
+    for (const screen of ix.doc.hmiScreens ?? []) {
+      for (const w of screen.widgets) {
+        if (!isTerminalWidget(w) || !w.tag || seen.has(w.tag)) continue
+        seen.add(w.tag)
+        const raw = ix.doc.registry?.[w.tag]?.fields?.['design.operatingPressure']
+        if (raw === undefined || raw.trim() === '') continue // the other rule's case
+        const bar = operatingPressure(raw)
+        if (bar !== undefined && Number.isFinite(bar)) continue
+        out.push(finding(terminalBadPressure, w.tag,
+          `${w.tag}'s operating pressure reads "${raw}", which is not a pressure this model can use. It is being held at atmosphere instead. Give it a number and a unit — "3 barg", "4 bara", "50 psig".`))
+      }
+    }
+    return out
+  },
+}
+
+const isTerminalWidget = (w: { type: string; props?: Record<string, unknown> }): boolean =>
+  w.type === 'equip' && TERMINAL_SYMBOLS.has(typeof w.props?.symbolId === 'string' ? w.props.symbolId : '')
+
 export const PROCESS_RULES: Rule[] = [
   noRelief, lineNoService, tankCapacityDefaulted,
   pumpSuctionInsufficient, pumpSuctionUnsupplied,
+  terminalNoPressure, terminalBadPressure,
 ]

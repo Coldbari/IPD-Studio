@@ -888,7 +888,8 @@ solved. This model has three, and each says which physical condition holds it:
 
 | `BoundaryKind` | Where it comes from | Pressure |
 | --- | --- | --- |
-| `atmospheric` | a **free pipe end** | one atmosphere |
+| `atmospheric` | a **free pipe end**, or a terminal whose record says nothing | one atmosphere |
+| `fixed-pressure` | a **tagged terminal** — a battery limit | the operating pressure on its record |
 | `vessel-vapour` | a vessel's top/vent nozzle | the vessel's operating pressure if its record states one; **atmospheric** if not |
 | `vessel-liquid` | a vessel's bottom/drain nozzle | that, plus the static head of the liquid above it |
 | `internal` | everything else | solved |
@@ -912,19 +913,37 @@ defect to paper over.
 arrives and is still one atmosphere however hard it is pushed. There is no
 reservoir model; a boundary is a pressure, not an inventory.
 
-### Known limitation: a boundary cannot be given a stated pressure
+### Terminals — where the drawing stops at a known condition
 
-A free pipe end is **atmospheric**, and it cannot be anything else, because it
-has no tag and therefore no engineering record to state a pressure on. So a
-battery-limit header drawn as an unterminated line cannot push: **a boundary
-cannot fill a vented vessel**, since both are at one atmosphere.
+A **free pipe end is atmospheric** and can be nothing else: it has no tag, so no
+engineering record, so nothing to state a pressure with. An unterminated line
+cannot push, and a boundary cannot fill a vented vessel.
 
-That is now a stated boundary condition rather than, as it was before K6, an
-accident of one constant standing in for both. What it needs is a **tagged
-terminal object** the importer carries across so the registry can describe it —
-importer work, and a separate phase. Until then a line that needs a supply
-behind it needs the supply drawn: a vessel held at pressure does the job today,
-and a pump always did.
+Draw a **Battery Limit / Terminal** instead and it can. It is a tagged piece of
+equipment with one process connection, and the hydraulic model holds that
+connection at the `design.operatingPressure` on its record:
 
-`engine.test.ts` pins the limitation as a test, so it fails loudly the day a
-boundary can be given a pressure.
+```text
+BL-101   Battery Limit — Feed   3 barg   →   held at 4 bar absolute
+```
+
+`3 barg`, `3 bar` and `3` all mean gauge — that is what a datasheet means by an
+operating pressure — and `4 bara` means absolute. It is never taken from
+`design.pressure`, which is a rating.
+
+A terminal states a **pressure**, never a direction. Two terminals at 3 and
+1 barg drive flow one way; swap the two records and the same drawing runs the
+other way, because the solver decides. A terminal held below the plant is a
+destination and one held above it is a supply, and which is which is the sign of
+the flow.
+
+It is **not a vessel** — no volume, no level, no inventory — and **not a pump**:
+it holds a pressure rather than adding head.
+
+A terminal that is tagged but whose record states no pressure, or an unreadable
+one, is held at atmosphere so the plant still runs and is **reported** by the
+`terminal-no-pressure` and `terminal-bad-pressure` checks. A free end is not
+reported: the drawing never claimed anything about it.
+
+Terminal pressure is **static** — the engineering record defines it, and there
+is no operator control for it.

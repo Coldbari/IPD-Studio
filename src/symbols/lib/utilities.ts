@@ -26,6 +26,29 @@ const eq = (
 const sig = (x: number, y: number, id = 'e'): SymbolDef['ports'][number] => ({ id, x, y, kind: 'signal' })
 
 export const utilities: SymbolDef[] = [
+  /**
+   * BATTERY LIMIT / TERMINAL — where the drawing stops and a stated condition
+   * begins.
+   *
+   * A standard P&ID object, and the one thing the process model had no way to
+   * say: a free pipe end is an open connection to the air and nothing more,
+   * because it has no tag and therefore no engineering record. This DOES have
+   * one. Tag it, give its record an operating pressure, and the hydraulic
+   * model holds that connection at that pressure.
+   *
+   * ONE process port, because a terminal terminates. It is not a pass-through
+   * and it is not a vessel: it has no volume, no level and no inventory. What
+   * it has is a pressure.
+   *
+   * It says nothing about DIRECTION. Whether it supplies or receives is the
+   * sign of the solved flow, exactly as for every other boundary.
+   */
+  eq('bl.terminal', 'Battery Limit / Terminal', 6, 3,
+    () => path('M0 4 H28 L44 12 L28 20 H0 Z') + path('M0 0 V24'),
+    [{ id: 'w', x: 0, y: 12, kind: 'process' }],
+    ['battery limit', 'terminal', 'boundary', 'off-page', 'tie-in', 'header',
+     'utility connection', 'feed', 'outlet', 'b/l', 'OSBL']),
+
   eq('deaerator', 'Deaerator', 10, 6,
     () =>
       path('M16 16 H64 a10 14 0 0 1 0 28 H16 a10 14 0 0 1 0 -28 Z') +

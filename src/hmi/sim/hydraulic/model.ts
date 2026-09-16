@@ -46,7 +46,9 @@
 
 import type { HmiPipe, HmiScreen, HmiWidget } from '../../model'
 import { DEFAULTS } from '../units'
-import { HEATER_SYMBOLS } from '../tags'
+import type { Registry } from '../../../model/registry'
+import { operatingPressure } from '../../../model/processData'
+import { HEATER_SYMBOLS, TERMINAL_SYMBOLS } from '../tags'
 import type { EquipmentKind, PortResolution, PortRole, ProcessPort } from './ports'
 import { INLET_ROLE, OUTLET_ROLE, declaredRole, portId, portsOf, roleFromGeometry } from './ports'
 
@@ -96,6 +98,21 @@ export type BoundaryKind =
    */
   | 'atmospheric'
   /**
+   * Held at a pressure the ENGINEERING RECORD states: a TAGGED TERMINAL whose
+   * record gives `design.operatingPressure`.
+   *
+   * K6 left this kind out deliberately, because nothing in the model could
+   * carry a stated boundary pressure — a free pipe end has no tag and so no
+   * record. K7 added the object that can: a battery limit is a tagged piece of
+   * equipment like any other, and the pressure comes off its record like a
+   * pump's duty or a vessel's capacity.
+   *
+   * It is a PRESSURE, not a direction. A terminal held above the plant
+   * supplies it and one held below receives from it, and which of those is
+   * happening is the sign of the solved flow.
+   */
+  | 'fixed-pressure'
+  /**
    * A VESSEL'S VAPOUR SPACE.
    *
    * Whether that is atmospheric or held above it is a RUNTIME input, not a
@@ -114,13 +131,13 @@ export type BoundaryKind =
 /*
  * WHAT IS DELIBERATELY ABSENT, and why.
  *
- * A boundary whose pressure the drawing STATES. Nothing in the engineering
- * model can carry one: a free pipe end has no tag, so no registry record, and
- * the P&ID's off-page connector is an annotation the importer does not bring
- * across. `design.pressure` is a RATING and using it as an operating condition
- * would put a battery limit at its relief setting. Giving a boundary a stated
- * pressure needs a TAGGED terminal object, which is importer work and a
- * separate phase — see `docs/HMI-AUDIT.md` § K6.
+ * A SOURCE and a SINK. Which end of a line supplies and which receives is an
+ * OUTCOME of the solve — the sign of the flow — and a boundary condition says
+ * only what pressure is held there. Two terminals at 3 and 1 barg drive flow
+ * one way; swap the records and the same line runs the other, with no change
+ * to the drawing. Making direction a property of the topology would let a
+ * drawing overrule the pressures, which is the one thing this model has
+ * refused since K2.
  */
 
 export interface ProcessNode {
@@ -254,6 +271,7 @@ export function kindOf(w: HmiWidget): EquipmentKind | null {
   if (w.type === 'pump') return 'pump'
   if (w.type === 'equip') {
     const symbolId = typeof w.props?.symbolId === 'string' ? w.props.symbolId : ''
+    if (TERMINAL_SYMBOLS.has(symbolId)) return 'terminal'
     return HEATER_SYMBOLS.has(symbolId) ? 'heater' : 'pump'
   }
   if (w.type === 'symbol') return 'passthrough'
@@ -354,7 +372,7 @@ interface Attach {
  * to; every two-port device contributes an edge between its own two ports, so
  * a pump is a pressure rise BETWEEN nodes rather than a flag on a path.
  */
-export function buildProcessModel(screens: HmiScreen | HmiScreen[]): ProcessModel {
+export function buildProcessModel(screens: HmiScreen | HmiScreen[], registry?: Registry): ProcessModel {
   const list = Array.isArray(screens) ? screens : [screens]
   const nodes: ProcessNode[] = []
   const edges: ProcessEdge[] = []
@@ -402,11 +420,34 @@ export function buildProcessModel(screens: HmiScreen | HmiScreen[]): ProcessMode
 
       for (const p of ports) {
         const liquid = kind === 'vessel' && p.role === 'bottom'
+        /**
+         * A TERMINAL IS A BOUNDARY NODE, not a junction and not a device.
+         *
+         * It is the one piece of equipment that does not conduct: the drawing
+         * stops at it. So it contributes a fixed-pressure node and no edge,
+         * which is what makes it a boundary rather than a vessel with no
+         * volume or a valve that happens to be shut.
+         *
+         * Its pressure is the operating pressure its RECORD states, read by
+         * the same `operatingPressure` the vessels use so gauge and absolute
+         * cannot mean two different things in one model. A terminal whose
+         * record says nothing falls back to atmosphere so the plant still
+         * solves — and `validate/rules/process.ts` reports the omission,
+         * because a terminal that has declared itself and then said nothing is
+         * incomplete engineering rather than a free end.
+         */
+        const terminalBarA = kind === 'terminal' && w.tag
+          ? operatingPressure(registry?.[w.tag]?.fields?.['design.operatingPressure'])
+          : undefined
         addNode({
           id: p.id,
-          kind: kind === 'vessel' ? 'vessel' : 'junction',
+          kind: kind === 'vessel' ? 'vessel' : kind === 'terminal' ? 'boundary' : 'junction',
           ...(kind === 'vessel' && w.tag ? { tag: w.tag } : {}),
+          ...(kind === 'terminal' && w.tag ? { tag: w.tag } : {}),
           ...(kind === 'vessel' ? { liquid } : {}),
+          ...(kind === 'terminal'
+            ? { pressureBar: terminalBarA ?? DEFAULTS.atmosphericPressureBar }
+            : {}),
           /**
            * A vessel's two nozzles are DIFFERENT boundary conditions, and the
            * K3.3 nozzle roles are what tell them apart — not where the line was
@@ -416,7 +457,9 @@ export function buildProcessModel(screens: HmiScreen | HmiScreen[]): ProcessMode
            * The vapour space's own pressure is a RUNTIME input, because a
            * closed vessel's record can state one, so it is not fixed here.
            */
-          boundary: kind === 'vessel' ? (liquid ? 'vessel-liquid' : 'vessel-vapour') : 'internal',
+          boundary: kind === 'vessel' ? (liquid ? 'vessel-liquid' : 'vessel-vapour')
+            : kind === 'terminal' ? (terminalBarA === undefined ? 'atmospheric' : 'fixed-pressure')
+            : 'internal',
           ports: [p],
         })
       }
@@ -426,8 +469,9 @@ export function buildProcessModel(screens: HmiScreen | HmiScreen[]): ProcessMode
       }
 
       // The device itself is an EDGE between its own two ports. A vessel is
-      // not: its nozzles are separated by the liquid, not by a resistance.
-      if (kind !== 'vessel' && edges.length < MAX_EDGES) {
+      // not: its nozzles are separated by the liquid, not by a resistance. Nor
+      // is a TERMINAL: it has one port and nothing on the far side of it.
+      if (kind !== 'vessel' && kind !== 'terminal' && edges.length < MAX_EDGES) {
         const inRole = INLET_ROLE[kind]
         const outRole = OUTLET_ROLE[kind]
         edges.push({

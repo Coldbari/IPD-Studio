@@ -122,7 +122,9 @@ export function buildSimModel(screens: HmiScreen | HmiScreen[], registry?: Regis
     buildNetwork(sc).branches.map((b) => ({ ...b, id: `S${i}:${b.id}` })),
   )
   const net: FlowNetwork = { branches }
-  const hydraulic = buildProcessModel(list)
+  // the registry comes too: a TAGGED TERMINAL's boundary pressure is on its
+  // engineering record, and the topology is where that becomes a fixed node
+  const hydraulic = buildProcessModel(list, registry)
   const controllers = wireHeaters(wireControllers(defs), defs, net).map((c) => ({
     ...c,
     action: controllerAction(c, defs, net),

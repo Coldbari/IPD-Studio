@@ -611,3 +611,46 @@ tsc -b clean · production build clean
 | P2 | No reservoir model — a fixed-pressure node has unlimited capacity. |
 | P2 | Fluid identity remains informational; the solver reads no density (K5). |
 | P2 | Mixing remains explicitly unsupported (K5). |
+
+
+---
+
+## 21. Step K7 — tagged terminals
+
+K6's remaining P1, closed. A free pipe end has no tag and so no engineering
+record, which is why every boundary in the model was the atmosphere and a
+battery limit could not push.
+
+A **Battery Limit / Terminal** is now a P&ID symbol that takes a tag like any
+other piece of equipment. Its boundary pressure comes off its record's
+`design.operatingPressure` — the same field, read by the same function, that K6
+gave to vessels, so there is one pressure system and not two.
+
+It is the only piece of equipment that contributes **no edge**: a pump, a valve
+and a fitting all conduct, so each compiles to an edge between two port nodes;
+the drawing *stops* at a terminal, so it compiles to a node. That is what makes
+it a boundary rather than a vessel with no volume.
+
+The solver was not touched. K6 already had it read `node.pressureBar`; a
+terminal populates it.
+
+**Still no SOURCE and no SINK.** A terminal states a pressure and the solve
+decides direction — 3 barg to 1 barg gives +40.825 m³/h, and swapping the two
+records gives −40.825 on the same unchanged drawing.
+
+### State after K7
+
+```text
+3288 tests passing · 7 skipped · 0 failing
+tsc -b clean · production build clean
+205 Playwright passing · 2 failing, both pre-existing on a5b9793
+sample QA baseline unchanged
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P2 | Terminal pressure is STATIC — the record defines it, and there is no operator control. Runtime-variable boundaries (a header that sags under load) would be a separate phase. |
+| P2 | No reservoir model — a fixed-pressure node still has unlimited capacity. |
+| P2 | Fluid identity remains informational; mixing remains explicitly unsupported (K5). |

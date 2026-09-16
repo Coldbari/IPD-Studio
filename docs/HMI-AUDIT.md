@@ -1352,3 +1352,144 @@ tsc -b clean · production build clean
 ```
 
 `home.spec.ts` now passes: the concurrent session fixed its own regression.
+
+## K7 — tagged terminals: a boundary that can state its pressure
+
+K6 closed with one P1: a free pipe end has no tag, so no engineering record, so
+no way for a drawing to say *this connection terminates at 3 barg*. Every
+boundary was therefore the atmosphere, and a battery limit could not push.
+
+This adds the object that can say it.
+
+### The engineering model
+
+A **battery limit** is now a P&ID symbol like any other piece of equipment:
+
+```ts
+eq('bl.terminal', 'Battery Limit / Terminal', …,
+   ports: [{ id: 'w', kind: 'process' }],      // exactly ONE connection
+   tagRule: 'equipment')                        // so it takes a tag
+```
+
+It is tagged, it takes a registry record, and its boundary pressure comes off
+that record's `design.operatingPressure` — the same field, read by the same
+`operatingPressure()`, that K6 gave to vessels. There is one pressure system in
+the product, not two.
+
+| | |
+| --- | --- |
+| identity | a tagged widget, `type: 'equip'` + `symbolId: 'bl.terminal'` |
+| connection | one explicit port, role `process` |
+| condition | `design.operatingPressure` on its registry record |
+| units | `barg` / `bara` / `psig` / bare, via the canonical reader |
+| description | the registry's own fields, as for any tag |
+
+### Topology
+
+```text
+P&ID terminal (tagged)                     ProcessModel
+  └─ port `process` ──── pipe ────────────► boundary node
+                                             kind:     'boundary'
+                                             boundary: 'fixed-pressure'
+                                             tag:      'BL-101'
+                                             pressureBar: 4       (3 barg)
+```
+
+A terminal is the one piece of equipment that **contributes no edge**. A pump,
+a valve and a fitting all conduct, so each compiles to an edge between two port
+nodes; the drawing *stops* at a terminal, so it compiles to a node and nothing
+else. That is what makes it a boundary rather than a vessel with no volume.
+
+`buildProcessModel(screens, registry?)` now takes the registry, because the
+boundary condition is engineering data and the topology is where it belongs.
+The solver was **not changed**: K6 already had it read `node.pressureBar`, and
+a terminal simply populates it.
+
+### Pressure semantics
+
+| Stated | Absolute | Why |
+| --- | --- | --- |
+| `3 barg` | 4 bar | gauge plus one atmosphere |
+| `4 bara` | 4 bar | absolute, as written |
+| `3` / `3 bar` | 4 bar | **bare is gauge** — a datasheet saying "operating pressure: 3 bar" means barg |
+| `20 barg` on `design.pressure` | *ignored* | a RATING, not an operating condition |
+| nothing | 1 bar | atmosphere, **and a diagnostic** |
+
+**On the atmospheric reference.** The brief's worked example uses 1.013 bar.
+This project's canonical value is exactly **1 bar** — a round figure chosen for
+a training model, and the one `PIPE_K` is calibrated against. The instruction
+was to use the project's existing value rather than introduce a second
+constant, so `3 barg` is `4 bara` here. Changing the reference would move every
+calibration in the hydraulic model and is not a K7 change.
+
+### Flow direction — unchanged, and deliberately so
+
+There is still **no SOURCE and no SINK**. A terminal states a pressure; the
+solver decides which way anything moves. Measured on one drawing, changing only
+the two records:
+
+| BL-A | BL-B | `pipeFlow.t1` (drawn A→B) |
+| --- | --- | --- |
+| 3 barg | 1 barg | **+40.825** m³/h |
+| 1 barg | 3 barg | **−40.825** m³/h |
+| 3 barg | 3 barg | < `MASS_TOL` |
+
+Same drawing, same pipe, same orientation. The two magnitudes agree to within
+`MASS_TOL`, which is the precision a converged solve is defined to.
+
+### Multiple terminals
+
+`BL-S` at 2 barg and `BL-D` at 5 barg on one model hold **3 bar** and **6 bar**
+independently — no global pressure, and the solve reproduces both exactly. With
+a pump between them, stiffening the discharge terminal from 1 to 3 barg pushes
+the machine back up its curve and reduces the flow, while the pump goes on
+*adding* head rather than becoming a boundary.
+
+### Diagnostics
+
+Two rules in the existing Checks engine, following the K3.3 suction precedent:
+
+| Rule | Severity | Fires when |
+| --- | --- | --- |
+| `terminal-no-pressure` | warning | a tagged terminal whose record states no operating pressure |
+| `terminal-bad-pressure` | critical | a stated pressure that cannot be read as one — `NaN`, `lots`, `3 furlongs` |
+
+**A legacy free end produces no finding.** Silence at an untagged end is not an
+incomplete specification: the drawing never claimed anything about it. A
+terminal is different — somebody drew a battery limit and tagged it, asserting
+that the connection ends at a known condition, and an assertion left unfinished
+is worth saying out loud.
+
+In both failure cases the model still **solves at atmosphere** so the plant
+runs, and the value on the node is a real finite number — never zero, never
+`NaN`, never a coerced string. The finding is what carries the problem.
+
+### Preservation
+
+Replacing two free ends with two terminals leaves the same pipes, the same
+edges, the same edge kinds, the same `edgeOfPipe`, and the same node count —
+two anonymous boundary nodes became two tagged ones and nothing else moved. A
+registry record for a tag that is not on the drawing changes nothing. An
+**untagged** terminal falls back to atmosphere, because it has nothing to state
+a pressure with.
+
+An instrument on a terminal's pipe still reads **its own edge**: a PT on the
+line from a 4 bar terminal reads the mean of that line's two ends, which is
+below 4 — the tapping is on the pipe, not at the battery limit.
+
+### Gate
+
+```text
+3288 tests passing · 7 skipped · 0 failing      (+27)
+tsc -b clean · production build clean
+205 Playwright passing · 2 failing — the SAME two as on a5b9793
+sample QA baseline unchanged — no bundled drawing has a terminal
+```
+
+### Future work
+
+Terminal pressure is **static**: the engineering record defines it and there is
+no operator control for it, which is the right default — a battery limit is a
+fact about the plant, not a knob. Runtime-variable boundary conditions (a
+header that sags under load, a scenario that trips a supply) would be a
+separate phase with its own operator semantics.
