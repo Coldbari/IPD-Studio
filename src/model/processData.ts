@@ -38,6 +38,20 @@ export interface ProcessEngineering {
   designPressureBar?: number
   /** Operating temperature, °C (`design.operatingTemperature`, else `design.temperature`). */
   operatingTempC?: number
+  /**
+   * Operating pressure, bar ABSOLUTE (`design.operatingPressure`).
+   *
+   * Distinct from `designPressureBar`, which is a RATING — what the vessel is
+   * built to withstand, typically well above anything it sees in service.
+   * Using a rating as an operating condition would put a vessel's vapour space
+   * at its relief setting, which is not a simulation of anything.
+   *
+   * ABSOLUTE, and converted here, because a datasheet states operating
+   * pressure in GAUGE far more often than not while the hydraulic model works
+   * in absolute — 3 barg is 4 bara, and getting that wrong is a whole
+   * atmosphere of error on every pressurised vessel. See `operatingPressure`.
+   */
+  operatingPressureBarA?: number
 }
 
 const EMPTY: ProcessEngineering = {}
@@ -109,5 +123,41 @@ export function processFor(registry: Registry | undefined, tag: string | undefin
     powerKw: convert(q('duty.power'), POWER, 1),
     designPressureBar: convert(q('design.pressure') ?? q('duty.designPressure'), PRESSURE, 1),
     operatingTempC: convert(q('design.operatingTemperature') ?? q('design.temperature'), TEMPERATURE, 1),
+    operatingPressureBarA: operatingPressure(f['design.operatingPressure']),
   }
 }
+
+/**
+ * An operating pressure, read as bar ABSOLUTE.
+ *
+ * The shared `PRESSURE` table deliberately treats `bar`, `barg` and `bara`
+ * alike, which is harmless for a design rating and wrong by one atmosphere for
+ * an operating condition. So this reads the unit itself:
+ *
+ *   - `barg`, `psig`, or a BARE number — GAUGE, and atmospheric is added.
+ *     Bare is read as gauge because that is what a plant datasheet means by
+ *     "operating pressure: 3 bar"; assuming absolute would silently put a
+ *     vessel a bar below where its record says it runs.
+ *   - `bara`, `atm`, `kpa`, `mpa`, `pa` — ABSOLUTE, taken as stated.
+ *
+ * Returns `undefined` when nothing is stated, which is the normal case and
+ * means atmospheric — never a guess at what the vessel might be doing.
+ */
+export function operatingPressure(raw: string | undefined): number | undefined {
+  const q = parseQuantity(raw)
+  if (q === null) return undefined
+  const unit = q.unit
+  const bar = convert(q, PRESSURE, 1)
+  if (bar === undefined) return undefined
+  const absolute = new Set(['bara', 'atm', 'kpa', 'mpa', 'pa'])
+  return absolute.has(unit) ? bar : bar + ATMOSPHERIC_BAR
+}
+
+/**
+ * One standard atmosphere, bar.
+ *
+ * Stated here as well as in `hmi/sim/units.ts` because this module is the
+ * ENGINEERING side and must not import the simulator; a test pins the two
+ * against each other so they cannot drift.
+ */
+export const ATMOSPHERIC_BAR = 1

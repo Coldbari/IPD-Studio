@@ -540,7 +540,7 @@ describe('nothing degrades over a long run', () => {
 
 /** The supply boundary, stated here so a change to it fails loudly. */
 it('the boundary pressure every free end sits at is the one documented', () => {
-  expect(DEFAULTS.supplyPressureBar).toBe(1)
+  expect(DEFAULTS.atmosphericPressureBar).toBe(1)
 })
 
 // ── 23. Preservation, on the real drawings ──────────────────────────────────

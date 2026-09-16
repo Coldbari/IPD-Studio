@@ -97,8 +97,8 @@ describe('static head', () => {
 describe('pressure responds to the plant, and the transmitter reads it', () => {
   it('a stopped pump makes no head: discharge sits at suction pressure', () => {
     const { pipePressures, tags } = run((t) => { t['PIC-101']!.MODE = 0; t['PIC-101']!.OP = 100 }, 60)
-    expect(pipePressures.e2).toBeCloseTo(DEFAULTS.supplyPressureBar)
-    expect(tags['PT-101']!.PV).toBeCloseTo(DEFAULTS.supplyPressureBar)
+    expect(pipePressures.e2).toBeCloseTo(DEFAULTS.atmosphericPressureBar)
+    expect(tags['PT-101']!.PV).toBeCloseTo(DEFAULTS.atmosphericPressureBar)
   })
 
   it('starting the pump raises the discharge pressure the transmitter reads', () => {
@@ -152,7 +152,7 @@ describe('pressure responds to the plant, and the transmitter reads it', () => {
       pumpHead: () => 4, vesselLevel: () => lvl,
     }).pressure[suction]!
     expect(at(90)).toBeGreaterThan(at(10))
-    expect(at(10)).toBeGreaterThan(DEFAULTS.supplyPressureBar) // a vessel above it always helps
+    expect(at(10)).toBeGreaterThan(DEFAULTS.atmosphericPressureBar) // a vessel above it always helps
   })
 
   it('stays inside its physical bounds however hard it is driven', () => {
@@ -256,6 +256,6 @@ describe('measurement noise is only measurement noise', () => {
     const span = Math.max(...seen) - Math.min(...seen)
     // it jitters about the true value, and never drifts away from it
     expect(span).toBeLessThan(0.2)
-    for (const v of seen) expect(Math.abs(v - DEFAULTS.supplyPressureBar)).toBeLessThan(0.2)
+    for (const v of seen) expect(Math.abs(v - DEFAULTS.atmosphericPressureBar)).toBeLessThan(0.2)
   })
 })

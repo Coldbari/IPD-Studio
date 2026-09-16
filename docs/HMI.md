@@ -881,13 +881,50 @@ it declines to guess and reports only the unachievable case.
 `SolveResult.cavitating` is the live counterpart, at whatever the plant is
 doing now; it feeds data quality as above.
 
-### Known limitation: one boundary pressure
+### Where the pressures are fixed
 
-`DEFAULTS.supplyPressureBar` is a single number doing two jobs — the pressure at
-a battery-limit header *and* the atmosphere a vent or drain discharges to.
-The consequence is precise: **a boundary cannot fill a vented vessel**, because
-the vessel's vapour space is at that same pressure and there is no driving
-force. Raising the number fixes the header case and puts the same backpressure
-on every gravity drain in the model, which is worse. The honest remedy is a
-second boundary pressure, and it is not in this step. `engine.test.ts` pins the
-limitation as a test, so it fails loudly the day the boundary is split.
+Every hydraulic network needs somewhere its pressures are given rather than
+solved. This model has three, and each says which physical condition holds it:
+
+| `BoundaryKind` | Where it comes from | Pressure |
+| --- | --- | --- |
+| `atmospheric` | a **free pipe end** | one atmosphere |
+| `vessel-vapour` | a vessel's top/vent nozzle | the vessel's operating pressure if its record states one; **atmospheric** if not |
+| `vessel-liquid` | a vessel's bottom/drain nozzle | that, plus the static head of the liquid above it |
+| `internal` | everything else | solved |
+
+Which nozzle a line lands on is the **stated** role wherever the drawing states
+one — never re-decided from where the line was drawn.
+
+A vessel whose engineering record gives `design.operatingPressure` is **closed**
+at that pressure; one that states nothing is **vented**. Silence means vented,
+not unknown. It is never taken from `design.pressure`, which is a rating — what
+the vessel withstands, not what it runs at. An operating pressure is read as
+**gauge** unless the unit says otherwise (`3 bar` and `3 barg` both mean 4 bar
+absolute; `3 bara` means 3), because that is what a datasheet means by it.
+
+**There is no SOURCE and no SINK.** Which end of a line supplies and which
+receives is an outcome of the solve — the sign of the flow — and a passive
+boundary reading `DESTINATION` when a pump overpowers it is that working, not a
+defect to paper over.
+
+**A fixed-pressure node has unlimited capacity.** The air absorbs whatever
+arrives and is still one atmosphere however hard it is pushed. There is no
+reservoir model; a boundary is a pressure, not an inventory.
+
+### Known limitation: a boundary cannot be given a stated pressure
+
+A free pipe end is **atmospheric**, and it cannot be anything else, because it
+has no tag and therefore no engineering record to state a pressure on. So a
+battery-limit header drawn as an unterminated line cannot push: **a boundary
+cannot fill a vented vessel**, since both are at one atmosphere.
+
+That is now a stated boundary condition rather than, as it was before K6, an
+accident of one constant standing in for both. What it needs is a **tagged
+terminal object** the importer carries across so the registry can describe it —
+importer work, and a separate phase. Until then a line that needs a supply
+behind it needs the supply drawn: a vessel held at pressure does the job today,
+and a pump always did.
+
+`engine.test.ts` pins the limitation as a test, so it fails loudly the day a
+boundary can be given a pressure.

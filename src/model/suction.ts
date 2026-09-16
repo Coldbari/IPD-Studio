@@ -156,7 +156,7 @@ export function suctionChecks(ix: ProjectIndex): SuctionCheck[] {
     // A vessel's bottom nozzle adds the static head of its contents; a top
     // nozzle and a boundary sit at the boundary pressure and nothing more.
     const head = node.kind === 'vessel' && node.liquid ? vesselHeadBar(levelPct ?? 0) : 0
-    const sourcePressure = DEFAULTS.supplyPressureBar + head
+    const sourcePressure = DEFAULTS.atmosphericPressureBar + head
     const source = node.kind === 'vessel'
       ? { kind: 'vessel' as const, ...(node.tag ? { tag: node.tag } : {}), ...(levelPct !== undefined ? { levelPct } : {}) }
       : { kind: 'boundary' as const }

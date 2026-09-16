@@ -82,10 +82,10 @@ describe('the suction check reports what an engineer needs to act on', () => {
     expect(c.ratedFlow).toBe(200)
     expect(c.ratedDefaulted).toBe(false)
     expect(c.source).toEqual({ kind: 'boundary' })
-    expect(c.sourcePressure).toBe(DEFAULTS.supplyPressureBar)
+    expect(c.sourcePressure).toBe(DEFAULTS.atmosphericPressureBar)
     expect(c.resistance).toBeCloseTo(PIPE_K, 12)
     // the model's own law: √(P/R) is the most the path can pass
-    expect(c.maxFlow).toBeCloseTo(Math.sqrt(DEFAULTS.supplyPressureBar / PIPE_K), 9)
+    expect(c.maxFlow).toBeCloseTo(Math.sqrt(DEFAULTS.atmosphericPressureBar / PIPE_K), 9)
     expect(c.suctionAtRated).toBeCloseTo(1 - PIPE_K * 200 * 200, 9)
     expect(c.state).toBe('insufficient')
   })
@@ -182,7 +182,7 @@ describe('the boundary of the check is physical, not chosen', () => {
     // A path at exactly its capability is at capability, not beyond it. This
     // matters more than it looks: with the model's own constants
     //
-    //     √(supplyPressureBar / PIPE_K) = √(1 / 4e-4) = 50 m³/h = DEFAULTS.pumpFlowM3h
+    //     √(atmosphericPressureBar / PIPE_K) = √(1 / 4e-4) = 50 m³/h = DEFAULTS.pumpFlowM3h
     //
     // EXACTLY — an identity, not a coincidence, because `PIPE_K` was calibrated
     // against that same default machine. So the default plant on a single-run
@@ -190,7 +190,7 @@ describe('the boundary of the check is physical, not chosen', () => {
     // on it and on every drawing like it, for a reason no draughtsman can fix.
     // Where "enough margin" begins is the question NPSH answers and this model
     // cannot, so it declines to guess.
-    expect(Math.sqrt(DEFAULTS.supplyPressureBar / PIPE_K)).toBe(DEFAULTS.pumpFlowM3h)
+    expect(Math.sqrt(DEFAULTS.atmosphericPressureBar / PIPE_K)).toBe(DEFAULTS.pumpFlowM3h)
     const exact = checkOf(docOf(plant(1), duty(`${DEFAULTS.pumpFlowM3h} m³/h`)))
     expect(exact.maxFlow).toBe(DEFAULTS.pumpFlowM3h)
     expect(exact.suctionAtRated).toBe(0)

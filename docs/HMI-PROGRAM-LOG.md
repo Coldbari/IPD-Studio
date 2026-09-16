@@ -568,3 +568,46 @@ tsc -b clean · production build clean
 | P2 | Fluid identity is INFORMATIONAL. Density and viscosity are carried but change no pressure drop, no pump head and no temperature. |
 | P2 | Mixing is explicitly unsupported — MIXED names its components and computes no properties. |
 | P2 | Only water has stated properties; the other starter services carry none, because none can be stated without data the model does not hold. |
+
+
+---
+
+## 20. Step K6 — hydraulic boundary conditions
+
+An investigation phase. The finding that shaped it: the boundary model had
+exactly one pressure in it, it was a constant, and its name was wrong.
+
+`supplyPressureBar` implied a battery-limit supply header. It is the
+atmosphere, and that mis-naming was the direct source of the recurring,
+reasonable-sounding, wrong expectation that a free pipe end should be able to
+push. `ProcessNode.pressureBar` had been declared and documented since K2 and
+written exactly once, as `undefined`.
+
+Every fixed node now names its condition — `atmospheric`, `vessel-vapour`,
+`vessel-liquid`, `internal` — and a vessel whose engineering record states an
+operating pressure is closed at it. **No new metadata was invented**: the field
+`design.operatingPressure` already existed beside the operating temperature the
+simulator has always read, and nothing read it.
+
+What is deliberately absent: a SOURCE or SINK kind, because direction is the
+solve's to decide; a stated pressure on a boundary NODE, because a free end has
+no tag to hang a record on; and any reservoir model — a boundary is a pressure,
+not an inventory, and its unlimited capacity is now asserted rather than
+assumed.
+
+### State after K6
+
+```text
+3261 tests passing · 7 skipped · 0 failing
+tsc -b clean · production build clean
+206 Playwright passing · 2 failing, both pre-existing on a5b9793
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| **P1** | A boundary cannot be given a stated pressure: a free pipe end has no tag and so no record. Needs a tagged terminal object the importer carries across. Scoped, not started. |
+| P2 | No reservoir model — a fixed-pressure node has unlimited capacity. |
+| P2 | Fluid identity remains informational; the solver reads no density (K5). |
+| P2 | Mixing remains explicitly unsupported (K5). |

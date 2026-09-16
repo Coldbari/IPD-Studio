@@ -103,7 +103,7 @@ describe('a shift: start up, control, heat, reset', () => {
 
     // 3. PRESSURE APPEARS on the discharge, and PT-101 reads it
     const press = pv('PT-101')
-    expect(press).toBeGreaterThan(DEFAULTS.supplyPressureBar)
+    expect(press).toBeGreaterThan(DEFAULTS.atmosphericPressureBar)
     expect(press).toBeCloseTo(sim().pipePressures.e2!, 1)
 
     // 4. THE LEVEL RISES BY EXACTLY WHAT THE FLOW PUT IN. Rather than a

@@ -45,6 +45,7 @@
  */
 
 import type { HmiPipe, HmiScreen, HmiWidget } from '../../model'
+import { DEFAULTS } from '../units'
 import { HEATER_SYMBOLS } from '../tags'
 import type { EquipmentKind, PortResolution, PortRole, ProcessPort } from './ports'
 import { INLET_ROLE, OUTLET_ROLE, declaredRole, portId, portsOf, roleFromGeometry } from './ports'
@@ -64,10 +65,63 @@ const MAX_EDGES = 1024
 export type NodeKind =
   /** An interior point whose pressure the solver determines. */
   | 'junction'
-  /** A vessel's liquid space. Pressure is fixed for the instant by its level. */
+  /** A vessel nozzle. Pressure is fixed for the instant by the vessel. */
   | 'vessel'
-  /** A process boundary: a supply header, a battery limit, atmosphere. */
+  /** A process boundary: the edge of what the drawing describes. */
   | 'boundary'
+
+/**
+ * WHAT HOLDS A FIXED NODE'S PRESSURE — the boundary condition, named.
+ *
+ * Before K6 this was implicit: every fixed node took one constant and the
+ * reader had to know which of three different physical situations it stood
+ * for. Naming them is the point of this type; the numbers are unchanged for
+ * every drawing that states nothing.
+ *
+ * NOTE WHAT IS NOT HERE: there is no SOURCE and no SINK. Which end of a line
+ * supplies and which receives is an OUTCOME of the solve — the sign of the
+ * flow — and making it a property of the topology would let the drawing
+ * dictate a direction the pressures contradict. That is the one thing this
+ * model has refused to do since K2, and a passive boundary reading
+ * DESTINATION when a pump overpowers it is that refusal working.
+ */
+export type BoundaryKind =
+  /**
+   * Open to the air at one atmosphere: a FREE PIPE END.
+   *
+   * The drawing says nothing about what lies beyond an unterminated line, so
+   * this is the only honest reading — and it is a deterministic fallback, the
+   * same for every free end on every drawing, old or new. It is NOT a
+   * reservoir: it has no stated pressure to push with.
+   */
+  | 'atmospheric'
+  /**
+   * A VESSEL'S VAPOUR SPACE.
+   *
+   * Whether that is atmospheric or held above it is a RUNTIME input, not a
+   * compile-time fact: a vessel whose engineering record states an operating
+   * pressure is closed at it, and one that states none is vented. The
+   * compiler knows which NOZZLE this is; the record knows what the vessel is
+   * doing. See `SolveInputs.vesselPressure`.
+   */
+  | 'vessel-vapour'
+  /** A VESSEL'S LIQUID SPACE: its vapour pressure plus the static head of the
+   *  liquid above the nozzle, so it moves with the level. */
+  | 'vessel-liquid'
+  /** Not a boundary at all — the solver determines this node. */
+  | 'internal'
+
+/*
+ * WHAT IS DELIBERATELY ABSENT, and why.
+ *
+ * A boundary whose pressure the drawing STATES. Nothing in the engineering
+ * model can carry one: a free pipe end has no tag, so no registry record, and
+ * the P&ID's off-page connector is an annotation the importer does not bring
+ * across. `design.pressure` is a RATING and using it as an operating condition
+ * would put a battery limit at its relief setting. Giving a boundary a stated
+ * pressure needs a TAGGED terminal object, which is importer work and a
+ * separate phase — see `docs/HMI-AUDIT.md` § K6.
+ */
 
 export interface ProcessNode {
   id: string
@@ -76,7 +130,25 @@ export interface ProcessNode {
   tag?: string
   /** Vessel nodes only: whether this nozzle sees the liquid head. */
   liquid?: boolean
-  /** Boundary nodes only: the pressure held at this boundary, bar. */
+  /**
+   * WHAT HOLDS THIS NODE, when something does.
+   *
+   * `internal` for a junction, whose pressure the solve produces. Every other
+   * value names a boundary condition — see `BoundaryKind`.
+   */
+  boundary: BoundaryKind
+  /**
+   * The pressure this boundary holds, bar absolute, for the conditions that do
+   * not depend on runtime state.
+   *
+   * Populated for `atmospheric` and `fixed-pressure`. Absent for
+   * `vessel-liquid`, whose pressure moves with the level and is therefore
+   * computed each solve, and for `internal`.
+   *
+   * This field existed before K6 and was never once written to: every boundary
+   * silently took `DEFAULTS.atmosphericPressureBar` inside the solver. The
+   * boundary condition is now stated on the node that has it.
+   */
   pressureBar?: number
   /** Ports that share this node. A junction between two pipes has none. */
   ports: ProcessPort[]
@@ -214,7 +286,7 @@ function widgetAt(widgets: HmiWidget[], p: { x: number; y: number }): HmiWidget 
  * RATED duty.
  *
  * The figure is defined RELATIVE TO THE BOUNDARY CONDITIONS: change
- * `supplyPressureBar` and this has to be re-derived, or the same machine
+ * `atmosphericPressureBar` and this has to be re-derived, or the same machine
  * delivers a different duty through the same path.
  *
  * It is a calibration, not a calculation from diameter and length: an HMI pipe
@@ -335,6 +407,16 @@ export function buildProcessModel(screens: HmiScreen | HmiScreen[]): ProcessMode
           kind: kind === 'vessel' ? 'vessel' : 'junction',
           ...(kind === 'vessel' && w.tag ? { tag: w.tag } : {}),
           ...(kind === 'vessel' ? { liquid } : {}),
+          /**
+           * A vessel's two nozzles are DIFFERENT boundary conditions, and the
+           * K3.3 nozzle roles are what tell them apart — not where the line was
+           * drawn. The bottom sees the liquid and therefore the static head;
+           * the top sees the vapour space and does not.
+           *
+           * The vapour space's own pressure is a RUNTIME input, because a
+           * closed vessel's record can state one, so it is not fixed here.
+           */
+          boundary: kind === 'vessel' ? (liquid ? 'vessel-liquid' : 'vessel-vapour') : 'internal',
           ports: [p],
         })
       }
@@ -382,12 +464,26 @@ export function buildProcessModel(screens: HmiScreen | HmiScreen[]): ProcessMode
         fluidIds: pipe.fluidId !== undefined ? [pipe.fluidId] : [],
       })
       edgeOfPipe.set(pipe.id, id)
-      // A free end is a BOUNDARY, not a dead end: a battery-limit supply or a
-      // discharge to a receiving system. Declaring it explicitly is what lets
-      // the solver answer "why is there no flow" instead of inventing one.
+      /**
+       * A free end is a BOUNDARY, not a dead end, and specifically an
+       * ATMOSPHERIC one.
+       *
+       * The drawing says nothing whatever about what lies beyond an
+       * unterminated line, so the only honest reading is an open connection to
+       * the air. It is NOT a reservoir: it has no stated pressure to push with
+       * and nothing here pretends it has. A line that needs a supply behind it
+       * needs the supply drawn.
+       *
+       * This is the documented fallback, and it is deterministic — the same
+       * for every free end on every drawing, old or new.
+       */
       for (const end of [a, b]) {
         if (!end.port) {
-          addNode({ id: end.node, kind: 'boundary', pressureBar: undefined, ports: [] })
+          addNode({
+            id: end.node, kind: 'boundary',
+            boundary: 'atmospheric', pressureBar: DEFAULTS.atmosphericPressureBar,
+            ports: [],
+          })
         }
       }
     }

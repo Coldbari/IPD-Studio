@@ -174,7 +174,7 @@ describe('engine tick', () => {
     // opened, and it no longer can. The reason is a stated limitation of the
     // model, not a defect in the valve:
     //
-    //   `DEFAULTS.supplyPressureBar` is ONE number doing two jobs. It is the
+    //   `DEFAULTS.atmosphericPressureBar` is ONE number doing two jobs. It is the
     //   pressure at every process boundary — a battery-limit header AND the
     //   atmosphere a vent or a drain discharges to. Pipe `b` lands in the
     //   upper part of TK-2's shell, so it attaches to the vessel's TOP nozzle,
@@ -183,10 +183,10 @@ describe('engine tick', () => {
     //   flow — whatever the hand valve is doing.
     //
     // A real battery-limit header runs at 3-10 barg and would fill this vessel
-    // in minutes. Raising `supplyPressureBar` makes that work and puts the same
+    // in minutes. Raising `atmosphericPressureBar` makes that work and puts the same
     // backpressure on every gravity drain in the model, which is worse; the
     // honest fix is a second boundary pressure, and it is not in this step.
-    // See the note on `supplyPressureBar` in `sim/units.ts`.
+    // See the note on `atmosphericPressureBar` in `sim/units.ts`.
     //
     // That a hand valve GATES a line with a driving force behind it is still
     // covered, by 'opening the drain valve empties the tank by gravity' above.
@@ -226,7 +226,7 @@ describe('engine tick', () => {
     expect(hyd.converged).toBe(true)
     // and its two ends sit at exactly the same pressure: THAT is why it is dead
     expect(hyd.pressure[b.from]!).toBeCloseTo(hyd.pressure[b.to]!, 9)
-    expect(hyd.pressure[b.to]!).toBeCloseTo(DEFAULTS.supplyPressureBar, 9)
+    expect(hyd.pressure[b.to]!).toBeCloseTo(DEFAULTS.atmosphericPressureBar, 9)
     for (const f of Object.values(flows)) expect(Math.abs(f)).toBeLessThan(SHUT_LEAK_MAX)
     expect(tags['TK-2']!.PV).toBeCloseTo(40, 6)
     // the valveless stub branch never flows either

@@ -153,8 +153,20 @@ export interface SolveInputs {
   pumpRated(tag: string): number
   /** Pump shutoff head, bar at full speed. */
   pumpHead(tag: string): number
-  /** Vessel level, %. Sets the pressure at its bottom nozzles. */
+  /** Vessel level, %. Sets the static head at its bottom nozzles. */
   vesselLevel(tag: string): number
+  /**
+   * Vessel vapour-space pressure, bar ABSOLUTE.
+   *
+   * A CLOSED vessel is held at the operating pressure its engineering record
+   * states; a vented one sits at atmosphere. Optional, and omitting it means
+   * every vessel is vented — which is what every drawing did before K6 and
+   * what one that states no operating pressure still does.
+   *
+   * It is the vapour space, not the nozzle: a bottom nozzle gets this plus the
+   * static head of the liquid above it.
+   */
+  vesselPressure?(tag: string): number
   /** Extra resistance multiplier on a drawn pipe — the plugged-line scenario.
    *  1 is unrestricted. */
   pipeFactor?(pipeId: string): number
@@ -407,17 +419,26 @@ export function solveHydraulics(model: ProcessModel, s: SolveInputs, opts: Solve
   for (let i = 0; i < n; i++) {
     const node = model.nodes[i]!
     if (node.kind === 'vessel') {
-      // Every vessel here is VENTED: its surface sits at the boundary
-      // pressure. A bottom nozzle additionally sees the static head of what is
-      // above it; a top one sees the vapour space and so sits at the boundary.
-      // That is why a boundary cannot fill a vented vessel in this model —
-      // see `supplyPressureBar` in sim/units.ts.
-      pressure[i] = node.liquid
-        ? DEFAULTS.supplyPressureBar + vesselHeadBar(s.vesselLevel(node.tag ?? ''))
-        : DEFAULTS.supplyPressureBar
+      /**
+       * A VESSEL'S TWO NOZZLES ARE TWO DIFFERENT BOUNDARY CONDITIONS.
+       *
+       * The vapour space sits at whatever pressure the vessel is held at, and
+       * a bottom nozzle sees that PLUS the static head of what is above it.
+       * Which nozzle a line lands on is the K3.3 role — stated by the drawing
+       * where the drawing states it, and never re-decided from geometry here.
+       *
+       * The vapour pressure is an INPUT rather than a constant, because a
+       * closed vessel's record can state an operating pressure. A vessel whose
+       * record says nothing is VENTED, and `vesselPressure` returns
+       * atmospheric for it, which is what every drawing did before K6.
+       */
+      const vapour = s.vesselPressure?.(node.tag ?? '') ?? DEFAULTS.atmosphericPressureBar
+      pressure[i] = node.liquid ? vapour + vesselHeadBar(s.vesselLevel(node.tag ?? '')) : vapour
       fixed[i] = 1
     } else if (node.kind === 'boundary') {
-      pressure[i] = node.pressureBar ?? DEFAULTS.supplyPressureBar
+      // The boundary states its own condition now — see `BoundaryKind`. The
+      // fallback remains atmospheric, for a free end that says nothing.
+      pressure[i] = node.pressureBar ?? DEFAULTS.atmosphericPressureBar
       fixed[i] = 1
     } else {
       /**
@@ -433,7 +454,7 @@ export function solveHydraulics(model: ProcessModel, s: SolveInputs, opts: Solve
        * warm and cold answers agree.
        */
       const warm = opts.warmStart?.[node.id]
-      pressure[i] = warm !== undefined && Number.isFinite(warm) ? warm : DEFAULTS.supplyPressureBar
+      pressure[i] = warm !== undefined && Number.isFinite(warm) ? warm : DEFAULTS.atmosphericPressureBar
     }
   }
 
@@ -483,7 +504,7 @@ export function solveHydraulics(model: ProcessModel, s: SolveInputs, opts: Solve
   for (let i = 0; i < n; i++) {
     if (fixed[i] || reached[i]) continue
     fixed[i] = 1
-    pressure[i] = DEFAULTS.supplyPressureBar
+    pressure[i] = DEFAULTS.atmosphericPressureBar
     undetermined.push(model.nodes[i]!.id)
   }
 

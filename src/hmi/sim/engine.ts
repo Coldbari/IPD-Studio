@@ -324,6 +324,8 @@ export function initTags(model: SimModel): Tags {
     pumpRated: (p) => model.defs.find((d) => d.name === p)?.ratedFlow ?? DEFAULTS.pumpFlowM3h,
     pumpHead: (p) => model.defs.find((d) => d.name === p)?.head ?? DEFAULTS.pumpHeadBar,
     vesselLevel: (tag) => tags[tag]?.PV ?? 0,
+    vesselPressure: (t) =>
+      model.defs.find((d) => d.name === t)?.vesselPressureBarA ?? DEFAULTS.atmosphericPressureBar,
   })
   const byPipe = pipePressureMap(model, hyd)
   const pipeTemps = pipeTemperatures(model.net, (tag) => tags[tag]?.T ?? DEFAULTS.ambientC)
@@ -371,8 +373,8 @@ function pipePressureMap(model: SimModel, hyd: SolveResult): Record<string, numb
   const out: Record<string, number> = {}
   for (const e of model.hydraulic.edges) {
     if (e.pipeIds.length === 0) continue
-    const a = hyd.pressure[e.from] ?? DEFAULTS.supplyPressureBar
-    const b = hyd.pressure[e.to] ?? DEFAULTS.supplyPressureBar
+    const a = hyd.pressure[e.from] ?? DEFAULTS.atmosphericPressureBar
+    const b = hyd.pressure[e.to] ?? DEFAULTS.atmosphericPressureBar
     for (const id of e.pipeIds) out[id] = (a + b) / 2
   }
   return out
@@ -580,12 +582,17 @@ function step(
   }
   const ratedOf = (p: string) => defByName.get(p)?.ratedFlow ?? DEFAULTS.pumpFlowM3h
   const headOf = (p: string) => defByName.get(p)?.head ?? DEFAULTS.pumpHeadBar
+  /** A vessel is CLOSED at the operating pressure its record states, and VENTED
+   *  when it states none. Silence means vented; it never means unknown. */
+  const vapourOf = (t: string) =>
+    defByName.get(t)?.vesselPressureBarA ?? DEFAULTS.atmosphericPressureBar
   const hyd = solveHydraulics(model.hydraulic, {
     valveOpen: frac,
     pumpSpeed: ramp,
     pumpRated: ratedOf,
     pumpHead: headOf,
     vesselLevel: level,
+    vesselPressure: vapourOf,
     ...(opts?.pipeFactor ? { pipeFactor: opts.pipeFactor } : {}),
   }, opts?.warmStart ? { warmStart: opts.warmStart } : {})
 

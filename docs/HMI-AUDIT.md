@@ -1235,3 +1235,120 @@ work that is not part of K5. None of those files is in this commit. The two
 known failures (`equip.spec`, `screenshot.spec`) are unchanged;
 `controlledExport` flakes under parallel load and passes in isolation, as in K2
 onwards.
+
+## K6 — hydraulic boundary conditions, made explicit
+
+An investigation phase that turned into a small, contained change. The finding
+that shaped it: **the boundary model had exactly one pressure in it, it was a
+constant, and its name was wrong.**
+
+### The boundary model as K6 found it
+
+Every hydraulic network needs somewhere its pressures are fixed rather than
+solved. This model has three, and all three silently took the same constant:
+
+| Fixed node | Created from | Pressure it took |
+| --- | --- | --- |
+| boundary | a **free pipe end** — no widget found at it | `DEFAULTS.supplyPressureBar` (1 bar) |
+| vessel, top nozzle | a vessel's `top`/`vent` port | `supplyPressureBar` |
+| vessel, bottom nozzle | a vessel's `bottom`/`drain` port | `supplyPressureBar + vesselHeadBar(level)` |
+| undetermined | a fragment with no path to any of the above | frozen at `supplyPressureBar`, reported |
+
+A pump is **not** a boundary and never was: it is an EDGE carrying a curve
+between two internal nodes, which is correct and unchanged.
+
+Three things were wrong with that, in ascending order of seriousness:
+
+1. **`ProcessNode.pressureBar` was vestigial.** The field existed, was
+   documented as "the pressure held at this boundary", and was written exactly
+   once — as `undefined`. Every boundary took the constant from inside the
+   solver.
+2. **The semantics were implicit.** One number stood for three different
+   physical situations and the reader had to know which.
+3. **The name was wrong, and the name was the bug.** `supplyPressureBar`
+   implied a battery-limit supply header. It is not one — it is the
+   atmosphere — and that mis-naming is the direct source of the recurring,
+   reasonable-sounding, wrong expectation that a free pipe end should be able
+   to PUSH. It cannot, any more than the air can fill a vented tank.
+
+### What the engineering model can honestly state
+
+Searched before changing anything:
+
+| Candidate carrier | Verdict |
+| --- | --- |
+| `PlantEdge.fluidId` / `LineNumber.spec` | a service and a piping class. No pressure. |
+| `design.pressure` | a **RATING** — what a vessel withstands. Using it as an operating condition would sit a vapour space at its relief setting. |
+| **`design.operatingPressure`** | **already in the field table** (`model/fields.ts`, beside the `design.operatingTemperature` that the simulator has always read) — and nothing read it. |
+| `ann.offpage` off-page connector | present on three bundled drawings, but the importer never brings it to the HMI. Those lines already become free-end boundaries. |
+
+So **no new metadata was invented and none was needed**: the operating pressure
+field already existed, unused.
+
+### The change
+
+```ts
+type BoundaryKind =
+  | 'atmospheric'    // a free pipe end — the deterministic fallback
+  | 'vessel-vapour'  // a vessel's vapour space: vented, or held if stated
+  | 'vessel-liquid'  // that pressure PLUS the static head above the nozzle
+  | 'internal'       // not a boundary; the solver determines it
+```
+
+- `ProcessNode.boundary` names the condition; `pressureBar` is **populated**.
+- `SolveInputs.vesselPressure?(tag)` — optional, defaulting to atmospheric — so
+  a vessel whose record states an operating pressure is **closed** at it.
+- `TagDef.vesselPressureBarA` reads `design.operatingPressure`, never
+  `design.pressure`.
+- `supplyPressureBar` → **`atmosphericPressureBar`**, 25 references.
+
+**Gauge versus absolute was the one place a real bug was available.** The shared
+`PRESSURE` table treats `bar`, `barg` and `bara` alike — harmless for a rating,
+a whole atmosphere of error for an operating condition. `operatingPressure()`
+reads the unit itself: `barg`/`psig`/**bare** are gauge and get atmospheric
+added, because a datasheet saying "operating pressure: 3 bar" means 3 barg;
+`bara`/`atm`/`kpa`/`mpa`/`pa` are taken as stated.
+
+### What is deliberately NOT here
+
+- **No SOURCE and no SINK.** Which end supplies and which receives is an
+  outcome of the solve — the sign of the flow. Making it a property of the
+  topology would let a drawing dictate a direction the pressures contradict,
+  which is the one thing this model has refused since K2. A test asserts the
+  kinds are exactly `internal | vessel-liquid | vessel-vapour` and that no
+  `source` or `sink` exists.
+- **No stated pressure on a BOUNDARY node.** A free pipe end has no tag, so no
+  record. Giving one a stated pressure needs a tagged terminal object that the
+  importer carries across — importer work, and a separate phase.
+- **No reservoir model.** A fixed-pressure node has **unlimited capacity**: the
+  air absorbs whatever arrives and is still one atmosphere however hard it is
+  pushed. Previously an unstated assumption; now asserted by a test so it is on
+  the record.
+- **No NPSH.** The K3.3 hydraulic-capacity diagnostic is untouched.
+
+### Test evidence
+
+| Scenario | Result |
+| --- | --- |
+| **A** equal pressures | two vented vessels at the same level: \|Q\| < `MASS_TOL`. Vented vapour space against the air: both nodes at exactly 1.000 bar, \|Q\| < `SHUT_LEAK_MAX` |
+| **B** higher upstream | vessel at 1 barg → air: Q > 1 m³/h outward, and monotone in the stated pressure (0 < 1 < 2 barg) |
+| **C** reversed | pressurise the FAR vessel and the same line runs backwards — same magnitude to 6 dp, opposite sign. Nothing clamps it |
+| **D** pumped header | the machine pushes out through the passive end; mass balances across it to `MASS_TOL`. The pump's own nodes are `internal`, and it RAISES the pressure it is given (>1 bar running, <0.2 bar stopped) rather than replacing it |
+| **E** vented vessel | vapour space and air both exactly `atmosphericPressureBar`; no flow — a stated boundary condition, not two numbers coinciding |
+| **F** vessel drain | bottom nozzle drains, top does not; monotone in level (90 % > 50 % > 10 %) |
+| **G** pump suction | vented: suction = atmosphere + head, to 3 dp. Held at 2 barg: suction is exactly 2 bar higher, and the VESSEL'S RECORD decided it |
+| **H** insufficient suction | 400 m³/h duty still cavitates; the pressure is still the negative number the equations produced, reported and not clamped |
+
+Plus: legacy drawings solve **bit-identically** with the fallback and with
+vented stated explicitly; the topology is unchanged; and the process view reads
+`DESTINATION` / `BOUNDARY` from the sign through the shared `boundaryRole`.
+
+### Gate
+
+```text
+3261 tests passing · 7 skipped · 0 failing      (+24 K6, rest from concurrent work)
+tsc -b clean · production build clean
+206 Playwright passing · 2 failing — the SAME two as on a5b9793
+```
+
+`home.spec.ts` now passes: the concurrent session fixed its own regression.

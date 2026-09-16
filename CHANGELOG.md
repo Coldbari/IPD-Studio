@@ -6,6 +6,30 @@ All notable changes to IPD Studio. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The boundary conditions of the hydraulic model are explicit.** Every place a
+  pressure is fixed rather than solved now says which physical condition holds
+  it — a free pipe end is *atmospheric*, a vessel's vapour space is vented or
+  held, a bottom nozzle adds the static head above it. Before this they all
+  silently took one constant, and `ProcessNode.pressureBar` existed but was
+  never written to.
+- **`supplyPressureBar` is now `atmosphericPressureBar`.** The old name implied
+  a battery-limit supply header. It is the air, and the wrong name was the
+  direct source of the recurring expectation that a free pipe end ought to be
+  able to push — it cannot, any more than the atmosphere can fill a vented tank.
+
+### Added
+
+- **A vessel can be closed.** If its engineering record states
+  `design.operatingPressure` — a field that already existed and nothing read —
+  the vessel's vapour space is held at it and its bottom nozzles see that plus
+  the liquid head. A vessel that states nothing is vented, exactly as before.
+  Never taken from `design.pressure`, which is a rating rather than an operating
+  condition. Read as gauge unless the unit says otherwise, because that is what
+  a datasheet means.
+
+
 ### Added
 
 - **Process streams carry an explicit service.** A fluid is now an engineering

@@ -59,18 +59,28 @@ export const DEFAULTS = {
   /** Gravity/battery-limit supply through an open hand valve. */
   gravityFlowM3h: 20,
   /**
-   * Pressure at a process BOUNDARY — a free pipe end, bar.
+   * ONE STANDARD ATMOSPHERE, bar absolute.
    *
-   * ONE constant for every boundary, and that is a stated limitation rather
-   * than an oversight. An unterminated line carries no information about what
-   * is beyond it, and the model cannot tell a supply header from a discharge
-   * to atmosphere. Splitting them was tried: a header at 3 bar lets a supply
-   * fill a vented vessel, and in the same move puts 3 bar of backpressure on
-   * every gravity drain, which then runs backwards. One atmosphere is the
-   * self-consistent choice, and its cost is that a boundary cannot fill a
-   * vented vessel unaided — that needs a pump, which is how a plant does it.
+   * This is the pressure of the air, and K6 renamed it to say so. It used to be
+   * `supplyPressureBar`, which implied a battery-limit supply header and led to
+   * the reasonable-sounding but wrong expectation that a free pipe end could
+   * PUSH — it cannot, any more than the atmosphere can fill a vented tank.
+   *
+   * WHERE IT IS USED, and why each is atmosphere rather than a supply:
+   *
+   *  - A FREE PIPE END. The drawing says nothing about what is beyond it, so
+   *    the honest reading is an open connection to the air. It is not a
+   *    reservoir and is not pretended to be one.
+   *  - A VENTED VESSEL'S VAPOUR SPACE, when its record states no operating
+   *    pressure. A vessel whose record DOES state one is closed at that
+   *    pressure — see `TagDef.vesselPressureBarA`.
+   *  - The initial guess for a free node, and the hold for an undetermined one.
+   *
+   * `model/processData.ts` states the same figure as `ATMOSPHERIC_BAR` for the
+   * engineering side, which must not import the simulator; a test pins them
+   * together.
    */
-  supplyPressureBar: 1,
+  atmosphericPressureBar: 1,
   /** A full vessel's static head at its outlet. ≈ 3 m of liquid. */
   tankFullHeadBar: 0.3,
   /** Electric process heater. */

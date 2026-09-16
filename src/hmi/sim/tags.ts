@@ -79,6 +79,17 @@ export interface TagDef {
   level0?: number
   /** Vessel contents temperature at RUN start, °C. */
   temp0?: number
+  /**
+   * Vessel vapour-space pressure, bar ABSOLUTE, from the engineering record's
+   * `design.operatingPressure`.
+   *
+   * Absent means VENTED — the vessel sits at atmosphere. Absent is the normal
+   * case and is not a gap: most drawings carry vessels nobody has specified an
+   * operating pressure for, and a vented tank is the right reading of silence.
+   * Never taken from `design.pressure`, which is a RATING and would put a
+   * vessel's vapour space at its relief setting.
+   */
+  vesselPressureBarA?: number
   /** Pump: rated flow m³/h and shutoff head bar at rated speed. */
   ratedFlow?: number
   head?: number
@@ -134,6 +145,9 @@ function defFor(w: HmiWidget, registry: Registry | undefined): TagDef | null {
         capacity,
         capacityDefaulted: proc.volumeM3 === undefined && num(p.capacity) === undefined,
         temp0: proc.operatingTempC ?? DEFAULTS.ambientC,
+        // stated means CLOSED at that pressure; absent means vented
+        ...(proc.operatingPressureBarA !== undefined
+          ? { vesselPressureBarA: proc.operatingPressureBarA } : {}),
         level0: num(p.level0) ?? 40,
         limits: {
           LL: pick(lim.LL, num(p.LL), 5),
