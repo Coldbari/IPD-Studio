@@ -3,8 +3,64 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#2b6cb0" />
-    <title>IPD Studio</title>
+    <meta name="theme-color" content="#101418" />
+
+    <!-- SEO and social metadata live HERE, statically, rather than being
+         injected by React. Firebase Hosting rewrites every path to this file,
+         and the crawlers that build link previews (Slack, LinkedIn, X,
+         WhatsApp) do not execute JavaScript — a tag added at runtime is a tag
+         they never see. The editor sets its own document.title on /app so the
+         marketing title does not stick in the application tab. -->
+    <title>IPD Studio — Professional P&amp;ID &amp; Industrial Engineering Platform</title>
+    <meta
+      name="description"
+      content="IPD Studio is a browser-based engineering platform for P&ID design, structured engineering data, process simulation, HMI visualization and industrial interoperability."
+    />
+    <link rel="canonical" href="https://pid-studio-praharsh.web.app/" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="IPD Studio" />
+    <meta property="og:url" content="https://pid-studio-praharsh.web.app/" />
+    <meta property="og:title" content="IPD Studio — Professional P&amp;ID &amp; Industrial Engineering Platform" />
+    <meta
+      property="og:description"
+      content="P&ID design, structured engineering data, process simulation, HMI visualization and industrial interoperability in one engineering workflow."
+    />
+    <meta property="og:image" content="https://pid-studio-praharsh.web.app/media/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="The IPD Studio editor showing a tagged P&ID with ISA-5.1 instrument symbols alongside its engineering data"
+    />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="IPD Studio — Professional P&amp;ID &amp; Industrial Engineering Platform" />
+    <meta
+      name="twitter:description"
+      content="P&ID design, structured engineering data, process simulation, HMI visualization and industrial interoperability in one engineering workflow."
+    />
+    <meta name="twitter:image" content="https://pid-studio-praharsh.web.app/media/og.png" />
+
+    <!-- Only fields that can be substantiated. No aggregateRating, no
+         review count, no offer price: this product has none of those, and
+         inventing them to win a rich result is exactly the kind of claim the
+         rest of the page is built to avoid. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "IPD Studio",
+        "applicationCategory": "DesignApplication",
+        "applicationSubCategory": "Process and instrumentation engineering",
+        "operatingSystem": "Any modern web browser",
+        "url": "https://pid-studio-praharsh.web.app/",
+        "description": "A browser-based engineering platform for P&ID design, structured engineering data, process simulation, HMI visualization and industrial interoperability.",
+        "author": { "@type": "Person", "name": "Praharsh Nagpure" },
+        "license": "https://polyformproject.org/licenses/noncommercial/1.0.0/",
+        "codeRepository": "https://github.com/Coldbari/IPD-Studio"
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

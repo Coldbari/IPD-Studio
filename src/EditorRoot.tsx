@@ -71,6 +71,12 @@ function bootEditor(): void {
   if (booted) return
   booted = true
 
+  // index.html carries the marketing title, because the crawlers that build
+  // link previews never run this code and would otherwise see nothing. The
+  // editor is a different thing from the front page, so it says so in the tab
+  // rather than inheriting a sentence written for search results.
+  document.title = 'IPD Studio'
+
   startAutosave()
   startCloudAutosave()
   // The first thing the editor ever said was a browser confirm, before the
