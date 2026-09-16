@@ -11,6 +11,7 @@ import { clockText } from '../sim/units'
 import { measurementRows, worstByTag } from './summary'
 import { useQa } from '../../validate/live'
 import { diagnosticsFor, CATEGORY_LABEL, DIAGNOSTIC_CATEGORIES, SEVERITY_LABEL } from '../../model/diagnostics'
+import { scenarioFindings } from '../sim/scenario'
 import type { DiagnosticCategory, DiagnosticFinding, DiagnosticReport, DiagnosticSeverity } from '../../model/diagnostics'
 import { locateHmi } from '../locate'
 
@@ -30,7 +31,7 @@ const FILTER_LABEL: Record<Filter, string> = {
  * unit that names the wrong quantity; a table that averaged those two ideas
  * into one status column would hide both.
  */
-type Section = 'live' | 'engineering'
+type Section = 'live' | 'scenario' | 'engineering'
 
 const SEVERITY_TONE: Record<DiagnosticSeverity, string> = {
   error: 'var(--hmi-alarm-high)',
@@ -70,6 +71,8 @@ const QUALITY_TONE: Partial<Record<Quality, string>> = {
  */
 export default function DiagnosticsPage({ onJumpTag }: { onJumpTag(tag: string): void }) {
   const [section, setSection] = useState<Section>('live')
+  // the runtime half of the diagnostics story: overrides that are not in effect
+  const scenario = scenarioFindings(useSimStore((st) => st.scenarioProblems))
   const tags = useSimStore((s) => s.tags)
   const defs = useSimStore((s) => s.defs)
   const quality = useSimStore((s) => s.quality)
@@ -130,6 +133,14 @@ export default function DiagnosticsPage({ onJumpTag }: { onJumpTag(tag: string):
         <button data-testid="diag-section-live" className={section === 'live' ? 'on' : ''}
           aria-pressed={section === 'live'} onClick={() => setSection('live')}
           title="What each instrument is reading right now">Live runtime</button>
+        <button data-testid="diag-section-scenario" className={section === 'scenario' ? 'on' : ''}
+          aria-pressed={section === 'scenario'} onClick={() => setSection('scenario')}
+          title="Runtime overrides the operator asked for that are not in effect">
+          Scenario
+          {scenario.length > 0 && (
+            <span className="op-count" data-testid="diag-scn-count">{scenario.length}</span>
+          )}
+        </button>
         <button data-testid="diag-section-engineering" className={section === 'engineering' ? 'on' : ''}
           aria-pressed={section === 'engineering'} onClick={() => setSection('engineering')}
           title="Where the P&ID, the engineering records, the simulation and these screens disagree">
@@ -143,7 +154,34 @@ export default function DiagnosticsPage({ onJumpTag }: { onJumpTag(tag: string):
         </button>
       </div>
 
-      {section === 'engineering' ? (
+      {section === 'scenario' ? (
+        /**
+         * SCENARIO PROBLEMS, through the diagnostics architecture rather than
+         * beside it. They carry the existing `DiagnosticSeverity` and are
+         * rendered with the same conventions as the other two sections — a
+         * third subject on one page, not a third engine.
+         *
+         * Every one of them means the same thing: an override the operator
+         * asked for is NOT in effect, so the plant is not in the state they
+         * believe it is in. That is what `error` already means here.
+         */
+        <section className="op-section" data-testid="diag-scenario">
+          {scenario.length === 0 ? (
+            <p className="op-empty" data-testid="diag-scn-none">
+              No scenario problems. Runtime overrides, if any, are all in effect.
+            </p>
+          ) : (
+            <ul className="scn-problems">
+              {scenario.map((f) => (
+                <li key={f.id} data-testid="diag-scn-row" data-tag={f.tag} data-severity={f.severity}>
+                  <span className="scn-sev">{SEVERITY_LABEL[f.severity]}</span>
+                  <strong>{f.tag}</strong> {f.message}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : section === 'engineering' ? (
         <EngineeringSection
           diag={diag}
           shown={shownFindings}

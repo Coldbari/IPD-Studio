@@ -415,3 +415,58 @@
   font-weight: var(--hmi-weight-bold); letter-spacing: 0.08em;
 }
 .pv-node[data-mixing='1'] .pv-box { stroke-dasharray: 2 4; }
+
+/* ── The scenario page ───────────────────────────────────────────────────────
+ * A SCENARIO IS NOT AN ALARM. An override is a legitimate operating state, so
+ * it gets the neutral state treatment the rest of the workstation uses for
+ * "something is deliberately not at its default" — weight and a word, not a
+ * colour borrowed from the alarm system. The only saturated tone here is on a
+ * scenario PROBLEM, which is a real fault in what the operator asked for. */
+.scn-bar {
+  display: flex; align-items: center; gap: var(--hmi-space-md);
+  padding: var(--hmi-space-sm) 0;
+}
+.scn-bar button {
+  height: var(--hmi-control-md); padding: 0 var(--hmi-space-lg);
+  background: var(--hmi-surface-raised); color: var(--hmi-text);
+  border: var(--hmi-border-thin) solid var(--hmi-border-strong);
+  border-radius: var(--hmi-radius-sm); cursor: pointer;
+  font-size: var(--hmi-font-base);
+}
+.scn-bar button:disabled { color: var(--hmi-text-muted); cursor: default; }
+/* applied, stated as a word and a weight */
+.scn-on { font-weight: var(--hmi-weight-bold); color: var(--hmi-text); }
+
+.op-note {
+  color: var(--hmi-text-muted); font-size: var(--hmi-font-sm);
+  margin: var(--hmi-space-sm) 0 0; max-width: 90ch;
+}
+
+.scn-problems { list-style: none; margin: 0; padding: 0; }
+.scn-problems li {
+  display: flex; align-items: baseline; gap: var(--hmi-space-md);
+  padding: var(--hmi-space-sm) 0;
+  border-bottom: var(--hmi-border-thin) solid var(--hmi-border);
+}
+/* the ONE place a saturated tone belongs on this page: an override the
+   operator asked for that is not in effect */
+.scn-sev {
+  color: var(--hmi-alarm-high); font-weight: var(--hmi-weight-bold);
+  font-size: var(--hmi-font-sm); letter-spacing: 0.06em;
+}
+
+/* A row whose value is a scenario override, marked by WEIGHT — it is a state,
+   not a fault. An invalid one borrows the quality channel's dashes. */
+.op-table tr[data-source='scenario'] td { font-weight: var(--hmi-weight-medium); }
+.op-table tr[data-source='scenario'] [data-testid='scn-source'] { color: var(--hmi-text); font-weight: var(--hmi-weight-bold); }
+.op-table tr[data-source='invalid'] td { text-decoration: underline dashed var(--hmi-text-muted); }
+.scn-bar + .op-note { margin-bottom: var(--hmi-space-md); }
+/* the override control: an input and its actions, spaced so two buttons do not
+   read as one word */
+.scn-edit { display: flex; align-items: center; gap: var(--hmi-space-md); }
+.scn-edit input {
+  width: 11ch; height: var(--hmi-control-sm); padding: 0 var(--hmi-space-sm);
+  background: var(--hmi-surface-sunken); color: var(--hmi-text);
+  border: var(--hmi-border-thin) solid var(--hmi-border-strong);
+  border-radius: var(--hmi-radius-sm); font-size: var(--hmi-font-sm);
+}

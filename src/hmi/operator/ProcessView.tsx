@@ -267,14 +267,29 @@ function Node({ node, model, live, onOpen }: {
       )}
       {/* a fitting is too small to carry a tag inside it, so the tag sits
           under it — still attached, and legible */}
-      {node.tag
-        ? <text x={node.w / 2} y={node.kind === 'fitting' || node.kind === 'junction' ? node.h + 11 : 14}
-            textAnchor="middle" className="pv-tag">{node.tag}</text>
-        : <text x={node.w / 2} y={node.h / 2 + 4} textAnchor="middle" className="pv-term">
-            {node.kind === 'boundary'
-              ? (live.solved ? boundaryRole(node, model.edges, (e) => edgeFlow(e, live), STILL) : 'BOUNDARY')
-              : (KIND_WORD[node.kind] ?? '')}
-          </text>}
+      {node.tag && node.kind !== 'boundary' && (
+        <text x={node.w / 2} y={node.kind === 'fitting' || node.kind === 'junction' ? node.h + 11 : 14}
+          textAnchor="middle" className="pv-tag">{node.tag}</text>
+      )}
+      {/* A BOUNDARY carries its role — what it is DOING, from the sign of the
+          solved flow — and, when it is a tagged terminal, its identity above
+          it. The two are different facts and neither replaces the other. */}
+      {node.kind === 'boundary' && (
+        <>
+          {node.tag && (
+            <text x={node.w / 2} y={node.h / 2 - 6} textAnchor="middle" className="pv-tag">{node.tag}</text>
+          )}
+          <text x={node.w / 2} y={node.tag ? node.h / 2 + 8 : node.h / 2 + 4}
+            textAnchor="middle" className="pv-term">
+            {live.solved ? boundaryRole(node, model.edges, (e) => edgeFlow(e, live), STILL) : 'BOUNDARY'}
+          </text>
+        </>
+      )}
+      {!node.tag && node.kind !== 'boundary' && (
+        <text x={node.w / 2} y={node.h / 2 + 4} textAnchor="middle" className="pv-term">
+          {KIND_WORD[node.kind] ?? ''}
+        </text>
+      )}
       {lines.map((l, i) => (
         <text key={i} x={node.w / 2} y={28 + i * 12} textAnchor="middle" className="pv-val">{l}</text>
       ))}

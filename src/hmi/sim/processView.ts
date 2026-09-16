@@ -222,6 +222,10 @@ export function buildProcessView(
     add({
       id: n.kind === 'boundary' ? `bnd:${n.id}` : `jct:${n.id}`,
       kind: n.kind === 'boundary' ? 'boundary' : 'junction',
+      // A TAGGED TERMINAL keeps its identity here. A free end has none — it is
+      // the edge of the drawing and nothing more — and stays anonymous, which
+      // is the difference K7 introduced and the view has to carry.
+      ...(n.tag !== undefined ? { tag: n.tag } : {}),
       nodeIds: [n.id], instruments: [], controllers: [],
     })
   }

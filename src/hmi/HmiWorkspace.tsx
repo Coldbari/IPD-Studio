@@ -35,6 +35,7 @@ import EquipmentPage from './operator/EquipmentPage'
 import TrendsPage from './operator/TrendsPage'
 import DiagnosticsPage from './operator/DiagnosticsPage'
 import ProcessView from './operator/ProcessView'
+import ScenarioPage from './operator/ScenarioPage'
 
 // The sim store rides the lazy HMI chunk, so the dev/e2e hook gains it here,
 // not in main.tsx (which must not pull sim code into the eager bundle).
@@ -263,6 +264,7 @@ export default function HmiWorkspace({ onExit }: { onExit(): void }) {
         {mode === 'run' && page === 'equipment' && <EquipmentPage onOpen={(t) => jumpToTag(t, true)} />}
         {mode === 'run' && page === 'alarms' && <AlarmsPage onJumpTag={(t) => jumpToTag(t)} />}
         {mode === 'run' && page === 'trends' && <TrendsPage />}
+        {mode === 'run' && page === 'scenario' && <ScenarioPage />}
         {mode === 'run' && page === 'diagnostics' && <DiagnosticsPage onJumpTag={(t) => jumpToTag(t)} />}
         {(mode === 'edit' || page === 'process') && (screen ? (
           <>

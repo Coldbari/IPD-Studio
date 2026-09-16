@@ -8,6 +8,31 @@ All notable changes to IPD Studio. Format follows
 
 ### Added
 
+- **A Scenario page for the operator.** What the plant is doing today and what
+  its records say it is, side by side, for every tagged terminal: the
+  engineering pressure, the one actually in force, and which of the two it is.
+  An operator can hold a terminal somewhere else for this run and take it back,
+  without touching the drawing or the records.
+
+  The page calculates nothing — an override is a boundary condition handed to
+  the solver, and every number beside it is read back out of the solved state.
+
+  **Clear scenario** and **Reset plant** are separate actions and the page says
+  why: clearing removes boundary overrides only, because an operator undoes a
+  command with a command.
+
+- **Terminals say what they are doing**, not what they are called — `SUPPLYING`,
+  `RECEIVING` or `NO SIGNIFICANT FLOW`, from the sign of the solved flow, on
+  both the Scenario page and the process view. A terminal states a pressure; the
+  solver decides the direction, and the same terminal reads differently when a
+  pump starts.
+
+- **Scenario problems appear in Diagnostics**, as a third section beside Live
+  runtime and Engineering, carrying the existing severity model.
+
+
+### Added
+
 - **Runtime operating scenarios.** What the plant is doing today, as against
   what it is. A scenario holds a tagged terminal at a different pressure, or
   sets a pump running, a valve part-closed, a controller in manual — keyed by

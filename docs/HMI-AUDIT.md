@@ -1616,3 +1616,121 @@ tsc -b clean · production build clean
 - **No scenario persistence.** A scenario lives for the session. Storing one in
   the document would make it engineering data, which is the distinction this
   phase exists to draw.
+
+## K9 — the operator scenario surface
+
+K8 built the runtime scenario contract and left it with nothing reading it. This
+is the surface, and the diagnostics that go with it.
+
+### The page
+
+A RUN-only **Scenario** page, showing the two truths side by side:
+
+```text
+TAG    SERVICE         ENGINEERING   ACTIVE    SOURCE        OBSERVED
+BL-S   Feed header       3.0 barg   1.0 barg   Scenario      SUPPLYING    [override]
+BL-D   Product outlet    1.0 barg   1.0 barg   Engineering   SUPPLYING    [override]
+```
+
+`ENGINEERING` is what the record says; `ACTIVE` is what is in force; `SOURCE`
+says which. The gauge representation is `formatBarg`, the inverse of the K6/K7
+reader against the one `ATMOSPHERIC_BAR` in the product — not a second
+conversion system.
+
+**It calculates nothing.** An override is a boundary condition handed to the
+solver; every number beside it is read back out of the solved state. A test
+drives an override through the rendered input and asserts the flow, the line
+pressure AND the transmitters moved, and that PT-1 reads its own line rather
+than the number typed into the page.
+
+**It changes no document.** A test compares the registry JSON and the view's
+node count before and after.
+
+### Clear scenario is not Reset, and the page says so
+
+K8 chose deliberately that clearing a scenario does not rewind an equipment
+command. The page keeps that and makes it legible: two separate buttons and a
+note — *"Clear scenario removes runtime boundary overrides only. Equipment
+commands stay where they were put — an operator undoes a command with a
+command. Reset plant returns the whole simulation to its starting state."* A
+test asserts the wording and that `P-1.RUN` survives a clear.
+
+### One tag, one value
+
+The page **replaces** a tag's override rather than appending, so the
+duplicate-override state K8 reports is unreachable from the UI. Overriding
+BL-S twice leaves one override and no problems. The duplicate case remains
+reachable from a programmatic scenario and remains reported.
+
+### Diagnostics
+
+`scenarioProblems` surfaces as a third **section** on the existing Diagnostics
+page, beside Live runtime and Engineering — a third subject on one page, not a
+third engine. Findings carry the existing `DiagnosticSeverity` and render with
+the existing conventions.
+
+Every scenario problem is an `error`, and uniformly so for a stated reason:
+each one means *an override the operator asked for is not in effect*, so the
+plant is not in the state they believe it is in. That is what `error` already
+means on this scale. No new severity was introduced.
+
+### §6 — observed role, not declared role
+
+`SUPPLYING` / `RECEIVING` / `NO SIGNIFICANT FLOW`, derived from the **same**
+`boundaryRole` the process view uses — one rule, two vocabularies, no second
+piece of direction logic. K7 §18's instruction to preserve `boundaryRole` rather
+than replace it with a `terminalRole` is kept literally.
+
+A test watches one terminal read `NO SIGNIFICANT FLOW` → `SUPPLYING` → not
+`SUPPLYING` as the pump starts and stops, with the terminal itself unchanged
+throughout. Another asserts the page contains **no** occurrence of `SOURCE` or
+`SINK`.
+
+### §7 — the directional finding, recorded rather than fixed
+
+`BL-D` is named and positioned as a **product outlet** and its record says
+1 barg. That is **2 bar absolute**, and the vessel it connects to sits at
+roughly **1.12 bar** at its bottom nozzle. So as specified this "outlet" is
+above the plant and **supplies** it.
+
+Nothing was changed to make the picture agree with the name. The capture
+`pv-15-terminals-flow.png` shows both terminals reading `SUPPLY` with BL-D's
+arrow pointing inward, and two tests record it:
+
+| | |
+| --- | --- |
+| stated pressure | 2 bar absolute (`1 barg`) |
+| connected process pressure | ~1.12 bar at the vessel's bottom nozzle |
+| solved signed flow on its line | **negative** — into the plant |
+| observed | `SUPPLYING` |
+
+Override it to `0 barg` — one bar absolute, now below the plant — and the same
+line drains, reading `RECEIVING`. **This is an engineering-data review finding:
+the stated pressure and the intended direction disagree, and the pressure wins,
+because it is the only one of the two that is a physical quantity.**
+
+### One gap this exposed, and closed
+
+`buildProcessView` never carried a boundary node's **tag**. Correct in K4, when
+every boundary was an anonymous free end; wrong from K7, when a terminal could
+be tagged. A terminal was therefore anonymous on the process view. One field,
+and the boundary box now shows its identity above its observed role — which is
+what K7 §17 asked for and could not have without it.
+
+### Gate
+
+```text
+3333 tests passing · 7 skipped · 0 failing      (+19)
+tsc -b clean · production build clean
+206 Playwright passing (+1) · 2 failing — the SAME two as on a5b9793
+```
+
+### Remaining
+
+- **No scenario persistence.** A scenario lives for the session; storing one in
+  the document would make it engineering data.
+- **Terminal pressure only.** The page edits boundary conditions; equipment
+  overrides are shown when a programmatic scenario carries them, but are
+  commanded from the equipment surfaces where they already were.
+- **No scenario library.** There is no save/load/name-a-scenario; the page
+  builds an ad-hoc "Operator scenario" as overrides are applied.

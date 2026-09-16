@@ -188,6 +188,15 @@ interface SimStoreState {
   terminals: Record<string, ResolvedPressure>
   /** Everything wrong with the applied scenario. Empty when it is valid. */
   scenarioProblems: ScenarioProblem[]
+  /**
+   * What each terminal's ENGINEERING RECORD says, independent of any scenario.
+   *
+   * Published beside `terminals` so an operator surface can put the design
+   * condition next to the one in force without reading the document — which is
+   * the distinction the whole scenario model exists to draw. Static for a run:
+   * a record does not change while the plant is running.
+   */
+  terminalSpec: Record<string, { barA?: number; service?: string }>
   /** Apply a runtime scenario. Equipment overrides go through the ordinary
    *  operator write path so the journal records them like any other command. */
   applyScenario(s: Scenario): void
@@ -253,7 +262,7 @@ function supSets(shelved: Record<string, number>, oos: Record<string, true>, tag
 
 export const useSimStore = create<SimStoreState>()((set, get) => ({
   mode: 'edit', playing: false, speed: 1, t: 0,
-  tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [],
+  tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {},
 
   enterRun: (screens, registry, fluids) => {
     model = buildSimModel(screens, registry)
@@ -263,12 +272,22 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
     // a fresh History per run: a new identity is how React learns the old
     // trend data is gone, and nothing from the previous run can leak forward
     set({ mode: 'run', playing: true, t: 0, tags: tags0, defs: tagDefMap(model.defs), quality: qualityMap(model, tags0, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, ...(() => { const pv = buildProcessView(model.hydraulic, model.defs, model.controllers, fluids ?? []); return { processView: pv, routes: processRoutes(pv) } })(), equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, scenarioProblems: [],
-      terminals: Object.fromEntries(terminalPressures(model.hydraulic, null)) })
+      terminals: Object.fromEntries(terminalPressures(model.hydraulic, null)),
+      terminalSpec: Object.fromEntries(model.hydraulic.nodes
+        .filter((n) => n.kind === 'boundary' && n.tag !== undefined)
+        .map((n) => [n.tag!, {
+          // the node carries the record's value; `boundary` says whether the
+          // record actually stated one or K7 fell back to atmosphere
+          ...(n.boundary === 'fixed-pressure' && n.pressureBar !== undefined
+            ? { barA: n.pressureBar } : {}),
+          ...(registry?.[n.tag!]?.fields?.['general.service']
+            ? { service: registry[n.tag!]!.fields['general.service']! } : {}),
+        }])) })
   },
   exitRun: () => {
     model = null
     warm = undefined
-    set({ mode: 'edit', playing: false, t: 0, tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [] })
+    set({ mode: 'edit', playing: false, t: 0, tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {} })
   },
   playPause: () => set((s) => ({ playing: !s.playing })),
   setSpeed: (speed) => set({ speed }),

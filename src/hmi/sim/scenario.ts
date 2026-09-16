@@ -42,6 +42,7 @@
 import type { ProcessModel } from './hydraulic/model'
 import { operatingPressure } from '../../model/processData'
 import { DEFAULTS } from './units'
+import type { DiagnosticSeverity } from '../../model/diagnostics'
 
 /** One runtime override, always keyed by a stable engineering TAG — never a
  *  widget id, an index or a position. */
@@ -193,4 +194,66 @@ export function validateScenario(
     }
   }
   return out.sort((a, b) => a.tag.localeCompare(b.tag) || a.reason.localeCompare(b.reason))
+}
+
+// ── Presentation ────────────────────────────────────────────────────────────
+
+/**
+ * A pressure as an engineer states one: GAUGE, because that is the unit a
+ * datasheet and an operator both use.
+ *
+ * The model works in absolute and `ATMOSPHERIC_BAR` is the one reference in
+ * the product, so this is the inverse of the reader in `model/processData.ts`
+ * and not a second conversion system.
+ */
+export function formatBarg(barA: number): string {
+  const g = barA - DEFAULTS.atmosphericPressureBar
+  // a tenth of a bar is the finest a plant gauge resolves; more digits would
+  // imply a precision the boundary condition does not have
+  return `${g.toFixed(1)} barg`
+}
+
+/**
+ * WHAT A TERMINAL IS DOING, from the solved flow and nothing else.
+ *
+ * NOT a property of the terminal. A terminal states a pressure; whether it is
+ * currently supplying the plant or receiving from it depends on the pressure
+ * everywhere else, and the only thing that knows is the solve. The same
+ * terminal, unchanged, reads differently when a pump starts.
+ *
+ * This is the wording `boundaryRole` already produces for the process view,
+ * said the way an operator reading a state table would say it — one rule, two
+ * vocabularies, and no second piece of direction logic.
+ */
+export type TerminalObservation = 'SUPPLYING' | 'RECEIVING' | 'NO SIGNIFICANT FLOW'
+
+export const OBSERVED_FROM_ROLE: Record<string, TerminalObservation> = {
+  SUPPLY: 'SUPPLYING',
+  DESTINATION: 'RECEIVING',
+  BOUNDARY: 'NO SIGNIFICANT FLOW',
+}
+
+/**
+ * A scenario problem, said the way the diagnostics architecture says things.
+ *
+ * `DiagnosticSeverity` is the EXISTING operator-layer scale — can the running
+ * plant work? — and every scenario problem answers it the same way: an override
+ * the operator asked for is not in effect, and the plant is therefore not in
+ * the state they believe it is in. That is an `error` by the meaning the model
+ * already carries, and no new severity is introduced to say it.
+ */
+export interface ScenarioFinding {
+  id: string
+  tag: string
+  severity: DiagnosticSeverity
+  message: string
+}
+
+export function scenarioFindings(problems: readonly ScenarioProblem[]): ScenarioFinding[] {
+  return problems.map((p, i) => ({
+    id: `scenario:${p.tag}:${i}`,
+    tag: p.tag,
+    severity: 'error' as DiagnosticSeverity,
+    message: p.reason,
+  }))
 }

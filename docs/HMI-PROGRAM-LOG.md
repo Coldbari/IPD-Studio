@@ -698,3 +698,46 @@ tsc -b clean · production build clean
 | P2 | `clearScenario` does not rewind equipment: overrides written through the operator path stay written, and RESET is what returns the whole plant. |
 | P2 | Scenarios are not persisted. Storing one in the document would make it engineering data. |
 | P2 | No reservoir model; fluid identity informational; mixing unsupported. |
+
+
+---
+
+## 23. Step K9 — the operator scenario surface
+
+K8 built the runtime scenario contract and left nothing reading it. K9 is the
+surface, plus the diagnostics that go with it.
+
+A RUN-only **Scenario** page puts the two truths side by side for every tagged
+terminal — what the record says, what is in force, and which of the two — and
+lets an operator hold a terminal elsewhere for this run without touching the
+document. It calculates nothing: an override is a boundary condition handed to
+the solver, and every number beside it is read back out of the solved state.
+
+`scenarioProblems` surfaces as a third section on the existing Diagnostics
+page, carrying the existing severity model rather than a new one.
+
+**The K8 directional finding is now recorded as evidence.** `BL-D` is named a
+product outlet and its record says 1 barg — two bar absolute, above the vessel
+it connects to — so as specified it SUPPLIES the plant. Nothing was changed to
+make the picture agree with the name; two tests and a screenshot record it, and
+it is an engineering-data review finding rather than a software one.
+
+One gap closed on the way: `buildProcessView` never carried a boundary node's
+tag, which was correct when every boundary was an anonymous free end and wrong
+from K7 onwards. A terminal now shows its identity above its observed role.
+
+### State after K9
+
+```text
+3333 tests passing · 7 skipped · 0 failing
+tsc -b clean · production build clean
+206 Playwright passing · 2 failing, both pre-existing on a5b9793
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P2 | No scenario persistence or library — a scenario lives for the session. Storing one would make it engineering data. |
+| P2 | The page edits boundary conditions only; equipment is commanded where it already was. |
+| P2 | No reservoir model; fluid identity informational; mixing unsupported. |
