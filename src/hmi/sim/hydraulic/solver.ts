@@ -167,6 +167,21 @@ export interface SolveInputs {
    * static head of the liquid above it.
    */
   vesselPressure?(tag: string): number
+  /**
+   * A TAGGED TERMINAL's pressure, bar ABSOLUTE, when something is overriding
+   * the one its engineering record states.
+   *
+   * Optional, and omitting it means every terminal sits at the pressure K7
+   * compiled onto its node — which is what every drawing does until a scenario
+   * says otherwise.
+   *
+   * This completes a pattern rather than changing one: every other runtime
+   * state the solver depends on already arrives this way — a valve's opening,
+   * a pump's speed, a vessel's level and its vapour pressure. The boundary
+   * pressure was the last fixed condition with no runtime channel, which is
+   * exactly why a scenario could not touch it. No equation changed.
+   */
+  boundaryPressure?(tag: string): number | undefined
   /** Extra resistance multiplier on a drawn pipe — the plugged-line scenario.
    *  1 is unrestricted. */
   pipeFactor?(pipeId: string): number
@@ -436,9 +451,11 @@ export function solveHydraulics(model: ProcessModel, s: SolveInputs, opts: Solve
       pressure[i] = node.liquid ? vapour + vesselHeadBar(s.vesselLevel(node.tag ?? '')) : vapour
       fixed[i] = 1
     } else if (node.kind === 'boundary') {
-      // The boundary states its own condition now — see `BoundaryKind`. The
-      // fallback remains atmospheric, for a free end that says nothing.
-      pressure[i] = node.pressureBar ?? DEFAULTS.atmosphericPressureBar
+      // The boundary states its own condition — see `BoundaryKind` — and a
+      // scenario may be holding a TAGGED one somewhere else for this run. An
+      // untagged free end has no identity to override and stays atmospheric.
+      const held = node.tag !== undefined ? s.boundaryPressure?.(node.tag) : undefined
+      pressure[i] = held ?? node.pressureBar ?? DEFAULTS.atmosphericPressureBar
       fixed[i] = 1
     } else {
       /**

@@ -385,6 +385,9 @@ function pipePressureMap(model: SimModel, hyd: SolveResult): Record<string, numb
 export interface TickOptions {
   /** Scenario: a restriction multiplier on a drawn pipe, 1 = unrestricted. */
   pipeFactor?(pipeId: string): number
+  /** Scenario: a tagged terminal held somewhere other than its record says,
+   *  bar absolute. `undefined` for a tag means "as the record states". */
+  boundaryPressure?(tag: string): number | undefined
   /**
    * A previous CONVERGED pressure field to start the solve from.
    *
@@ -595,6 +598,7 @@ function step(
     pumpHead: headOf,
     vesselLevel: level,
     vesselPressure: vapourOf,
+    ...(opts?.boundaryPressure ? { boundaryPressure: opts.boundaryPressure } : {}),
     ...(opts?.pipeFactor ? { pipeFactor: opts.pipeFactor } : {}),
   }, opts?.warmStart ? { warmStart: opts.warmStart } : {})
 

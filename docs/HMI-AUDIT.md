@@ -1493,3 +1493,126 @@ no operator control for it, which is the right default — a battery limit is a
 fact about the plant, not a knob. Runtime-variable boundary conditions (a
 header that sags under load, a scenario that trips a supply) would be a
 separate phase with its own operator semantics.
+
+## K8 — runtime operating scenarios
+
+K7 gave a terminal a pressure from its engineering record. That is a fact about
+the plant. **What the plant is doing today is a different kind of fact**, and it
+must not go anywhere near the registry.
+
+### The model
+
+`sim/scenario.ts`, and it is small on purpose:
+
+```ts
+type Override =
+  | { kind: 'terminal-pressure'; tag: string; pressure: string }  // '2 barg'
+  | { kind: 'signal'; tag: string; signal: string; value: number }
+
+interface Scenario { id: string; name: string; overrides: Override[] }
+```
+
+Everything is keyed by **engineering tag** — never a widget id, an index or a
+position. A scenario cannot change the topology *by construction*: there is no
+override that adds, removes or reconnects anything, because the only things one
+can name are a tag and a value.
+
+**Two channels, and only one of them is new.**
+
+| | Channel | Why |
+| --- | --- | --- |
+| pump RUN, valve OP, heater, controller MODE, FAULT | the **existing** operator write path | it already exists; a second one would be a second answer to "is P-101 running". A scenario's equipment overrides go through `writeTag`, so the journal records them like any other command |
+| a terminal's pressure | **new** | it had no runtime channel at all — K7 compiled it into the topology from the record, and there was no way to say "not today" |
+
+### Precedence, resolved in one place
+
+```text
+scenario override  →  engineering record  →  atmospheric fallback
+```
+
+`resolveTerminal` is the only function that decides this, and every value it
+returns carries **where it came from**:
+
+```ts
+{ source: 'scenario' | 'engineering' | 'default' | 'invalid', barA, reason? }
+```
+
+so nothing downstream has to guess whether a pressure is a specification or a
+shift. Published as `simStore.terminals`.
+
+### The solver
+
+One optional input, `SolveInputs.boundaryPressure?(tag)`, and one line in the
+boundary branch. **No equation changed.** This completes a pattern rather than
+altering one: every other runtime state the solver depends on already arrives
+this way — a valve's opening, a pump's speed, a vessel's level and its vapour
+pressure. The boundary pressure was the last fixed condition with no runtime
+channel, which is precisely why a scenario could not touch it.
+
+### The data flow
+
+```text
+Scenario (tag → value)
+   ├─ signal overrides ──► writeTag ──► tags ──► journal, quality
+   └─ terminal pressure ─► resolveTerminal ─► simStore.terminals
+                                                    │
+                                           TickOptions.boundaryPressure
+                                                    ↓
+              engine.tick ─► solveHydraulics ─► pressure field, SIGNED flows
+                                                    ↓
+              inventory · thermal · transmitters · controllers · alarms · history
+```
+
+No value is ever injected into a measurement. A transmitter reads the solved
+state, the same as it did before there were scenarios.
+
+### Evidence
+
+**Causal, not cosmetic.** Dropping `BL-S` from 3 barg to 1 barg moves, in one
+step: the suction line (down >1 bar), the pump's discharge, the feed flow, PT-1,
+FT-1, and the rate the vessel fills — and PT-1 still equals its own line's
+solved pressure to 1 dp rather than the scenario's number.
+
+**Direction is still the solver's.** `BL-D` as specified is 1 barg — two bar
+absolute, already *above* the vessel's bottom nozzle at ~1.12 bar — so as drawn
+it FEEDS the plant. Put it at 0 barg and the same line drains; put it at 4 barg
+and it feeds harder. Nothing was told to reverse.
+
+**Invalid input fails loudly.**
+
+| Case | Result |
+| --- | --- |
+| tag is not a terminal (`BL-NOPE`, or `P-1`) | `invalid`, named; real terminals untouched; plant still converges |
+| unreadable pressure (`NaN`, `Infinity`, `lots`, `3 furlongs`, `''`) | `invalid`; falls back to the **engineering** value, never zero, never NaN |
+| **duplicate** override for one tag | `invalid`, and **neither value wins** — both are named in the reason |
+| non-finite signal value | reported, and **not written** |
+
+**Deterministic.** The same start, the same scenario and the same steps give
+bit-identical flows, pressures, tags and clock. An intervening run with a
+different scenario changes nothing about the next one.
+
+**Backward compatible.** A drawing with no terminals resolves to `{}` and every
+free end is atmospheric as before. Applying a scenario and clearing it leaves
+the plant exactly where an unscenarioed run of the same length would be —
+compared run-for-run, because the inventory integrates and a plant that has run
+for six minutes is not the plant at two.
+
+### Gate
+
+```text
+3314 tests passing · 7 skipped · 0 failing      (+26)
+tsc -b clean · production build clean
+206 Playwright passing · 2 failing — the SAME two as on a5b9793
+```
+
+### What this is not, yet
+
+- **No operator scenario editor.** §6 asked for the runtime state contract
+  only, and that is what this is. The store has `applyScenario` / `clearScenario`
+  and publishes `terminals` and `scenarioProblems`; no UI reads them yet.
+- **`clearScenario` does not rewind equipment.** Overrides that went through
+  `writeTag` stay written, because an operator undoes a command with a command.
+  RESET returns the whole plant, scenario included.
+- **No scenario persistence.** A scenario lives for the session. Storing one in
+  the document would make it engineering data, which is the distinction this
+  phase exists to draw.

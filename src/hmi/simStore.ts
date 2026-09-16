@@ -15,6 +15,8 @@ import type { AlarmRecord, JournalEntry, SuppressionSets } from './sim/alarms'
 import type { Tags } from './sim/engine'
 import { ackAlarms, alarmEvents, deviceAlarms, evalAlarms } from './sim/alarms'
 import { pushCommand } from './sim/commands'
+import type { ResolvedPressure, Scenario, ScenarioProblem } from './sim/scenario'
+import { terminalPressures, validateScenario } from './sim/scenario'
 import type { QualityState } from './sim/quality'
 import { qualityOf } from './sim/quality'
 import type { SolveResult } from './sim/hydraulic/solver'
@@ -168,6 +170,29 @@ interface SimStoreState {
   oos: Record<string, true>
   /** Scenario-plugged pipe ids (flow × 0.25 through them). */
   plugged: string[]
+  /**
+   * The runtime operating scenario, if one is applied.
+   *
+   * WHAT THE PLANT IS DOING TODAY, as against what it IS. The engineering
+   * record is never touched by this: apply a scenario, run it, clear it, and
+   * the drawing and the registry are exactly as they were.
+   */
+  scenario: Scenario | null
+  /**
+   * Every terminal's pressure and WHERE IT CAME FROM — scenario, engineering
+   * record, documented fallback, or invalid.
+   *
+   * Recomputed only when the scenario or the plant changes, never per tick:
+   * a boundary condition is a fact about the run, not about this instant.
+   */
+  terminals: Record<string, ResolvedPressure>
+  /** Everything wrong with the applied scenario. Empty when it is valid. */
+  scenarioProblems: ScenarioProblem[]
+  /** Apply a runtime scenario. Equipment overrides go through the ordinary
+   *  operator write path so the journal records them like any other command. */
+  applyScenario(s: Scenario): void
+  /** Back to the engineering defaults. The records were never changed. */
+  clearScenario(): void
   /** Pass every screen for a plant-wide run (navigation keeps simulating). */
   /** `registry` carries the engineering signal/alarm data the run must
    *  prefer over anything a widget holds. */
@@ -228,7 +253,7 @@ function supSets(shelved: Record<string, number>, oos: Record<string, true>, tag
 
 export const useSimStore = create<SimStoreState>()((set, get) => ({
   mode: 'edit', playing: false, speed: 1, t: 0,
-  tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [],
+  tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [],
 
   enterRun: (screens, registry, fluids) => {
     model = buildSimModel(screens, registry)
@@ -237,12 +262,13 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
     const tags0 = initTags(model)
     // a fresh History per run: a new identity is how React learns the old
     // trend data is gone, and nothing from the previous run can leak forward
-    set({ mode: 'run', playing: true, t: 0, tags: tags0, defs: tagDefMap(model.defs), quality: qualityMap(model, tags0, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, ...(() => { const pv = buildProcessView(model.hydraulic, model.defs, model.controllers, fluids ?? []); return { processView: pv, routes: processRoutes(pv) } })(), equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [] })
+    set({ mode: 'run', playing: true, t: 0, tags: tags0, defs: tagDefMap(model.defs), quality: qualityMap(model, tags0, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, ...(() => { const pv = buildProcessView(model.hydraulic, model.defs, model.controllers, fluids ?? []); return { processView: pv, routes: processRoutes(pv) } })(), equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, scenarioProblems: [],
+      terminals: Object.fromEntries(terminalPressures(model.hydraulic, null)) })
   },
   exitRun: () => {
     model = null
     warm = undefined
-    set({ mode: 'edit', playing: false, t: 0, tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [] })
+    set({ mode: 'edit', playing: false, t: 0, tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [] })
   },
   playPause: () => set((s) => ({ playing: !s.playing })),
   setSpeed: (speed) => set({ speed }),
@@ -251,7 +277,11 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
     rng = makeRng(SEED)
     warm = undefined // RESET puts the plant back to its start: solve it afresh
     const fresh = initTags(model)
-    set({ t: 0, tags: fresh, quality: qualityMap(model, fresh, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], playing: true })
+    set({ t: 0, tags: fresh, quality: qualityMap(model, fresh, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, equipFlows: {}, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], playing: true,
+      // RESET returns the plant to its engineering state, scenario included:
+      // it is part of "where this run started", not part of the drawing
+      scenario: null, scenarioProblems: [],
+      terminals: Object.fromEntries(terminalPressures(model.hydraulic, null)) })
   },
   tickOnce: (dt) => {
     // local binding: the history callback below is deferred, so the module
@@ -261,6 +291,11 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
     const s = get()
     const { tags, branchFlows, pipePressures, hydraulic: hyd } = tick(m, s.tags, dt, rng, {
       ...(s.plugged.length > 0 ? { pipeFactor: (id: string) => (s.plugged.includes(id) ? PLUG_FACTOR : 1) } : {}),
+      // A scenario holding a terminal somewhere other than its record says.
+      // Only the OVERRIDDEN ones are passed: everything else keeps the value
+      // K7 compiled onto its node, so a plant with no scenario is untouched.
+      ...(s.scenario ? { boundaryPressure: (tag: string) =>
+        s.terminals[tag]?.source === 'scenario' ? s.terminals[tag]!.barA : undefined } : {}),
       ...(warm ? { warmStart: warm } : {}),
     })
     // carried forward only from a solve that actually landed
@@ -313,6 +348,39 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
       cavitating: hyd.cavitating, undetermined: hyd.undetermined,
     }
     set({ t, tags, quality, pipeFlows: hyd.pipeFlow, pipePressures, branchFlows, equipFlows, hydraulic, alarms, journal, historyVersion: s.history.version, shelved })
+  },
+  applyScenario: (scenario) => {
+    const m = model
+    if (!m) return
+    const resolved = terminalPressures(m.hydraulic, scenario)
+    set({
+      scenario,
+      terminals: Object.fromEntries(resolved),
+      scenarioProblems: validateScenario(m.hydraulic, scenario),
+    })
+    // EQUIPMENT goes through the ordinary write path — the same one an operator
+    // uses — so the journal records it, quality recomputes, and there is no
+    // second answer anywhere to "is P-101 running".
+    for (const o of scenario.overrides) {
+      if (o.kind !== 'signal' || !Number.isFinite(o.value)) continue
+      get().writeTag(o.tag, o.signal, o.value)
+    }
+    // a converged field from the OLD boundary conditions is not a guess at the
+    // new ones; the next solve starts cold
+    warm = undefined
+  },
+  clearScenario: () => {
+    const m = model
+    if (!m) return
+    // The engineering record was never changed, so there is nothing to put
+    // back: the terminals simply resolve without an override again. Equipment
+    // the scenario wrote stays where it was written — an operator undoes a
+    // command with a command, and RESET is what returns the whole plant.
+    set({
+      scenario: null, scenarioProblems: [],
+      terminals: Object.fromEntries(terminalPressures(m.hydraulic, null)),
+    })
+    warm = undefined
   },
   writeTag: (tag, signal, value) => {
     let tg = tag, sig = signal

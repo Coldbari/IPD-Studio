@@ -654,3 +654,47 @@ sample QA baseline unchanged
 | P2 | Terminal pressure is STATIC — the record defines it, and there is no operator control. Runtime-variable boundaries (a header that sags under load) would be a separate phase. |
 | P2 | No reservoir model — a fixed-pressure node still has unlimited capacity. |
 | P2 | Fluid identity remains informational; mixing remains explicitly unsupported (K5). |
+
+
+---
+
+## 22. Step K8 — runtime operating scenarios
+
+K7 gave a terminal a pressure from its engineering record — a fact about the
+plant. What the plant is doing *today* is a different kind of fact, and K8 gives
+it somewhere to live that is not the registry.
+
+A scenario is a set of overrides keyed by engineering tag. It cannot change the
+topology by construction: the only things an override can name are a tag and a
+value.
+
+**Two channels, one of them new.** Equipment — a pump's RUN, a valve's OP, a
+controller's MODE — already had a runtime channel in the operator write path, so
+a scenario applies those *through* it and the journal records them like any
+other command. A terminal's pressure had no channel at all, which is exactly why
+a scenario could not touch it.
+
+The solver took one optional input and one line. No equation changed: every
+other runtime state already arrived that way, and the boundary pressure was the
+last fixed condition without a channel.
+
+Precedence is decided in one function and every resolved value carries its
+source — `scenario`, `engineering`, `default` or `invalid` — so nothing
+downstream has to guess whether a pressure is a specification or a shift.
+
+### State after K8
+
+```text
+3314 tests passing · 7 skipped · 0 failing
+tsc -b clean · production build clean
+206 Playwright passing · 2 failing, both pre-existing on a5b9793
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P2 | No operator scenario editor — K8 established the runtime contract only. The store publishes `terminals` and `scenarioProblems`; no UI reads them. |
+| P2 | `clearScenario` does not rewind equipment: overrides written through the operator path stay written, and RESET is what returns the whole plant. |
+| P2 | Scenarios are not persisted. Storing one in the document would make it engineering data. |
+| P2 | No reservoir model; fluid identity informational; mixing unsupported. |

@@ -8,6 +8,25 @@ All notable changes to IPD Studio. Format follows
 
 ### Added
 
+- **Runtime operating scenarios.** What the plant is doing today, as against
+  what it is. A scenario holds a tagged terminal at a different pressure, or
+  sets a pump running, a valve part-closed, a controller in manual — keyed by
+  engineering tag, and applied without touching the drawing or the registry.
+
+  It is causal rather than cosmetic: dropping a supply header from 3 barg to
+  1 barg moves the pressure field, the flows, the pump's operating point, the
+  transmitters and the rate the vessel fills, because it goes into the solve and
+  comes back out the same way everything else does.
+
+  Every runtime pressure now says **where it came from** — a scenario, the
+  engineering record, or the documented fallback — and a scenario that names a
+  tag that is not a terminal, states a pressure nobody can read, or overrides
+  one tag twice is reported as invalid with both values named. Nothing is
+  coerced to zero and no value wins a tie.
+
+
+### Added
+
 - **Battery limits are engineering objects with a stated pressure.** Draw a
   *Battery Limit / Terminal*, tag it, and give its record an operating
   pressure — `3 barg`, `4 bara`, `50 psig` — and the hydraulic model holds that
