@@ -6,6 +6,16 @@ All notable changes to IPD Studio. Format follows
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-09-17 — real hydraulics and real control
+
+The HMI stopped approximating. Flow used to be a pump's rating multiplied by
+the valve fractions on a path, with pressure painted on afterwards; it is now
+a nodal solve, so a valve position sets a resistance, the resistance sets the
+pressure field, and the pressure field decides the flow. Everything below
+follows from that one change — and from a rule applied to every phase of it:
+where the model cannot answer, it says so instead of showing a plausible
+number.
+
 ### Added
 
 - **Variable-speed pumps.** A machine whose engineering record declares

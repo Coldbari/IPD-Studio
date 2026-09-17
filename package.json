@@ -1,7 +1,7 @@
 {
   "name": "ipd-studio",
   "private": true,
-  "version": "0.21.0",
+  "version": "0.22.0",
   "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "scripts": {

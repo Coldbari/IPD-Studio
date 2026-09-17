@@ -65,17 +65,24 @@ export const NOW: Capability[] = [
   { id: 'hmi', name: 'HMI Studio — operator screens, ISA-101 themes, ISA-18.2 alarms', since: '0.6.0', status: 'available' },
   // 0.21.0 shipped the process model the simulation runs on: real engineering
   // units, a quadratic pump curve with the affinity laws, a pressure profile
-  // and a vessel energy balance. The full network SOLVER is not in a release
-  // yet and is listed under NEXT — the distinction is the point of this file.
+  // and a vessel energy balance. 0.22.0 shipped the SOLVER underneath it, and
+  // the two entries below it — the process view laid out from the topology,
+  // and control that reaches the machine. Keeping the distinction is the point
+  // of this file: nothing moves up here until it is in a release.
   { id: 'sim', name: 'Process simulation — engineering units, pump curves, pressure and temperature response', since: '0.21.0', status: 'available' },
+  { id: 'hydraulic', name: 'Hydraulic network solver — valve position to resistance to pressure to flow', since: '0.22.0', status: 'available' },
+  { id: 'processview', name: 'Topology-derived process view, laid out from the network rather than the drawing', since: '0.22.0', status: 'available' },
+  { id: 'control', name: 'Control that reaches the machine — variable-speed drives, operating envelope, cascade', since: '0.22.0', status: 'available' },
   { id: 'exchange', name: 'DEXPI import and export, DXF export and underlay import', since: '0.1.0', status: 'available' },
   { id: 'costs', name: 'Budget and cost estimation as you draw', since: '0.10.0', status: 'available' },
   { id: 'cloud', name: 'Cloud projects and offline-capable install', since: '0.14.0', status: 'available' },
 ]
 
 export const NEXT: Capability[] = [
-  { id: 'hydraulic', name: 'Hydraulic network solver', status: 'developing' },
-  { id: 'processview', name: 'Topology-derived process view', status: 'developing' },
+  // Fluid IDENTITY shipped in 0.22.0 — a service belongs to a stream and
+  // propagates along it. A fluid PROPERTY model, where density and viscosity
+  // change what the solver computes, has not, and mixing two services is
+  // reported rather than modelled. That is the distinction this entry keeps.
   { id: 'fluids', name: 'Fluid property model', status: 'developing' },
   { id: 'dexpi-conf', name: 'DEXPI conformance hardening', status: 'developing' },
   { id: 'edit-tables', name: 'Editable engineering tables', status: 'developing' },

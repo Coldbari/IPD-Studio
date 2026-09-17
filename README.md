@@ -55,12 +55,26 @@ P&ID tool is a $2,600+/year desktop install. IPD Studio is the missing thing:
 
 - **HMI Studio** — build operator screens from your P&ID (or import them in
   one click) and run them as a live training simulation: DCS-style faceplates,
-  PI control loops auto-wired from your ISA tags, ISA-18.2 alarms (priorities,
-  deadband, shelve/out-of-service), multi-pen trends with a real time axis,
-  motor-driven equipment (pumps, compressors, conveyors) you can start, stop,
-  and trip, flow-network simulation with fan-out, training upsets (trip a
-  pump, stick a valve, plug a line), classic and ISA-101 high-performance
-  themes ([docs](docs/HMI.md))
+  ISA-18.2 alarms (priorities, deadband, shelve/out-of-service), multi-pen
+  trends with a real time axis, motor-driven equipment you can start, stop and
+  trip, training upsets (trip a pump, stick a valve, plug a line), classic and
+  ISA-101 high-performance themes ([docs](docs/HMI.md))
+- **A plant that actually behaves like one** — the simulation runs on a
+  **nodal hydraulic solve**, so a valve's position sets a resistance, the
+  resistance sets the pressure field, and the pressure field decides the flow.
+  Centrifugal pump curves with the affinity laws, **variable-speed drives**
+  with a speed command that is not the shaft, vessel inventories, battery
+  limits that hold a stated pressure, and runtime scenarios that move them.
+  Where it cannot answer — a solve that will not converge, a suction below
+  absolute zero, a minimum flow nobody specified — it says so rather than
+  showing a plausible number ([the audit](docs/HMI-AUDIT.md))
+- **Real control** — PI loops auto-wired from your ISA tags drive valves,
+  heaters and **drive speed**; pressure→speed, flow→speed, and
+  **cascade** (a pressure master setting a flow slave's setpoint, the slave
+  commanding the machine). Loops calm-start at their own measurement instead
+  of a number nobody set, know when they have no **authority** over the
+  process and hold rather than winding up, and report an operating envelope —
+  dead-head, reverse flow, below minimum flow
 - **Budget & cost estimator** — set a project budget and watch the estimate
   grow live as you draw: every component carries a budgetary market price
   (editable per project or per component), grouped cost breakdown with
