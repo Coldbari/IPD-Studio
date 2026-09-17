@@ -170,9 +170,13 @@ describe('pressure responds to the plant, and the transmitter reads it', () => {
 
 describe('the pressure loop closes', () => {
   it('is wired, and knows it must CLOSE the valve to raise a discharge pressure', () => {
-    expect(model.controllers).toEqual([
-      { tag: 'PIC-101', pvTag: 'PT-101', outTag: 'PV-101', outKind: 'valve', action: -1 },
-    ])
+    expect(model.controllers).toHaveLength(1)
+    // `toMatchObject` rather than `toEqual`: K16 added `pvDriver`, the machine
+    // this transmitter's reading depends on, and a wiring test should pin the
+    // wiring rather than the exact shape of the record that carries it.
+    expect(model.controllers[0]).toMatchObject(
+      { tag: 'PIC-101', pvTag: 'PT-101', outTag: 'PV-101', outKind: 'valve', action: -1 })
+    expect(model.controllers[0]!.pvDriver).toBe('P-101')
   })
 
   it('holds setpoint, and does not rail the way an open loop does', () => {

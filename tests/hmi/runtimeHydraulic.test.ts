@@ -177,19 +177,24 @@ describe('flow follows pressure through the running plant', () => {
      * sat pinned hard against its lower output stop and its integrator was
      * frozen there by the anti-windup. Nothing moved because nothing could.
      *
-     * K15 starts an unconfigured loop AT ITS OWN MEASUREMENT, so PIC-101 now
-     * comes up on setpoint rather than 49 bar away from it — which is the
-     * point of the change. A loop on setpoint with a noisy transmitter
-     * dithers, and this one has no process gain at all while the pump is
-     * stopped, so its output drifts up off the stop and cracks PV-101 open by
-     * a fraction of a per cent.
+     * K15 starts an unconfigured loop AT ITS OWN MEASUREMENT, so both loops now
+     * come up on setpoint rather than tens of units away from it — which is the
+     * point of the change. A loop on setpoint with a noisy transmitter dithers.
      *
-     * The vessel therefore loses 2.4e-6 % over these twenty seconds — through
-     * a SHUT path, at 3.5e-4 m³/h, below the `SHUT_LEAK_MAX` ceiling the
+     * K16 then took the UNBOUNDED half of that away. PIC-101 has no authority
+     * here — P-101 is stopped, and a stopped machine blocks its own line — so
+     * its output and integrator are held and PV-101 stays exactly shut. What
+     * remains is LIC-101, which genuinely HAS authority over its own drain and
+     * whose proportional gain of 6 turns a 0.4 %-of-span measurement noise into
+     * half a per cent of valve travel. That is ordinary proportional action on
+     * a noisy level, it self-corrects, and it is not something to tune away.
+     *
+     * The vessel therefore loses 2.4e-6 % over these twenty seconds — through a
+     * nearly shut path, at 3.5e-4 m³/h, below the `SHUT_LEAK_MAX` ceiling the
      * assertion above already holds every pipe to. The claim this test makes —
      * a calm start moves nothing above the blocked-element leak — is intact;
-     * what is gone is a bit-exactness that was an artefact of a setpoint
-     * nobody set. The integrator drift itself is reported as a finding.
+     * what is gone is a bit-exactness that was an artefact of a setpoint nobody
+     * set.
      */
     expect(pv('TK-101')).toBeCloseTo(30, 5)
     expect(pv('TK-102')).toBeCloseTo(10, 5)

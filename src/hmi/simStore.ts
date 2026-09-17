@@ -27,6 +27,7 @@ import type { SimSpeed } from './sim/units'
 import { History, qualityCode } from './sim/history'
 import type { ProcessRoute, ProcessViewModel } from './sim/processView'
 import { buildProcessView, processRoutes } from './sim/processView'
+import type { LoopState } from './sim/authority'
 import type { PumpEnvelope } from './sim/envelope'
 import { pumpEdgeMap, pumpEnvelopes } from './sim/envelope'
 
@@ -85,6 +86,13 @@ let warm: Record<string, number> | undefined
  * every edge five times a second to learn something that cannot have changed.
  */
 let pumpEdges = new Map<string, string>()
+/**
+ * The last solve, handed to the next tick so its controllers can judge whether
+ * the readings they are acting on are worth acting on. Cleared with the run,
+ * exactly like `warm`, and — unlike `warm` — carried even when it FAILED,
+ * because a failed solve is the thing the controllers most need to know about.
+ */
+let lastSolve: SolveResult | undefined
 
 /**
  * Runtime state lives OUTSIDE the doc store on purpose: sim ticks and operator
@@ -178,6 +186,14 @@ interface SimStoreState {
    * write K14 is required not to have.
    */
   controllers: ControllerSpec[]
+  /**
+   * WHAT EACH CONTROL LOOP IS ABLE TO DO, this instant — K16.
+   *
+   * Authority, mode, the output it asked for, and the one its actuator
+   * actually reached. A derivation of the tags and the previous solve,
+   * published so the faceplate and the diagnostics page read one answer.
+   */
+  loops: Record<string, LoopState>
   /** What the hydraulic solve managed this tick. Read it before trusting
    *  anything above that came out of it. */
   hydraulic: HydraulicStatus
@@ -292,17 +308,18 @@ function supSets(shelved: Record<string, number>, oos: Record<string, true>, tag
 
 export const useSimStore = create<SimStoreState>()((set, get) => ({
   mode: 'edit', playing: false, speed: 1, t: 0,
-  tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, pumpEnvelopes: {}, controllers: [], hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {},
+  tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, pumpEnvelopes: {}, loops: {}, controllers: [], hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {},
 
   enterRun: (screens, registry, fluids) => {
     model = buildSimModel(screens, registry)
     rng = makeRng(SEED)
     warm = undefined // a different plant's pressure field is not a guess
+    lastSolve = undefined
     pumpEdges = pumpEdgeMap(model.hydraulic)
     const tags0 = initTags(model)
     // a fresh History per run: a new identity is how React learns the old
     // trend data is gone, and nothing from the previous run can leak forward
-    set({ mode: 'run', playing: true, t: 0, tags: tags0, defs: tagDefMap(model.defs), quality: qualityMap(model, tags0, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, ...(() => { const pv = buildProcessView(model.hydraulic, model.defs, model.controllers, fluids ?? []); return { processView: pv, routes: processRoutes(pv) } })(), equipFlows: {}, pumpEnvelopes: {}, controllers: model.controllers, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, scenarioProblems: [],
+    set({ mode: 'run', playing: true, t: 0, tags: tags0, defs: tagDefMap(model.defs), quality: qualityMap(model, tags0, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, ...(() => { const pv = buildProcessView(model.hydraulic, model.defs, model.controllers, fluids ?? []); return { processView: pv, routes: processRoutes(pv) } })(), equipFlows: {}, pumpEnvelopes: {}, loops: {}, controllers: model.controllers, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, scenarioProblems: [],
       terminals: Object.fromEntries(terminalPressures(model.hydraulic, null)),
       terminalSpec: Object.fromEntries(model.hydraulic.nodes
         .filter((n) => n.kind === 'boundary' && n.tag !== undefined)
@@ -318,8 +335,9 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
   exitRun: () => {
     model = null
     warm = undefined
+    lastSolve = undefined
     pumpEdges = new Map()
-    set({ mode: 'edit', playing: false, t: 0, tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, pumpEnvelopes: {}, controllers: [], hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {} })
+    set({ mode: 'edit', playing: false, t: 0, tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, pumpEnvelopes: {}, loops: {}, controllers: [], hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {} })
   },
   playPause: () => set((s) => ({ playing: !s.playing })),
   setSpeed: (speed) => set({ speed }),
@@ -327,8 +345,9 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
     if (!model) return
     rng = makeRng(SEED)
     warm = undefined // RESET puts the plant back to its start: solve it afresh
+    lastSolve = undefined
     const fresh = initTags(model)
-    set({ t: 0, tags: fresh, quality: qualityMap(model, fresh, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, equipFlows: {}, pumpEnvelopes: {}, controllers: model.controllers, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], playing: true,
+    set({ t: 0, tags: fresh, quality: qualityMap(model, fresh, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, equipFlows: {}, pumpEnvelopes: {}, loops: {}, controllers: model.controllers, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], playing: true,
       // RESET returns the plant to its engineering state, scenario included:
       // it is part of "where this run started", not part of the drawing
       scenario: null, scenarioProblems: [],
@@ -353,7 +372,7 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
     for (const [tag, r] of resolved) {
       if (r.source === 'scenario' || r.source === 'signal') held.set(tag, r.barA)
     }
-    const { tags, branchFlows, pipePressures, hydraulic: hyd } = tick(m, s.tags, dt, rng, {
+    const { tags, branchFlows, pipePressures, hydraulic: hyd, loops } = tick(m, s.tags, dt, rng, {
       ...(s.plugged.length > 0 ? { pipeFactor: (id: string) => (s.plugged.includes(id) ? PLUG_FACTOR : 1) } : {}),
       // What is holding each terminal AT THIS INSTANT — a scenario override, a
       // declared runtime signal, or neither. Resolved against the engine's own
@@ -364,7 +383,11 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
         ? { boundaryPressure: (tag: string) => held.get(tag) }
         : {}),
       ...(warm ? { warmStart: warm } : {}),
+      // THE SOLVE THE CONTROLLERS ARE JUDGING is the one that produced the
+      // readings they are about to act on. See `TickOptions.prevSolve`.
+      ...(lastSolve ? { prevSolve: lastSolve } : {}),
     })
+    lastSolve = hyd
     // carried forward only from a solve that actually landed
     warm = hyd.converged ? hyd.pressure : undefined
     const t = s.t + dt
@@ -448,7 +471,7 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
       })
     set({
       t, tags, quality, pipeFlows: hyd.pipeFlow, pipePressures, branchFlows, equipFlows,
-      pumpEnvelopes: envelopes,
+      pumpEnvelopes: envelopes, loops,
       hydraulic, alarms, journal, historyVersion: s.history.version, shelved,
       ...(terminalsChanged ? { terminals: Object.fromEntries(resolved) } : {}),
     })

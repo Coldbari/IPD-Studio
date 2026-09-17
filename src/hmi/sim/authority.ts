@@ -1,0 +1,244 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Copyright © 2026 Praharsh Nagpure — IPD Studio. Noncommercial use only;
+// commercial use requires a paid license (see COMMERCIAL-LICENSE.md).
+
+/**
+ * CONTROL AUTHORITY — can this loop's output reach the process at all?
+ *
+ * ── THE DEFECT THIS EXISTS FOR ────────────────────────────────────────────
+ *
+ * K15 gave every unconfigured loop a calm-start setpoint at its own
+ * measurement, and that exposed something that had always been there: a PI
+ * loop sitting ON setpoint with a noisy transmitter and nothing it can do
+ * about the process INTEGRATES THE NOISE. Conditional integration freezes the
+ * integrator at a stop only when the error pushes further into it, so at the
+ * lower stop the downward half of the noise is blocked and the upward half is
+ * not. The integrator ratchets: measured at 0.3 % of output after twenty
+ * seconds and 21 % after thirty-six minutes, on a plant whose pump was
+ * stopped the whole time. A calm screen slowly opens its own valves.
+ *
+ * ── WHAT IS AND IS NOT DERIVABLE ──────────────────────────────────────────
+ *
+ * The honest question — "would moving this actuator change this measurement?"
+ * — cannot be answered from runtime state and topology. Answering it properly
+ * means solving a hypothetical network, and a hypothetical network is invented
+ * physics. So this module answers the narrower question the runtime DOES
+ * state, in five parts:
+ *
+ *   1. is there an actuator at all?
+ *   2. is the actuator's element in the runtime?
+ *   3. if the actuator is DRIVEN — a pump, a heater — is it energised?
+ *   4. if it is an actuated valve, is it stuck?
+ *   5. can the solve stand behind the measurement the loop is reading?
+ *
+ * ...plus one more that is sound rather than inferential:
+ *
+ *   6. THE MACHINE THE MEASUREMENT DEPENDS ON. A pressure or flow transmitter
+ *      on a machine's own stream reads what that machine is making. A STOPPED
+ *      PUMP BLOCKS in this model — that is the check-valve assumption K3.3
+ *      wrote down, not a new claim — so with it de-energised nothing on its
+ *      stream can move and no output can change what that transmitter reads.
+ *      `speedLoopCandidate` and `flowLoopCandidate` already answer "which
+ *      machine does this transmitter belong to"; this reuses their answer
+ *      rather than asking a second time.
+ *
+ * ── WHAT HAPPENS WHEN THERE IS NONE ───────────────────────────────────────
+ *
+ * The integrator HOLDS, and so does the output. Not reset, not zeroed, not
+ * decayed: held, exactly where the plant left it, so that when authority comes
+ * back the loop resumes from the state it had rather than from a number
+ * manufactured while it was blind. The PV keeps updating, the one-tick
+ * measurement latency is untouched, the output limits still apply, and nothing
+ * about the tuning changes.
+ *
+ * NO DEADBAND. A measurement deadband would stop the noise integrating and
+ * would also stop the loop responding to a real error of the same size, which
+ * is a control-design decision with its own consequences and is not what this
+ * defect calls for.
+ *
+ * ── AUTHORITY IS NOT SATURATION ───────────────────────────────────────────
+ *
+ * A saturated loop is working and has run out of range. A loop with no
+ * authority is not working at all. They are reported apart and `SAT` is
+ * deliberately cleared while authority is unavailable: an output resting at a
+ * limit it was never allowed to leave is not a saturated output.
+ *
+ * Pure, DOM-free, deterministic.
+ */
+
+import type { DiagnosticSeverity } from '../../model/diagnostics'
+import type { ProcessFault } from './quality'
+import type { ScenarioFinding } from './scenario'
+
+/**
+ * WHY a loop's output cannot reach the process, or that it can.
+ *
+ * Ordered as the derivation applies them: a loop with no actuator cannot be
+ * de-energised, and one whose machine is stopped is not also usefully
+ * described as un-solved.
+ */
+export type ControlAuthority =
+  /** The output reaches the process, as far as the runtime can state. */
+  | 'available'
+  /** No final element is bound, or its tag is not in the runtime. */
+  | 'no-actuator'
+  /** The driven actuator — or the machine the measurement depends on — is
+   *  stopped or tripped. */
+  | 'de-energised'
+  /** An actuated valve that is not following its command at all. */
+  | 'stuck'
+  /** The solve behind the measurement cannot be trusted. */
+  | 'unsolved'
+
+/** Operator-language for each, the vocabulary the diagnostics page uses. */
+export const AUTHORITY_LABEL: Record<ControlAuthority, string> = {
+  available: 'CONTROL AUTHORITY AVAILABLE',
+  'no-actuator': 'CONTROL AUTHORITY UNAVAILABLE',
+  'de-energised': 'CONTROL AUTHORITY UNAVAILABLE',
+  stuck: 'CONTROL AUTHORITY UNAVAILABLE',
+  unsolved: 'CONTROL AUTHORITY UNAVAILABLE',
+}
+
+/**
+ * HOW SERIOUS, on the scale `model/diagnostics.ts` already defines. Stated
+ * once so the faceplate and the diagnostics list cannot disagree.
+ *
+ * A DE-ENERGISED machine is a NORMAL PLANT STATE — a stopped pump on a calm
+ * screen is not a fault, and colouring it as one would teach an operator to
+ * ignore the colour. A STUCK actuator, an UNSOLVED measurement and a MISSING
+ * binding are all things somebody has to do something about.
+ */
+export const AUTHORITY_SEVERITY: Record<ControlAuthority, DiagnosticSeverity | undefined> = {
+  available: undefined,
+  'de-energised': 'info',
+  stuck: 'warning',
+  unsolved: 'warning',
+  'no-actuator': 'warning',
+}
+
+/** What the runtime knows about one control loop, this instant. */
+export interface LoopState {
+  tag: string
+  mode: 'AUTO' | 'MANUAL'
+  authority: ControlAuthority
+  /** The final element, when the loop has one. */
+  actuator?: string
+  /** What the controller asked the actuator for, %. */
+  requested?: number
+  /**
+   * What the actuator ACTUALLY is — a valve's stroked `POS`, a drive's shaft
+   * as a percentage. Never the command: an actuator takes time, and a stuck
+   * one never arrives.
+   */
+  actual?: number
+  /** True while the two differ by more than the existing deviation limit. */
+  tracking: boolean
+  /**
+   * WHICH machine is de-energised, when that is why authority is gone.
+   *
+   * Not always the actuator: a loop may drive a perfectly healthy valve and
+   * still have no authority because the machine its MEASUREMENT depends on is
+   * stopped, and naming the valve there would send an operator to the wrong
+   * piece of equipment.
+   */
+  blockedBy?: string
+  /** +1 at the top of the loop's travel, -1 at the bottom, 0 between. */
+  saturated: -1 | 0 | 1
+}
+
+/** A runtime finding, in the one shape this product publishes. See
+ *  `sim/envelope.ts` for why it is the same type rather than a parallel one. */
+export type LoopFinding = ScenarioFinding
+
+/** What a loop drives, in the terms `ControllerSpec` uses. */
+export type ActuatorKind = 'valve' | 'heater' | 'pump'
+
+/**
+ * Whether this loop's output can reach the process.
+ *
+ * `pvFault` is what the SOLVE says about the measurement — the caller computes
+ * it with `processFaultOf`, which is the one place that question is answered,
+ * so this module does not need to know the topology or import the engine.
+ *
+ * `driver` is the machine the measurement depends on, where the transmitter
+ * sits on one machine's own stream. Absent for a level, a temperature, or a
+ * transmitter no machine owns.
+ */
+export function authorityOf(input: {
+  outTag?: string
+  outKind?: ActuatorKind
+  element?: Record<string, number>
+  driverTag?: string
+  driver?: Record<string, number>
+  pvFault?: ProcessFault
+}): { authority: ControlAuthority; blockedBy?: string } {
+  const { outTag, outKind, element, driverTag, driver, pvFault } = input
+  if (outTag === undefined || element === undefined) return { authority: 'no-actuator' }
+  // 3. a driven actuator that is not energised cannot act at all. This is the
+  //    same test stage 1.5 uses to decide whether a shaft chases a target.
+  if ((outKind === 'pump' || outKind === 'heater') && !energised(element)) {
+    return { authority: 'de-energised', blockedBy: outTag }
+  }
+  // 4. a stuck valve is not following its command, whatever that command is —
+  //    including a command it happens to already be at.
+  if (outKind === 'valve' && (element.STUCK ?? 0) >= 0.5) return { authority: 'stuck' }
+  // 6. the machine the MEASUREMENT depends on. A stopped pump blocks, so
+  //    nothing on its stream can move.
+  if (driver !== undefined && !energised(driver)) {
+    return { authority: 'de-energised', ...(driverTag !== undefined ? { blockedBy: driverTag } : {}) }
+  }
+  // 5. and finally, whether the reading is worth acting on at all
+  if (pvFault !== undefined) return { authority: 'unsolved' }
+  return { authority: 'available' }
+}
+
+/** Running and not tripped — the exact test the shaft dynamics use. */
+const energised = (t: Record<string, number>): boolean =>
+  (t.RUN ?? 0) >= 0.5 && (t.FAULT ?? 0) < 0.5
+
+/**
+ * THE LOOPS, SAID OUT LOUD — through the existing diagnostics architecture
+ * rather than beside it.
+ *
+ * `available` produces nothing: a loop doing its job is not a finding. Nor is
+ * MANUAL — an operator holding an output is not a fault, and saying so on a
+ * diagnostics page would train people to ignore it. TRACKING produces nothing
+ * either: a drive on its way to a new speed is a ramp.
+ */
+export function loopFindings(loops: Record<string, LoopState>): LoopFinding[] {
+  const out: LoopFinding[] = []
+  for (const l of Object.values(loops).sort((a, b) =>
+    a.tag.localeCompare(b.tag, undefined, { numeric: true }))) {
+    const severity = AUTHORITY_SEVERITY[l.authority]
+    if (severity === undefined) continue
+    out.push({
+      id: `authority:${l.tag}:${l.authority}`,
+      tag: l.tag,
+      severity,
+      message: reason(l),
+    })
+  }
+  return out
+}
+
+function reason(l: LoopState): string {
+  const held = l.mode === 'AUTO'
+    ? ' Its output and integrator are held where the plant left them.'
+    : ''
+  switch (l.authority) {
+    case 'no-actuator':
+      return 'has no final element to drive, so nothing it computes reaches the plant.'
+        + ' It tracks its measurement and controls nothing.'
+    case 'de-energised':
+      return `cannot reach the process: ${l.blockedBy ?? l.actuator ?? 'the machine it depends on'}`
+        + ` is stopped or tripped, and a stopped machine blocks its own line.${held}`
+    case 'stuck':
+      return `cannot reach the process: ${l.actuator ?? 'its final element'} is stuck and is `
+        + `not following its command.${held}`
+    case 'unsolved':
+      return 'cannot act on its measurement: the hydraulic solve behind it did not converge,'
+        + ` or the network cannot determine it.${held}`
+    default:
+      return ''
+  }
+}

@@ -13,6 +13,7 @@ import { useQa } from '../../validate/live'
 import { diagnosticsFor, CATEGORY_LABEL, DIAGNOSTIC_CATEGORIES, SEVERITY_LABEL } from '../../model/diagnostics'
 import { scenarioFindings } from '../sim/scenario'
 import { envelopeFindings } from '../sim/envelope'
+import { loopFindings } from '../sim/authority'
 import type { DiagnosticCategory, DiagnosticFinding, DiagnosticReport, DiagnosticSeverity } from '../../model/diagnostics'
 import { locateHmi } from '../locate'
 
@@ -84,6 +85,14 @@ export default function DiagnosticsPage({ onJumpTag }: { onJumpTag(tag: string):
    * configuration list blink as the plant ran.
    */
   const envelope = envelopeFindings(useSimStore((st) => st.pumpEnvelopes))
+  /**
+   * K16: which loops can actually reach their process.
+   *
+   * On LIVE for the same reason the envelope is: nothing about the records is
+   * wrong. A loop with no authority is a statement about the plant as it
+   * stands this second, and it changes the moment somebody starts a pump.
+   */
+  const loops = loopFindings(useSimStore((st) => st.loops))
   const tags = useSimStore((s) => s.tags)
   const defs = useSimStore((s) => s.defs)
   const quality = useSimStore((s) => s.quality)
@@ -215,6 +224,22 @@ export default function DiagnosticsPage({ onJumpTag }: { onJumpTag(tag: string):
           {rows.length} instruments · {degraded} not good · {unbound} without a process model
         </span>
       </div>
+
+      {loops.length > 0 && (
+        <section className="op-section" data-testid="diag-loops">
+          <h4>Control loops</h4>
+          <ul className="scn-problems">
+            {loops.map((f) => (
+              <li key={f.id} data-testid="diag-loop-row" data-tag={f.tag} data-severity={f.severity}>
+                <span className="scn-sev" style={{ color: SEVERITY_TONE[f.severity] }}>
+                  {SEVERITY_LABEL[f.severity]}
+                </span>
+                <strong>{f.tag}</strong> {f.message}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {envelope.length > 0 && (
         <section className="op-section" data-testid="diag-envelope">

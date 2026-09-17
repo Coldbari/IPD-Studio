@@ -119,10 +119,14 @@ describe('A — an unconfigured loop starts where the plant already is', () => {
 
   it('so nothing saturates, and nothing is asked to move', () => {
     expect(pic().MODE).toBe(1)                 // AUTO from the first frame
+    const seeded = pic().OP!
     advance(30)
     expect(pic().SAT).toBe(0)
-    expect(pic().OP!).toBeLessThan(100)
-    // the machine has not been started, and the loop has not asked for it
+    // K16: with the machine stopped the loop has no authority, so its output
+    // is HELD at the seed rather than driven anywhere by a plant it cannot
+    // affect. Nothing has moved in thirty seconds.
+    expect(pic().AUTH).toBe(0)
+    expect(pic().OP).toBe(seeded)
     expect(sim().tags['P-1']!.RAMP).toBe(0)
   })
 

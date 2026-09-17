@@ -2793,3 +2793,202 @@ tsc -b clean · production build clean
   noise** — reported, not patched.
 - **The bundled demo template carries no `signal.setpoint`**, so its level loop
   now calm-starts and holds the level it finds until an operator asks for one.
+
+## K16 — control authority
+
+K15 closed by naming what its own calm start had exposed. K16 fixes it, and
+fixes nothing else.
+
+### The defect
+
+A PI loop with a noisy transmitter and nothing it can do about the process
+**integrates the noise.** Conditional integration freezes the integrator at a
+stop only when the error pushes *further* into it, so at the lower stop the
+downward half of the noise is blocked and the upward half is not. It ratchets.
+
+Measured on the `runtimeHydraulic` fixture with its pump stopped throughout:
+
+```text
+t = 20 s      output 0.3 %
+t = 36 min    output 21 %      ← a calm screen opening its own valves
+```
+
+### What is derivable, and what is not
+
+The honest question — *"would moving this actuator change this measurement?"* —
+**cannot be answered from runtime state and topology.** Answering it properly
+means solving a hypothetical network, and a hypothetical network is invented
+physics. So K16 answers the narrower question the runtime actually states:
+
+| # | Condition | Source |
+| --- | --- | --- |
+| 1 | no final element is bound | `ControllerSpec.outTag` |
+| 2 | the element's tag is not in the runtime | `tags` |
+| 3 | a DRIVEN actuator — pump, heater — is not energised | `RUN`, `FAULT` |
+| 4 | an actuated valve is stuck | `STUCK` |
+| 5 | the solve behind the measurement cannot be trusted | `processFaultOf` |
+| 6 | **the machine the MEASUREMENT depends on is de-energised** | `RUN`, `FAULT` |
+
+**(6) is the one that is sound rather than inferential.** A pressure or flow
+transmitter on a machine's own stream reads what that machine is making, and
+**a stopped pump BLOCKS** — that is K3.3's check-valve assumption, already in
+the model and already written down, not a new claim. So with that machine
+de-energised, nothing on its stream can move and no output can change what the
+transmitter reads. The machine is the one `speedLoopCandidate` and
+`flowLoopCandidate` already identify; `ControllerSpec.pvDriver` carries their
+answer rather than asking a second time.
+
+(5) is judged against the **previous** solve — the one that produced the
+reading being acted on. `TickOptions.prevSolve` exists for that and for nothing
+else; judging this tick's would break K11's one-tick latency.
+
+### What happens when there is none
+
+**HOLD.** The output and the integrator stay exactly where the plant left them.
+Not reset, not zeroed, not decayed — so when authority returns the loop resumes
+from the state it had rather than from a number manufactured while it was
+blind.
+
+Everything else is untouched: the PV still updates, the one-tick latency is
+unchanged, the output limits still apply, no gain moved, and **there is no
+deadband anywhere.** A deadband would also stop the loop responding to a real
+error of the same size, which is a separate control-design decision.
+
+```text
+regulating        AUTH 1  available     OP 73.441  I 73.327  SPD 73.4
+STOP        +1 s  AUTH 0  de-energised  OP 73.441  I 73.327  RAMP 0.401
+           +30 m  AUTH 0  de-energised  OP 73.441  I 73.327  RAMP 0.000
+RUN         +1 s  AUTH 1  available     OP 93.263  I 74.860  RAMP 0.500
+          +300 s  AUTH 1  available     OP 72.946  I 73.350  PV 3.022
+```
+
+Held **to the bit** for thirty minutes. On restoration the integrator moves by
+one ordinary step — 73.327 → 74.860 — not by half an hour of accumulated noise,
+and the output's jump to 93 % is the PROPORTIONAL term answering a real 1 bar
+error. **36 minutes of no authority now move the output by exactly 0.**
+
+### Authority is not saturation
+
+| | |
+| --- | --- |
+| **saturated** | the loop is WORKING and has run out of range. The setpoint is not reachable. |
+| **no authority** | the loop is not working at all. Nothing is trying. |
+
+`SAT` is **cleared** while authority is unavailable, deliberately: an output
+resting at a limit it was never allowed to leave is not a saturated output, and
+conflating the two tells an operator the setpoint is unreachable when the truth
+is that a pump is stopped. A test drives a loop to `SAT +1`, stops the machine,
+and asserts the output still reads 100 % while `SAT` reads 0.
+
+The existing anti-windup is untouched and still measured at both stops.
+
+### Output tracking
+
+`requested` is what the controller asked for; `actual` is what the actuator
+became — a valve's stroked `POS`, a drive's shaft as a percentage. **Never the
+command.** The snapshot is built at the END of the tick, after the actuators
+have moved, so `actual` is where the actuator finished rather than where the
+controller found it.
+
+`tracking` is true while they differ by more than `DEV_LIMIT` — **the same
+10 % a stuck valve's DEV alarm already uses. No new threshold was introduced.**
+
+```text
+steady          requested 97.4   actual 97.4    tracking false
++0.2 s of ramp  requested 56.5   actual 87.4    tracking true
++0.6 s          requested 67.8   actual 67.8    tracking false
+stopped machine requested 73.4   actual  0.0    tracking true
+```
+
+A ramp is not a fault and carries no alarm; the state is shown, and that is all.
+
+### Diagnostics
+
+| Authority | Severity | Why |
+| --- | --- | --- |
+| `available` | — | a working loop is not a finding |
+| `de-energised` | `info` | **a stopped pump is a NORMAL plant state.** Colouring it as a fault teaches operators to ignore the colour |
+| `stuck` | `warning` | somebody has to do something |
+| `unsolved` | `warning` | the reading is not worth acting on |
+| `no-actuator` | `warning` | a configuration error |
+
+MANUAL produces nothing — an operator holding an output is not a fault.
+`tracking` produces nothing — a drive on its way somewhere is a ramp.
+
+The message names the machine, not the actuator: a loop may drive a perfectly
+healthy valve and still have no authority because the machine its *measurement*
+depends on is stopped, and naming the valve would send an operator to the wrong
+equipment.
+
+```text
+INFO  PIC-1 cannot reach the process: P-1 is stopped or tripped, and a stopped
+      machine blocks its own line. Its output and integrator are held where the
+      plant left them.
+```
+
+On the Diagnostics page's **LIVE** section beside K13's envelope block, for the
+same reason: nothing about the records is wrong. One line on the controller's
+own faceplate, in the muted tone for a stopped machine and the warning tone for
+the two conditions that earn it.
+
+### The unsolved path, measured
+
+```text
+C1 C1 C1 C1 X1 C0u C1 X1 C0u C1 X1 C0u …
+            ^^  ^^^
+            |   the NEXT tick reports `unsolved` and holds
+            this tick's solve failed
+```
+
+`X` is a failed solve, `C0u` is authority 0 with reason `unsolved`. It always
+appears exactly one tick after the failure — the one-tick latency, unchanged
+and visible.
+
+### Three existing tests corrected
+
+Each asserted the defect, and each is documented in place with OLD / NEW /
+PHYSICAL REASON:
+
+- `temperature.test.ts` — *"a stopped heater delivers nothing however hard the
+  controller asks"* asserted `OP ≈ 100`. **Calling for full duty was the
+  defect, not the feature.** The heater still delivers nothing, which is what
+  the test is about; the controller now holds and says it cannot reach the
+  process.
+- `calmStart.test.ts` — asserted `OP < 100`; the output is now HELD at its
+  seed, which is the point.
+- `pressure.test.ts` — a `toEqual` on the exact `ControllerSpec` shape, which
+  gained `pvDriver`. Now `toMatchObject` plus an explicit `pvDriver` assertion:
+  a wiring test should pin the wiring.
+
+### What K16 does NOT fix, stated
+
+A loop with **real** authority still moves its actuator with the noise, through
+its own **proportional** term. `LIC-101` on the `runtimeHydraulic` fixture has
+a gain of 6, so 0.4 % of span of measurement noise becomes ±2.4 % of valve
+travel. That is ordinary proportional action on a noisy level, it **self-
+corrects** — opening the drain lowers the level, which closes the drain — and
+it is bounded. It is not the ratchet, and tuning it away would be retuning a
+loop this phase was told not to touch.
+
+### Gate
+
+```text
+3606 tests passing · 7 skipped · 0 failing      (+42)
+tsc -b clean · production build clean
+207 Playwright passing · 2 failing — the SAME two as on a5b9793
+```
+
+### Limitations
+
+- **Authority is the ACTUATOR PATH and the measurement's own machine**, not a
+  general answer to "would this output change this reading". A valve loop whose
+  region has no running machine but does have a vessel or a boundary
+  differential still reads AVAILABLE, and correctly so — the network could
+  carry flow. Deciding otherwise needs a hypothetical solve.
+- **Proportional action on noise is untouched**, by design.
+- **No mode change.** A loop with no authority stays in AUTO; K16 does not
+  invent a third mode, and output tracking to the actuator's actual state —
+  which would also address this — would change bumpless behaviour K14 measured.
+- **Nothing trips.** Still.
+- Carried: PI not PID, no output rate limit, no cascade, no protective action,
+  no manufacturer data.

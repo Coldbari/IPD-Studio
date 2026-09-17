@@ -1030,3 +1030,63 @@ tsc -b clean · production build clean
 | P2 | A flow element carries no installed orientation on its record. |
 | P2 | The bundled demo template states no setpoint, so its loop now calm-starts. |
 | P2 | Still detection only on the envelope, still no manufacturer equipment data, no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |
+
+
+---
+
+## 30. Step K16 — control authority
+
+K15's P1 finding, taken.
+
+The defect was never really about the calm start: conditional integration
+freezes an integrator at a stop only when the error pushes further into it, so
+the downward half of measurement noise is blocked and the upward half is not.
+It ratchets. K15's calm start simply stopped masking it by pinning every loop
+tens of units away from setpoint.
+
+The honest question — would moving this actuator change this measurement — is
+not answerable from runtime state and topology, and answering it properly means
+solving a hypothetical network, which is invented physics. So authority is the
+narrower question the runtime does state: is there an actuator, is it in the
+runtime, is a driven one energised, is a valve stuck, and can the solve stand
+behind the reading. Plus one that is sound rather than inferential — the machine
+the MEASUREMENT depends on, because a stopped pump blocks, which is K3.3's
+check-valve assumption and not a new claim. `speedLoopCandidate` and
+`flowLoopCandidate` already know which machine that is.
+
+No authority means HOLD: output and integrator exactly where the plant left
+them. Measured, the output and integrator are bit-identical across thirty
+minutes of a stopped machine, and on restoration the integrator moves by one
+ordinary step rather than by half an hour of accumulated noise.
+
+`SAT` is cleared rather than set while authority is gone, because an output
+resting at a limit it was never allowed to leave is not saturated — and telling
+an operator the setpoint is unreachable when a pump is stopped is the wrong
+answer to the wrong question.
+
+Three existing tests asserted the defect and were corrected in place with the
+reason written down. The most telling was `temperature.test.ts`: "a stopped
+heater delivers nothing however hard the controller asks" asserted the output
+reaching 100 %. Calling for full duty WAS the defect.
+
+What K16 does not fix is stated too: a loop with real authority still moves its
+valve with the noise through its proportional term. That is ordinary
+proportional action, it self-corrects, and tuning it away would be retuning.
+
+### State after K16
+
+```text
+3606 tests passing · 7 skipped · 0 failing
+tsc -b clean · production build clean
+207 Playwright passing · 2 failing, both pre-existing on a5b9793
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P1 | Cascade — still the answer to two loops on one drive, to a flow loop wanting a pressure master, and to minimum-flow protection. |
+| P2 | Authority is the actuator path and the measurement's own machine, not a general answer; a valve loop in a region with a vessel or boundary differential and no running machine reads AVAILABLE, correctly. |
+| P2 | Proportional action on measurement noise is untouched by design; a high-gain level loop still dithers its valve. |
+| P2 | No output rate limit, PI not PID, no protective action, no manufacturer data. |
+| P2 | The bundled demo template still states no setpoint (K15); no scenario library (K9); pressure-only boundary dynamics (K10); mixing unsupported (K5). |

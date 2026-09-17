@@ -13,6 +13,8 @@ import { buildProcessModel } from './hydraulic/model'
 import type { SolveResult } from './hydraulic/solver'
 import { solveHydraulics } from './hydraulic/solver'
 import type { ProcessFault } from './quality'
+import type { ControlAuthority, LoopState } from './authority'
+import { authorityOf } from './authority'
 import { BOUNDS, DEFAULTS, SECONDS_PER_HOUR, clamp, volumeMoved } from './units'
 import { pipeTemperatures, tankPressureBar, tankTempRate } from './process'
 
@@ -42,6 +44,20 @@ export interface ControllerSpec {
    */
   outMin?: number
   outMax?: number
+  /**
+   * THE MACHINE THIS LOOP'S MEASUREMENT DEPENDS ON — K16.
+   *
+   * A pressure or flow transmitter sitting on one machine's own stream reads
+   * what that machine is making, and a STOPPED PUMP BLOCKS in this model. So
+   * with this machine de-energised there is nothing the loop's output can do
+   * about that reading, whatever its own actuator is capable of.
+   *
+   * The same answer `speedLoopCandidate` and `flowLoopCandidate` already give,
+   * carried here rather than asked for a second time. Absent for a level, a
+   * temperature, or a transmitter no single machine owns — and often the same
+   * tag as `outTag`, which is harmless: it is one question asked once.
+   */
+  pvDriver?: string
   /** +1 = reverse-acting (open the valve to raise the PV); -1 = direct
    *  (close it to raise the PV). Derived from the flow network — a drain valve
    *  on the measured tank, or a pressure tap on the pump's discharge side,
@@ -242,6 +258,13 @@ export function buildSimModel(screens: HmiScreen | HmiScreen[], registry?: Regis
       ...c,
       action: controllerAction(c, defs, net),
       ...outputRange(c, defs),
+      ...(() => {
+        const pvDef = defs.find((d) => d.name === c.pvTag)
+        const driver = pvDef
+          ? (speedLoopCandidate(pvDef, defs, hydraulic) ?? flowLoopCandidate(pvDef, defs, hydraulic))
+          : undefined
+        return driver ? { pvDriver: driver.pump } : {}
+      })(),
     }))
   return { defs, net, hydraulic, controllers }
 }
@@ -903,6 +926,19 @@ export interface TickOptions {
    * was true.
    */
   warmStart?: Record<string, number>
+  /**
+   * THE PREVIOUS TICK'S SOLVE — K16.
+   *
+   * Not an optimisation: it is the solve that PRODUCED the readings the
+   * controllers are about to act on, and the only thing that can say whether
+   * those readings are worth acting on. Passing this tick's would break the
+   * one-tick measurement latency K11 established, which is the whole reason it
+   * arrives from the caller rather than being computed here.
+   *
+   * Absent on the very first tick of a run, which is correct: nothing has yet
+   * failed to solve.
+   */
+  prevSolve?: SolveResult
 }
 
 export interface TickResult {
@@ -914,6 +950,13 @@ export interface TickResult {
   hydraulic: SolveResult
   /** bar per pipe — what a PT bound to that line reads. */
   pipePressures: Record<string, number>
+  /**
+   * WHAT EACH CONTROL LOOP IS ABLE TO DO — K16 authority, mode, the output it
+   * asked for and the one the actuator actually reached.
+   *
+   * A derivation of the tags and the previous solve; nothing in it is a store.
+   */
+  loops: Record<string, LoopState>
 }
 
 /**
@@ -941,8 +984,12 @@ export function tick(
     // far better guess than a sixty-sub-steps-old one. Still an optimisation
     // and nothing more: a converged field is a converged field whatever it
     // started from, and an unconverged one is never carried forward.
+    // and the solve the NEXT sub-step's controllers judge is the one this
+    // sub-step just produced — the same one-tick relationship, sub-stepped
     out = step(model, out.tags, dt / n, rng,
-      out.hydraulic.converged ? { ...opts, warmStart: out.hydraulic.pressure } : opts)
+      out.hydraulic.converged
+        ? { ...opts, warmStart: out.hydraulic.pressure, prevSolve: out.hydraulic }
+        : { ...opts, prevSolve: out.hydraulic })
   }
   return out
 }
@@ -1018,11 +1065,42 @@ function step(
   // 1) controllers drive their final element: PI in AUTO, operator OP
   // pass-through in MAN. The error is normalised by the PV's SPAN, so a gain
   // means the same thing on a 0-10 bar loop as on a 0-100 % one.
+  /**
+   * WHY each loop can or cannot reach its process, decided HERE because the
+   * algorithm below is gated on it — and turned into the published snapshot at
+   * the END of the step, where the actuators have moved and the numbers are
+   * the ones the tick actually finished with.
+   */
+  const verdict = new Map<string, { authority: ControlAuthority; blockedBy?: string }>()
   for (const c of model.controllers) {
     const t = tags[c.tag]
     if (!t) continue
     const pv = tags[c.pvTag]?.PV ?? 0
     t.PV = pv
+    /**
+     * CAN THIS LOOP REACH THE PROCESS? — K16.
+     *
+     * Judged against the PREVIOUS solve, because that is the one that produced
+     * the reading being acted on. `processFaultOf` is the single place that
+     * decides whether a solve stands behind a tag's value; this asks it about
+     * the loop's own measurement rather than inventing a second rule.
+     */
+    const pvDef = defByName.get(c.pvTag)
+    const { authority, blockedBy } = authorityOf({
+      ...(c.outTag !== undefined ? { outTag: c.outTag } : {}),
+      ...(c.outKind !== undefined ? { outKind: c.outKind } : {}),
+      ...(c.outTag !== undefined && tags[c.outTag] ? { element: tags[c.outTag]! } : {}),
+      ...(c.pvDriver !== undefined && tags[c.pvDriver]
+        ? { driverTag: c.pvDriver, driver: tags[c.pvDriver]! } : {}),
+      ...(opts?.prevSolve && pvDef
+        ? (() => {
+            const f = processFaultOf(model, opts.prevSolve!, pvDef)
+            return f !== undefined ? { pvFault: f } : {}
+          })()
+        : {}),
+    })
+    t.AUTH = authority === 'available' ? 1 : 0
+    verdict.set(c.tag, { authority, ...(blockedBy !== undefined ? { blockedBy } : {}) })
     if (!c.outTag) continue // PV-only controller: nothing to drive
     const cd = defByName.get(c.tag)
     const span = Math.abs((cd?.max ?? 100) - (cd?.min ?? 0)) || 100
@@ -1072,6 +1150,29 @@ function step(
      * setpoint is unavailable rather than showing a figure nobody set.
      */
     if (t.SP === undefined) { t.SAT = 0; drive(clamp(t.OP ?? 0, lo, hi)); continue }
+    /**
+     * NO AUTHORITY, NO INTEGRATION — K16.
+     *
+     * The output and the integrator are HELD, exactly where the plant left
+     * them. Not reset, not zeroed, not decayed: held, so that when authority
+     * returns the loop resumes from the state it had rather than from a number
+     * manufactured while it was blind.
+     *
+     * This is the smallest transition that fixes the defect. Everything else
+     * is untouched — the PV still updates above, the one-tick measurement
+     * latency is unchanged, the output limits still apply, the tuning is the
+     * same, and there is no deadband anywhere.
+     *
+     * `SAT` is CLEARED rather than set. An output resting at a limit it was
+     * never allowed to leave is not a saturated output, and conflating the two
+     * would tell an operator the setpoint is unreachable when the truth is
+     * that nothing is running.
+     */
+    if (authority !== 'available') {
+      t.SAT = 0
+      drive(clamp(t.OP ?? 0, lo, hi))
+      continue
+    }
     const e = errorOf(t.SP)
     // conditional integration (anti-windup): freeze I while the output is
     // saturated in the error's direction, else overshoot on big transitions
@@ -1266,7 +1367,47 @@ function step(
     const wander = (rng() - 0.5) * (d.max - d.min) * 0.01
     t.PV = clamp((t.PV ?? base) + wander + (base - (t.PV ?? base)) * 0.02, d.min, d.max)
   }
-  return { tags, branchFlows, pipePressures, hydraulic: hyd }
+  /**
+   * WHAT EACH LOOP ENDED THE TICK ABLE TO DO — K16.
+   *
+   * Built HERE, after the actuators have stroked and the measurements have
+   * been taken, so `actual` is the state the actuator finished at rather than
+   * the one the controller saw when it looked. `requested` is the controller's
+   * output, which is exactly what it asked for; the gap between them is the
+   * thing §6 exists to keep visible.
+   */
+  const loops: Record<string, LoopState> = {}
+  for (const c of model.controllers) {
+    const v = verdict.get(c.tag)
+    const t = tags[c.tag]
+    if (!v || !t) continue
+    const el = c.outTag !== undefined ? tags[c.outTag] : undefined
+    /**
+     * A valve's stroked `POS`, a drive's shaft. Never the command: the whole
+     * K12 distinction is that an actuator takes time to arrive and a stuck one
+     * never does. A heater has no dynamics in this model, so its actual IS its
+     * command, and saying so is more honest than leaving the field empty.
+     */
+    const actual = el === undefined ? undefined
+      : c.outKind === 'pump' ? (el.RAMP ?? 0) * 100
+      : el.POS ?? el.OP
+    const requested = c.outTag !== undefined ? t.OP : undefined
+    loops[c.tag] = {
+      tag: c.tag,
+      mode: (t.MODE ?? 0) >= 0.5 ? 'AUTO' : 'MANUAL',
+      authority: v.authority,
+      ...(v.blockedBy !== undefined ? { blockedBy: v.blockedBy } : {}),
+      ...(c.outTag !== undefined ? { actuator: c.outTag } : {}),
+      ...(requested !== undefined ? { requested } : {}),
+      ...(actual !== undefined ? { actual } : {}),
+      // the SAME deviation limit a stuck valve's DEV alarm already uses; no new
+      // threshold was introduced for this
+      tracking: requested !== undefined && actual !== undefined
+        && Math.abs(requested - actual) > DEV_LIMIT,
+      saturated: (t.SAT ?? 0) > 0 ? 1 : (t.SAT ?? 0) < 0 ? -1 : 0,
+    }
+  }
+  return { tags, branchFlows, pipePressures, hydraulic: hyd, loops }
 }
 
 /**

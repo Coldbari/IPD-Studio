@@ -101,6 +101,24 @@ All notable changes to IPD Studio. Format follows
 - `controller-setpoint` reports a setpoint outside the loop's range, or a loop
   with nothing to aim at.
 
+- **Controllers know when they cannot do anything.** A loop whose machine is
+  stopped or tripped, whose valve is stuck, whose final element is missing, or
+  whose measurement the hydraulic solve cannot stand behind now **holds** its
+  output and its integrator exactly where the plant left them — instead of
+  slowly winding on measurement noise while nothing is listening.
+
+  Thirty minutes of a stopped pump used to move a controller's output by a fifth
+  of its travel. It now moves it by nothing, and when the pump starts the loop
+  picks up from where it was rather than from what the noise accumulated.
+
+  **Running out of machine and having no machine are different things**, and
+  they no longer read the same: an output resting at 100 % because a pump is
+  stopped is not a saturated output.
+
+  The controller faceplate says whether the loop can reach the plant, and shows
+  what it **asked** the actuator for beside what the actuator actually became.
+  A stopped pump is a normal plant state and reads as information, not an alarm.
+
 
 ### Added
 

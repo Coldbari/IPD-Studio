@@ -14,6 +14,7 @@ import { QUALITY_LABEL, hasNumber } from './sim/quality'
 import type { Quality } from './sim/quality'
 import { EQUIP_LABEL, equipmentState } from './sim/state'
 import { ENVELOPE_SEVERITY } from './sim/envelope'
+import { AUTHORITY_LABEL, AUTHORITY_SEVERITY } from './sim/authority'
 import type { ThemeTokens } from './theme'
 import { SCALE, THEMES } from './theme'
 
@@ -186,6 +187,8 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
   const driven = useSimStore((s) => (drivenPump ? s.tags[drivenPump] : undefined))
   const loopAuto = useSimStore((s) =>
     speedLoop ? (s.tags[speedLoop.tag]?.MODE ?? 1) >= 0.5 : false)
+  /** K16: what this loop can actually do about its process. */
+  const loop = useSimStore((s) => s.loops[tag])
   const processView = useSimStore((s) => s.processView)
   const pipeFlows = useSimStore((s) => s.pipeFlows)
   const write = useSimStore((s) => s.writeTag)
@@ -407,6 +410,39 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
               <VBar label="OUT" value={t.OP ?? 0} min={0} max={100} unit="%" color={theme.op} theme={theme} />
             </div>
           </Section>
+          {/* CONTROL AUTHORITY — K16. Whether anything this loop computes can
+              reach the plant at all. A stopped machine is a NORMAL plant state
+              and reads in the ordinary muted tone; a stuck actuator or an
+              untrustworthy measurement is somebody's problem and does not. */}
+          {loop && (
+            <Section title="Loop" testId="fp-loop">
+              <div className="fp-kv" data-testid="fp-authority"
+                data-authority={loop.authority}
+                data-severity={AUTHORITY_SEVERITY[loop.authority] ?? 'none'}>
+                <span className="k">Authority</span>
+                <span className="v" style={{
+                  color: AUTHORITY_SEVERITY[loop.authority] === 'warning' ? theme.alarmMedium
+                    : AUTHORITY_SEVERITY[loop.authority] === 'info' ? theme.textMuted
+                    : theme.textSecondary,
+                }}>{AUTHORITY_LABEL[loop.authority]}</span>
+              </div>
+              {/* REQUESTED versus ACTUAL. Shown whenever the loop has a final
+                  element, because the difference is the point: a controller
+                  must never read as though its request became the actuator. */}
+              {loop.requested !== undefined && (
+                <Value label="Requested" value={loop.requested} unit="%" digits={0} />
+              )}
+              {loop.actual !== undefined && (
+                <Value label="Actuator" value={loop.actual} unit="%" digits={0} />
+              )}
+              {loop.tracking && (
+                <div className="fp-kv" data-testid="fp-tracking">
+                  <span className="k">Actuator</span>
+                  <span className="v" style={{ color: theme.textSecondary }}>TRACKING</span>
+                </div>
+              )}
+            </Section>
+          )}
           {/* A SPEED LOOP SHOWS BOTH SPEEDS. The output IS the command, and
               the shaft is what the pump curve reads — K12's distinction, kept
               visible with a controller in the loop. */}

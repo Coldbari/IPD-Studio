@@ -185,10 +185,25 @@ describe('the temperature loop closes', () => {
     expect(hot['TIC-101']!.OP!).toBeGreaterThan(warm['TIC-101']!.OP!)
   })
 
-  it('a stopped heater delivers nothing however hard the controller asks', () => {
+  it('a stopped heater delivers nothing, and the loop does not pretend otherwise', () => {
     const { tags } = run(heated([TIC]), (t) => { t['TIC-101']!.SP = 60 }, 3600, 30)
-    expect(tags['TIC-101']!.OP!).toBeCloseTo(100, 0) // calling for full duty
-    expect(tags['TK-101']!.T!).toBeLessThanOrEqual(DEFAULTS.ambientC) // and getting none
+    // AND GETS NONE — the subject of this test, unchanged.
+    expect(tags['TK-101']!.T!).toBeLessThanOrEqual(DEFAULTS.ambientC)
+    /**
+     * OLD: `expect(OP).toBeCloseTo(100)` — "calling for full duty".
+     * NEW: the output is HELD where it was, and the loop says why.
+     *
+     * PHYSICAL REASON. Calling for full duty was the defect, not the feature.
+     * A controller has no authority over a heater that is not energised, and
+     * winding its output to the stop while the plant cannot respond is exactly
+     * the integrator behaviour K16 exists to remove — it is also what left a
+     * calm screen slowly opening its own valves. The heater still delivers
+     * nothing, which is what this test is about; the controller now holds
+     * instead of railing, and reports that it cannot reach the process.
+     */
+    expect(tags['TIC-101']!.AUTH).toBe(0)
+    expect(tags['TIC-101']!.OP).toBe(0)
+    expect(tags['TIC-101']!.SAT).toBe(0)   // held is not saturated
   })
 })
 
