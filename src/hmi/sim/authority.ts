@@ -89,6 +89,16 @@ export type ControlAuthority =
   | 'stuck'
   /** The solve behind the measurement cannot be trusted. */
   | 'unsolved'
+  /**
+   * A CASCADE MASTER whose slave is not following it — K17.
+   *
+   * The slave is in MANUAL, or has lost its own authority. Either way the
+   * master's output is not reaching an actuator, so it must not go on
+   * integrating against a path that cannot respond. Not a physics question and
+   * not a new kind of authority: the same STATED fact as every other entry
+   * here, and the same HOLD.
+   */
+  | 'downstream'
 
 /** Operator-language for each, the vocabulary the diagnostics page uses. */
 export const AUTHORITY_LABEL: Record<ControlAuthority, string> = {
@@ -97,6 +107,7 @@ export const AUTHORITY_LABEL: Record<ControlAuthority, string> = {
   'de-energised': 'CONTROL AUTHORITY UNAVAILABLE',
   stuck: 'CONTROL AUTHORITY UNAVAILABLE',
   unsolved: 'CONTROL AUTHORITY UNAVAILABLE',
+  downstream: 'CONTROL AUTHORITY UNAVAILABLE',
 }
 
 /**
@@ -114,6 +125,9 @@ export const AUTHORITY_SEVERITY: Record<ControlAuthority, DiagnosticSeverity | u
   stuck: 'warning',
   unsolved: 'warning',
   'no-actuator': 'warning',
+  /** A slave in MANUAL, or on a stopped machine, is a NORMAL operating state
+   *  in exactly the way a stopped pump is. */
+  downstream: 'info',
 }
 
 /** What the runtime knows about one control loop, this instant. */
@@ -144,6 +158,17 @@ export interface LoopState {
   blockedBy?: string
   /** +1 at the top of the loop's travel, -1 at the bottom, 0 between. */
   saturated: -1 | 0 | 1
+  /** K17: the slave this loop's output sets the setpoint of. */
+  cascadeTo?: string
+  /** K17: the master that owns this loop's setpoint. */
+  cascadeFrom?: string
+  /** K17, a master only: the setpoint its output asks for, in the SLAVE's
+   *  units — and the one the slave is actually carrying. They are two things:
+   *  see `requested` and `actual`, of which these are the cascade form. */
+  commandedSp?: number
+  effectiveSp?: number
+  /** K17: a DECLARED cascade that could not be built, and why. */
+  cascadeProblem?: string
 }
 
 /** A runtime finding, in the one shape this product publishes. See
@@ -151,7 +176,7 @@ export interface LoopState {
 export type LoopFinding = ScenarioFinding
 
 /** What a loop drives, in the terms `ControllerSpec` uses. */
-export type ActuatorKind = 'valve' | 'heater' | 'pump'
+export type ActuatorKind = 'valve' | 'heater' | 'pump' | 'cascade'
 
 /**
  * Whether this loop's output can reach the process.
@@ -171,6 +196,8 @@ export function authorityOf(input: {
   driverTag?: string
   driver?: Record<string, number>
   pvFault?: ProcessFault
+  /** K17, cascade masters only: is the slave in AUTO and able to act? */
+  downstreamFollowing?: boolean
 }): { authority: ControlAuthority; blockedBy?: string } {
   const { outTag, outKind, element, driverTag, driver, pvFault } = input
   if (outTag === undefined || element === undefined) return { authority: 'no-actuator' }
@@ -182,6 +209,14 @@ export function authorityOf(input: {
   // 4. a stuck valve is not following its command, whatever that command is —
   //    including a command it happens to already be at.
   if (outKind === 'valve' && (element.STUCK ?? 0) >= 0.5) return { authority: 'stuck' }
+  /**
+   * K17: a CASCADE master whose slave is not following it. The caller has
+   * already decided what "following" means — the slave in AUTO with authority
+   * of its own — because that is the slave's verdict, not a second one.
+   */
+  if (outKind === 'cascade' && input.downstreamFollowing === false) {
+    return { authority: 'downstream', ...(outTag !== undefined ? { blockedBy: outTag } : {}) }
+  }
   // 6. the machine the MEASUREMENT depends on. A stopped pump blocks, so
   //    nothing on its stream can move.
   if (driver !== undefined && !energised(driver)) {
@@ -210,13 +245,32 @@ export function loopFindings(loops: Record<string, LoopState>): LoopFinding[] {
   for (const l of Object.values(loops).sort((a, b) =>
     a.tag.localeCompare(b.tag, undefined, { numeric: true }))) {
     const severity = AUTHORITY_SEVERITY[l.authority]
-    if (severity === undefined) continue
-    out.push({
-      id: `authority:${l.tag}:${l.authority}`,
-      tag: l.tag,
-      severity,
-      message: reason(l),
-    })
+    if (severity !== undefined) {
+      out.push({
+        id: `authority:${l.tag}:${l.authority}`,
+        tag: l.tag,
+        severity,
+        message: reason(l),
+      })
+    }
+    /**
+     * K17: A MASTER ASKING FOR A SETPOINT ITS SLAVE CANNOT BE GIVEN.
+     *
+     * The master's output is scaled onto the slave's CONFIGURED range and
+     * nothing else, so "limited" means it is sitting at an end of that range —
+     * which is `SAT`, already computed, said in cascade terms. Distinct from
+     * unavailability: the link is working, and the range is the limit.
+     */
+    if (l.cascadeTo !== undefined && l.saturated !== 0 && l.commandedSp !== undefined) {
+      out.push({
+        id: `cascade-setpoint-limited:${l.tag}`,
+        tag: l.tag,
+        severity: 'info',
+        message: `is asking ${l.cascadeTo} for ${l.commandedSp.toFixed(1)}, which is the `
+          + `${l.saturated > 0 ? 'top' : 'bottom'} of ${l.cascadeTo}'s configured setpoint range. `
+          + `It cannot ask for more; nothing here invents a wider one.`,
+      })
+    }
   }
   return out
 }
@@ -235,6 +289,9 @@ function reason(l: LoopState): string {
     case 'stuck':
       return `cannot reach the process: ${l.actuator ?? 'its final element'} is stuck and is `
         + `not following its command.${held}`
+    case 'downstream':
+      return `is cascaded onto ${l.blockedBy ?? 'its slave'}, which is not following it — the`
+        + ` slave is in MANUAL or cannot reach its own process.${held}`
     case 'unsolved':
       return 'cannot act on its measurement: the hydraulic solve behind it did not converge,'
         + ` or the network cannot determine it.${held}`

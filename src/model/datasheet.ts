@@ -55,6 +55,15 @@ export const DATASHEET_SECTIONS: Record<'general' | 'process' | 'element' | 'sig
     { key: 'signal.units', label: 'Engineering unit' },
     { key: 'signal.setpoint', label: 'Setpoint' },
     { key: 'signal.systemTag', label: 'Control system tag' },
+    /**
+     * CASCADE — the loop whose SETPOINT this controller's output sets.
+     *
+     * On the MASTER's record, naming the slave, because that is the direction
+     * the signal travels: "my output is that loop's setpoint". A cascade is a
+     * DECLARED relationship and is never inferred from two loops happening to
+     * share a machine.
+     */
+    { key: 'signal.cascadeTo', label: 'Cascade to (slave loop)' },
     { key: 'signal.power', label: 'Power supply' },
     { key: 'signal.fail', label: 'Fail action' },
     { key: 'signal.ex', label: 'Hazardous area rating' },

@@ -119,6 +119,32 @@ All notable changes to IPD Studio. Format follows
   what it **asked** the actuator for beside what the actuator actually became.
   A stopped pump is a normal plant state and reads as information, not an alarm.
 
+- **Cascade control.** A pressure controller can now set a flow controller's
+  **setpoint**, and the flow controller commands the drive:
+
+      PIC-1 → FIC-1 setpoint → FIC-1 → P-101 speed → pump → pressure
+
+  The master never touches the drive. Not "is prevented from" — it has no path
+  to one, because a controller whose record declares a cascade is never offered
+  a drive in the first place. The slave remains the only thing that writes a
+  speed.
+
+  A cascade is **declared** on the master's record and never inferred: two
+  loops that happen to reach the same machine are a contention, which is still
+  refused and reported. A declaration that cannot be honoured leaves the master
+  driving **nothing** — it does not quietly fall back to the drive.
+
+  When the slave is in MANUAL, or its machine is stopped, **the master holds**
+  rather than winding up a demand nobody is acting on. Putting the slave back
+  in AUTO is bumpless, because the master never stopped writing the setpoint.
+
+  Each faceplate says which end of the link it is — `MASTER → FIC-1 → P-101`,
+  or `SLAVE, SP from PIC-1` — and a slave's setpoint entry belongs to its
+  master while the link is in service.
+
+- `cascade-invalid` reports a declared cascade that cannot be built, and says
+  that the master drives nothing until it is fixed.
+
 
 ### Added
 

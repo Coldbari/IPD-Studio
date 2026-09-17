@@ -189,6 +189,12 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
     speedLoop ? (s.tags[speedLoop.tag]?.MODE ?? 1) >= 0.5 : false)
   /** K16: what this loop can actually do about its process. */
   const loop = useSimStore((s) => s.loops[tag])
+  /** K17: a master shows the whole chain, so it needs its slave's drive and
+   *  the units its slave's setpoint is in. */
+  const slaveTag = useSimStore((s) => s.loops[tag]?.cascadeTo)
+  const slaveDrives = useSimStore((s) =>
+    slaveTag ? s.controllers.find((c) => c.tag === slaveTag)?.outTag : undefined)
+  const slaveUnit = useSimStore((s) => (slaveTag ? s.defs[slaveTag]?.unit : undefined))
   const processView = useSimStore((s) => s.processView)
   const pipeFlows = useSimStore((s) => s.pipeFlows)
   const write = useSimStore((s) => s.writeTag)
@@ -416,6 +422,35 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
               untrustworthy measurement is somebody's problem and does not. */}
           {loop && (
             <Section title="Loop" testId="fp-loop">
+              {/* THE CASCADE CHAIN — K17. Which end of the link this loop is,
+                  and where its output actually ends up. A master's output is a
+                  setpoint; the slave is the only thing that writes the drive,
+                  and the chain says so rather than leaving an operator to
+                  infer it from two faceplates. */}
+              {(loop.cascadeTo !== undefined || loop.cascadeFrom !== undefined) && (
+                <div className="fp-kv" data-testid="fp-cascade"
+                  data-role={loop.cascadeTo !== undefined ? 'master' : 'slave'}
+                  data-link={loop.cascadeTo ?? loop.cascadeFrom}>
+                  <span className="k">{loop.cascadeTo !== undefined ? 'MASTER' : 'SLAVE'}</span>
+                  <span className="v" style={{ color: theme.textSecondary }}>
+                    {loop.cascadeTo !== undefined
+                      ? `→ ${loop.cascadeTo}${loop.cascadeProblem === undefined && slaveDrives ? ` → ${slaveDrives}` : ''}`
+                      : `SP from ${loop.cascadeFrom}`}
+                  </span>
+                </div>
+              )}
+              {loop.cascadeProblem !== undefined && (
+                <div className="fp-kv" data-testid="fp-cascade-problem">
+                  <span className="k">Cascade</span>
+                  <span className="v" style={{ color: theme.alarmMedium }}>NOT IN SERVICE</span>
+                </div>
+              )}
+              {loop.commandedSp !== undefined && (
+                <Value label="Commanded SP" value={loop.commandedSp} unit={slaveUnit} digits={1} />
+              )}
+              {loop.effectiveSp !== undefined && (
+                <Value label="Effective SP" value={loop.effectiveSp} unit={slaveUnit} digits={1} />
+              )}
               <div className="fp-kv" data-testid="fp-authority"
                 data-authority={loop.authority}
                 data-severity={AUTHORITY_SEVERITY[loop.authority] ?? 'none'}>
@@ -474,7 +509,10 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
               <button className="fp-btn" style={{ flex: '0 0 auto', width: 30 }} aria-label="Decrease setpoint"
                 onClick={() => write(tag, 'SP', clamp((t.SP ?? t.PV ?? min) - 1, min, max))}>−</button>
               <input data-testid="fp-sp" type="number" aria-label="Setpoint" style={{ width: 64 }}
-                placeholder="- - -" title={t.SP === undefined ? 'No setpoint: this loop has nothing to aim at' : 'Setpoint'}
+                placeholder="- - -" disabled={loop?.cascadeFrom !== undefined}
+                title={loop?.cascadeFrom !== undefined
+                  ? `${loop.cascadeFrom} sets this setpoint`
+                  : t.SP === undefined ? 'No setpoint: this loop has nothing to aim at' : 'Setpoint'}
                 value={t.SP === undefined ? '' : Math.round(t.SP * 10) / 10}
                 onChange={(e) => write(tag, 'SP', clamp(Number(e.target.value), min, max))} />
               <button className="fp-btn" style={{ flex: '0 0 auto', width: 30 }} aria-label="Increase setpoint"

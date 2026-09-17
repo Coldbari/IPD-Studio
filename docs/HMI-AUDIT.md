@@ -2992,3 +2992,240 @@ tsc -b clean · production build clean
 - **Nothing trips.** Still.
 - Carried: PI not PID, no output rate limit, no cascade, no protective action,
   no manufacturer data.
+
+## K17 — cascade control
+
+```text
+PIC-1 (pressure) ─► FIC-1.SP ─► FIC-1 (flow) ─► P-101.SPD ─► shaft
+  ─► pump curve ─► hydraulic solve ─► PT/FT ─► next tick
+```
+
+One cascade, on the runtime K12–K16 built. No control framework was written.
+
+### The one rule, and how it is enforced
+
+**The master does not touch the drive. Ever.** And `PIC-1 → P-101.SPD` is not
+prevented by a check — it is **impossible by construction**:
+
+```text
+wireControllers  →  wireHeaters  →  wirePumps  →  wireFlowPumps  →  wireCascade
+                                        │              │                  │
+                          both SKIP any controller whose         connects the
+                          record declares `signal.cascadeTo`     master to its
+                                                                 SLAVE's setpoint
+```
+
+A declared master is never offered the drive by the two passes that hand out
+drives, so its output has nowhere to go but the slave's setpoint — including
+when the declaration turns out to be **unusable**, because a refused cascade
+falling back to the drive would be exactly the shortcut this phase replaces,
+and would put two writers on one machine.
+
+`wireCascade` runs **last** because the checks it makes are about the slave —
+*does it have a measurement, does it drive something, is that a variable speed
+drive* — and those are only answerable once the slave is wired. Order decides
+when the link is made; the skip decides that the master can never write a drive.
+
+### Declared, never inferred
+
+`signal.cascadeTo` on the **master's** record, naming the slave: *"my output is
+that loop's setpoint."* Nothing else. Two loops that happen to measure the same
+plant and reach the same machine are a **contention** — which K15 already
+refuses and reports — not a hierarchy to guess at.
+
+The K17 fixture proves it: it is exactly two such loops. **With** the
+declaration it is a cascade; **without** it, K15 unwires both.
+
+### Master OP ≡ Slave SP
+
+The master's output is a per cent, as every controller's is. The slave's
+setpoint is in the slave's own engineering units. The map between them is the
+**slave's own configured range and nothing else**:
+
+```text
+slaveSP = slaveMin + (masterOP / 100) × (slaveMax − slaveMin)
+```
+
+**No limit is invented**, and the master's gain keeps meaning what it is
+measured to mean because the algorithm still works in per cent throughout.
+`drive()` is the one and only place a master's output goes, and for a cascade
+it writes `SP`.
+
+`outKind: 'cascade'` is what carries this. `ControllerSpec` needed three
+fields — `cascadeTo`, `cascadeFrom`, `cascadeProblem` — and no new type.
+
+### Execution order — one pass, one clock
+
+`inCascadeOrder` sorts **masters before slaves**, once, at model-build time: a
+master's output *is* the slave's setpoint, so the master must execute first or
+the slave spends a tick chasing yesterday's demand. It is a sort of one list,
+not a scheduler. There is still exactly one pass over the controllers, inside
+the one step, on the one clock — and the whole runtime order is untouched:
+
+```text
+controllers → equipment/actuators → hydraulics → inventory → thermal
+  → instruments → (store) quality → alarms → history
+```
+
+A slave's **PV** is still the previous tick's transmitter; only its **SP** is
+this tick's. That is what a cascade is.
+
+### The eight validations (§4)
+
+| Check | Message when it fails |
+| --- | --- |
+| self-reference | *names itself as its own slave* |
+| slave not a loop | *is not a control loop, so it has no setpoint to cascade onto* |
+| slave not on the plant | *is not on this plant* |
+| a cycle | *the cascade A → B → A is a loop* |
+| slave has no PV | *has no measurement to control* |
+| slave drives nothing | *drives nothing, so a setpoint sent to it would go nowhere* |
+| slave's element is not a VSD | *drives X, which is not a variable speed drive* |
+| slave has no usable SP range | *no usable setpoint range for a master output to be scaled onto* |
+
+Exactly-one-writer is the eighth, and it is structural: `resolveContention`
+still runs last and still unwires everyone claiming one drive.
+
+### Modes
+
+| Master | Slave | Behaviour |
+| --- | --- | --- |
+| AUTO | AUTO | the cascade. Master PI → slave SP → slave PI → drive |
+| MANUAL | AUTO | the operator's master output becomes the slave's setpoint |
+| AUTO | MANUAL | **the master HOLDS.** The slave's operator output drives |
+| MANUAL | MANUAL | each operator number goes exactly where it should |
+
+**The chosen master behaviour when the slave is not following is HOLD** — §9's
+preferred architecture, and it is K16's mechanism with nothing added but a new
+stated condition. `ControlAuthority` gained `'downstream'`: the slave is in
+MANUAL, or has lost its own authority, so the master is talking to nobody. The
+integrator and output are held exactly where the plant left them. **Not reset.
+No deadband. No automatic mode change.**
+
+Measured: master OP and `I` bit-identical across thirty minutes of a stopped
+machine, and on restoration `I` moves by one ordinary step.
+
+**No second mode system.** The slave being in AUTO *is* the cascade being in
+service, which is the existing architecture and is why transfer is bumpless by
+construction: the master writes the slave's setpoint on every tick whether the
+slave is following or not, so a slave returning to AUTO comes back to a demand
+it has been tracking rather than a stale one.
+
+### Tuning — a fourth entry, and the reason it had to be
+
+`TUNING` is indexed by what a loop MEASURES; `SPEED_TUNING` and
+`FLOW_SPEED_TUNING` by what it DRIVES. A cascade master drives **another
+controller**. Nothing above describes that, and **nothing above was touched**.
+
+**Process gain, measured open-loop** — master in MANUAL, its output walked, the
+slave holding each setpoint it was given:
+
+| master OP | 20 % | 35 % | 50 % | 65 % | 80 % | 100 % |
+| --- | --- | --- | --- | --- | --- | --- |
+| slave SP | 12.0 | 21.0 | 30.0 | 39.0 | 48.0 | 60.0 m³/h |
+| FT | 12.0 | 21.2 | 29.9 | 39.0 | 43.3 | 43.4 m³/h |
+| PT | 2.144 | 2.435 | 2.901 | 3.523 | 3.856 | 3.864 bar |
+
+0.31 % of the pressure span per % of master output, **and the slave tracks its
+setpoint exactly** — which is the cascade working. Above ~72 % the machine runs
+out and the **slave** reports `SAT`; nothing is invented to hide that ceiling.
+
+**What actually constrains this loop is not the usual cascade rule.** The
+received wisdom — *make the master several times slower than the slave* — does
+not bind here, because the inner loop contributes almost no lag: the hydraulics
+are quasi-steady and the drive covers its whole travel in two seconds. What
+binds is the **master's proportional path**, which with no inner lag between it
+and the plant closes a second loop at the sample rate:
+
+| Kp | Ti | step 2.5→3.2 bar | step 2.3→3.5 bar | |
+| --- | --- | --- | --- | --- |
+| 1.2 | 10 | never settles, 100 % overshoot, 1.39 bar swing | | **UNSTABLE** |
+| 0.8 | 10 | never settles, 100 % overshoot, 1.37 bar swing | | **UNSTABLE** |
+| 0.5 | 5 | 53 s, 12 % overshoot | 60 s, 9 % | fast |
+| **0.5** | **10** | **99 s, 12 % overshoot** | **123 s, 8 %** | **chosen** |
+| 0.5 | 20 | 214 s, 12 % | 266 s, 7 % | slower |
+| 0.3 | 10 | 166 s, 11 % | 214 s, 7 % | slower |
+
+`Ti` moves the speed and barely touches stability; `Kp` decides it, and the
+boundary is between 0.5 and 0.8. **0.5 keeps a gain margin of about 1.6 against
+a limit cycle that was reached rather than assumed.** Settled spread 0.09–0.13
+bar — the transmitter's own noise. Checked at dt = 0.2 s as well as 1 s.
+
+The resulting loop gain is **0.16**, far below the 0.7 K14 and K15 chose, and
+the table is why: those two had an actuator's lag between them and their plant.
+This one has none.
+
+### Setpoint limits (§7)
+
+The master's output is scaled onto the slave's **configured** range, so
+"limited" means it is sitting at an end of that range — which is `SAT`, already
+computed, said in cascade terms as `cascade-setpoint-limited` (`info`). A
+`cascade-invalid` finding covers the slave whose range is unusable. **Nothing
+invents a minimum flow, a maximum flow, a pump limit or a safety limit.**
+
+### Tracking (§10)
+
+| | requested | actual |
+| --- | --- | --- |
+| slave | its controller output | the drive's **shaft**, `RAMP × 100` |
+| master | `commandedSp`, in the slave's units | `effectiveSp`, the setpoint the slave carries |
+
+Never called equivalent, and the snapshot is built at the END of the tick, so
+the actuator's number is where it finished.
+
+### Diagnostics
+
+| Finding | Where | Severity | What it means |
+| --- | --- | --- | --- |
+| `cascade-invalid` | Checks | `critical` | **configuration**: the declaration cannot be built, and the master drives nothing |
+| `downstream` authority | live | `info` | **runtime**: the slave is in MANUAL or cannot reach its process. A normal plant state |
+| `cascade-setpoint-limited` | live | `info` | **limiting**: the master is at an end of the slave's configured range |
+
+The three are exactly §11's required distinction, and a runtime unavailability
+is never reported as a bad engineering record — a test asserts that a stopped
+pump produces a live finding and **no** Checks finding at all.
+
+### Causality, proved
+
+A pressure setpoint step of 2.5 → 3.2 bar is asserted to move, in order:
+master output → slave setpoint → slave output → speed command → shaft → pump
+head → solved flow → FT → PT — and then to settle at 3.2 within the
+transmitter's noise. Separately: the master's output can only reach `SPD`
+through the slave (an operator writing the master's OP in MANUAL changes the
+slave's SP, and the drive takes the slave's own number), and the slave is
+reading its own transmitter one tick behind.
+
+**Disturbances show what a cascade is for.** Throttle HV-9 from 100 % to 45 %:
+
+```text
++1 s    FT 31.5 → 28.4    the slave sees it first
++3 s    slave OP 73 → 83  the inner loop defends its setpoint
++30 s   master OP 53 → 14 the outer loop asks for LESS flow — a closing valve
+                          RAISES pressure, and pressure is what it controls
++400 s  PT back at 3.0
+```
+
+### Gate
+
+```text
+3653 tests passing · 7 skipped · 0 failing      (+47)
+tsc -b clean · production build clean
+207 Playwright passing · 2 failing — the SAME two as on a5b9793
+```
+
+### Limitations
+
+- **One cascade topology**: pressure master → flow slave → VSD. No three-level
+  cascade, no split range, no feedforward, no override selectors.
+- **The master's gains are this plant's**, and this plant has an inner loop
+  with essentially no lag — which is what forced a loop gain of 0.16. A plant
+  with a genuinely slow inner loop would want the opposite treatment. The
+  instability boundary is measured and written down rather than described.
+- **No runtime cascade enable/disable of its own.** The slave's mode *is* the
+  switch, deliberately, because a second mode system is what §5 forbids.
+- **`cascade-setpoint-limited` is the slave's configured range and nothing
+  else.** A narrower SP high/low limit would be a new invented field.
+- **The master learns of its slave's state one tick late**, because masters run
+  first — the same one-tick relationship every other controller input has.
+- Carried: PI not PID, no output rate limit, no protective action, no
+  minimum-flow protection, no manufacturer data.

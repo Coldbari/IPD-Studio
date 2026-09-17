@@ -546,10 +546,46 @@ export const controllerSetpoint: Rule = {
   },
 }
 
+/**
+ * A DECLARED CASCADE THAT CANNOT BE BUILT.
+ *
+ * `signal.cascadeTo` says "my output is that loop's setpoint". When the
+ * declaration cannot be honoured the master drives NOTHING — it deliberately
+ * does not fall back to the drive, because that fallback is the direct
+ * master → VSD shortcut cascade exists to replace, and it would put two
+ * writers on one machine.
+ *
+ * A controller that looks wired and controls nothing is the thing worth
+ * saying out loud, and it is a property of the DRAWING and the RECORDS rather
+ * than of this instant — which is why it is here and not a runtime finding.
+ * `wireCascade` is the one place that decides; this reports its reason
+ * verbatim rather than re-deriving it.
+ */
+export const cascadeInvalid: Rule = {
+  id: 'cascade-invalid',
+  title: 'Cascade that cannot be built',
+  severity: 'critical',
+  discipline: 'process',
+  why: 'A master whose cascade cannot be honoured drives nothing at all: it tracks its measurement, computes an output, and sends it nowhere.',
+  run(ix) {
+    const screens = ix.doc.hmiScreens ?? []
+    if (screens.length === 0) return []
+    const model = buildSimModel(screens, ix.doc.registry)
+    const out = []
+    for (const c of model.controllers) {
+      if (c.cascadeProblem === undefined) continue
+      out.push(finding(cascadeInvalid, c.tag,
+        `${c.tag} is declared to cascade onto ${c.cascadeTo ?? 'another loop'}, but ${c.cascadeProblem} `
+        + `The master drives nothing until this is fixed — it is NOT quietly connected to the drive instead.`))
+    }
+    return out
+  },
+}
+
 export const PROCESS_RULES: Rule[] = [
   noRelief, lineNoService, tankCapacityDefaulted,
   pumpSuctionInsufficient, pumpSuctionUnsupplied,
   terminalNoPressure, terminalBadPressure, terminalBadSignal,
   pumpSpeedConfig, pumpFlowConfig, pumpSpeedNoDrive,
-  pumpSpeedContended, controllerSetpoint,
+  pumpSpeedContended, controllerSetpoint, cascadeInvalid,
 ]

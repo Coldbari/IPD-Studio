@@ -144,6 +144,15 @@ export interface TagDef {
    * from a DEFAULTED one instead of overwriting both.
    */
   setpoint?: number
+  /**
+   * CASCADE — the loop this controller's output sets the SETPOINT of, from
+   * `signal.cascadeTo`.
+   *
+   * Declared on the MASTER's record, naming the slave. A cascade is never
+   * inferred: two loops sharing a machine is a contention to be reported, not
+   * a hierarchy to be guessed at. Absent on every controller drawn before K17.
+   */
+  cascadeTo?: string
 }
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
@@ -175,6 +184,8 @@ function defFor(w: HmiWidget, registry: Registry | undefined): TagDef | null {
   const p = w.props ?? {}
   const eng = engineeringFor(registry, w.tag)
   const proc = processFor(registry, w.tag)
+  // K17: the slave loop this controller's output sets the setpoint of.
+  const cascade = registry?.[w.tag]?.fields?.['signal.cascadeTo']?.trim() || undefined
   const lim = eng.limits
   switch (w.type) {
     case 'tank': {
@@ -260,6 +271,7 @@ function defFor(w: HmiWidget, registry: Registry | undefined): TagDef | null {
         // carried ONLY when the record states one; there is no widget prop for
         // a setpoint and no simulator default. See `TagDef.setpoint`.
         ...(eng.setpoint !== undefined ? { setpoint: eng.setpoint } : {}),
+        ...(cascade !== undefined ? { cascadeTo: cascade } : {}),
       }
     }
     default:

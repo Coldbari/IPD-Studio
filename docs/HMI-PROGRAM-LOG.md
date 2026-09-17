@@ -1090,3 +1090,70 @@ tsc -b clean · production build clean
 | P2 | Proportional action on measurement noise is untouched by design; a high-gain level loop still dithers its valve. |
 | P2 | No output rate limit, PI not PID, no protective action, no manufacturer data. |
 | P2 | The bundled demo template still states no setpoint (K15); no scenario library (K9); pressure-only boundary dynamics (K10); mixing unsupported (K5). |
+
+
+---
+
+## 31. Step K17 — cascade control
+
+The P1 finding that had been carried since K15, and by K16 it was the answer in
+four places at once.
+
+One cascade: pressure master, flow slave, VSD. No control framework. The
+existing `ControllerSpec` expressed it with three fields and one new `outKind`,
+and the whole architecture rests on an ordering rather than a check — the two
+passes that hand out drives SKIP any controller whose record declares a
+cascade, so a master has nowhere to send its output but the slave's setpoint.
+That holds even when the declaration turns out to be unusable, which is the
+case that matters: a refused cascade falling back to the drive would be exactly
+the shortcut the phase replaces.
+
+`wireCascade` runs last because its checks are about the slave, and the slave
+has to be wired before you can ask whether it drives a variable speed drive.
+Order decides when the link is made; the skip decides that the master can never
+be a drive's writer.
+
+The master's output is a per cent and the slave's setpoint is in m³/h, and the
+map between them is the slave's own configured range — no invented limit, and
+the gain keeps meaning what it was measured to mean because the algorithm still
+works in per cent throughout.
+
+Tuning was the interesting measurement. The received wisdom is to make a master
+several times slower than its slave, and it does not bind here: the inner loop
+contributes almost no lag, because the hydraulics are quasi-steady and the
+drive covers its travel in two seconds. What binds is the master's PROPORTIONAL
+path, which with no inner lag closes a second loop at the sample rate. Above
+kp 0.8 the pair limit-cycles with a 1.4 bar swing; 0.5 keeps a margin of about
+1.6 and settles a 0.7 bar step in 99 s. The resulting loop gain is 0.16, a
+quarter of what K14 and K15 chose, and the table says why.
+
+K16's HOLD does the work for the master when its slave is not following —
+`ControlAuthority` gained one stated condition and nothing else. No second mode
+system either: the slave being in AUTO IS the cascade being in service, and
+transfer is bumpless because the master writes the setpoint whether anyone is
+listening or not.
+
+Five of my own tests were wrong first, and each was wrong in an instructive
+way. The best of them asserted that a flow disturbance makes the slave open up
+and stay open; what actually happens is that the slave defends its setpoint
+within three seconds and then the MASTER asks for less flow, because closing a
+valve raises the pressure it is controlling. The test now says that, which is a
+better description of what a cascade is for.
+
+### State after K17
+
+```text
+3653 tests passing · 7 skipped · 0 failing
+tsc -b clean · production build clean
+207 Playwright passing · 2 failing, both pre-existing on a5b9793
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P1 | Minimum-flow protection now has everything it needs: an envelope (K13), an authority model (K16) and a cascade (K17). It is the last of the four things cascade was the answer to. |
+| P2 | One cascade topology only — no three-level, no split range, no feedforward, no override selectors. |
+| P2 | The master's gains are this plant's, and this plant's inner loop has no lag; a slow inner loop would want the opposite treatment. |
+| P2 | No SP high/low limits narrower than a slave's range; no output rate limit; PI not PID. |
+| P2 | Carried: no protective action, no manufacturer data, demo template states no setpoint (K15), no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |

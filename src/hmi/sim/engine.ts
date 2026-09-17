@@ -31,7 +31,24 @@ export interface ControllerSpec {
    * `pump`, K14 — and writes `SPD`, never `RAMP`: the drive remains
    * responsible for turning a command into a shaft, exactly as K12 left it.
    */
-  outKind?: 'valve' | 'heater' | 'pump'
+  outKind?: 'valve' | 'heater' | 'pump' | 'cascade'
+  /**
+   * CASCADE — K17.
+   *
+   * `cascadeTo` is the SLAVE whose setpoint this controller's output sets;
+   * `cascadeFrom` is the MASTER on the other end of that link. A master's
+   * `outKind` is `cascade` and its `outTag` is the slave, so the ONE place
+   * that writes a final element never sees a master at all: the slave is the
+   * sole writer of the drive, exactly as §3 requires.
+   *
+   * `cascadeProblem` is why a DECLARED cascade could not be built. A refused
+   * cascade leaves the master driving NOTHING rather than quietly falling back
+   * to the drive — the fallback would be the direct master → VSD shortcut the
+   * whole phase exists to prevent.
+   */
+  cascadeTo?: string
+  cascadeFrom?: string
+  cascadeProblem?: string
   /**
    * OUTPUT RANGE, per cent. Defaults 0 and 100, which is every loop that
    * existed before K14 and is what a valve's travel is.
@@ -207,6 +224,65 @@ const SPEED_TUNING = { kp: 1.8, ti: 12 }
  */
 const FLOW_SPEED_TUNING = { kp: 1.0, ti: 12 }
 
+/**
+ * THE CASCADE MASTER'S OWN TUNING — K17.
+ *
+ * A FOURTH entry, and a fourth kind of output. `TUNING` is indexed by what a
+ * loop MEASURES; `SPEED_TUNING` and `FLOW_SPEED_TUNING` by what it DRIVES. A
+ * cascade master drives neither an actuator nor a machine — it drives ANOTHER
+ * CONTROLLER. Nothing above describes that, and nothing above was touched.
+ *
+ * ── PROCESS GAIN, MEASURED OPEN-LOOP ──────────────────────────────────────
+ *
+ * The master in MANUAL, its output walked, the slave holding each setpoint it
+ * was given, the discharge transmitter read once settled:
+ *
+ *   master OP   20 %    35 %    50 %    65 %    80 %   100 %
+ *   slave SP    12.0    21.0    30.0    39.0    48.0    60.0  m³/h
+ *   FT          12.0    21.2    29.9    39.0    43.3    43.4  m³/h
+ *   PT         2.144   2.435   2.901   3.523   3.856   3.864  bar
+ *
+ * 0.31 % of the pressure span per % of master output over the controllable
+ * part, and the slave tracks its setpoint exactly — which is the cascade
+ * working. Above about 72 % the machine runs out and the SLAVE reports `SAT`;
+ * nothing is invented to hide that ceiling.
+ *
+ * ── WHAT ACTUALLY CONSTRAINS THIS LOOP ────────────────────────────────────
+ *
+ * Not the usual cascade rule. The received wisdom is "make the master several
+ * times slower than the slave", and it does not bind here, because THE INNER
+ * LOOP CONTRIBUTES ALMOST NO LAG: the hydraulics are quasi-steady and the
+ * drive covers its whole travel in two seconds, so the slave settles within a
+ * couple of ticks of being given a setpoint. What binds instead is the
+ * MASTER'S PROPORTIONAL PATH, which with no inner lag between it and the plant
+ * closes a second loop at the sample rate:
+ *
+ *   kp   ti    step 2.5→3.2 bar          step 2.3→3.5 bar
+ *   ─────────────────────────────────────────────────────────────────────
+ *   1.2  10    never settles, 100 % overshoot, 1.39 bar swing   UNSTABLE
+ *   0.8  10    never settles, 100 % overshoot, 1.37 bar swing   UNSTABLE
+ *   0.5   5     53 s, 12 % overshoot      60 s,  9 % overshoot  fast
+ *   0.5  10     99 s, 12 % overshoot     123 s,  8 % overshoot  ← chosen
+ *   0.5  20    214 s, 12 % overshoot     266 s,  7 % overshoot  slower
+ *   0.3  10    166 s, 11 % overshoot     214 s,  7 % overshoot  slower
+ *
+ * `ti` moves the speed and barely touches the stability; `kp` decides it, and
+ * the boundary is between 0.5 and 0.8. 0.5 keeps a gain margin of about 1.6
+ * against a limit cycle that was REACHED rather than assumed, and leaves a
+ * settled spread of 0.09-0.13 bar, which is the transmitter's own noise.
+ *
+ * The resulting loop gain is 0.16 — far below the 0.7 K14 and K15 chose, and
+ * the table above is why: those two had an actuator's lag between them and
+ * their plant, and this one has none.
+ *
+ * Checked at dt = 0.2 s as well as dt = 1 s (105 s and 99 s to settle).
+ *
+ * NOT UNIVERSAL. Like every other entry here it is a starting point measured
+ * against one fixture, and a plant whose inner loop is genuinely slow would
+ * want the opposite treatment.
+ */
+const CASCADE_TUNING = { kp: 0.5, ti: 10 }
+
 /** Equipment dynamics: pump spin-up seconds, coast-down seconds, valve
  *  stroke %/s, and the deviation band+delay that raises a valve DEV alarm. */
 const RAMP_S = 2
@@ -252,21 +328,47 @@ export function buildSimModel(screens: HmiScreen | HmiScreen[], registry?: Regis
   // the registry comes too: a TAGGED TERMINAL's boundary pressure is on its
   // engineering record, and the topology is where that becomes a fixed node
   const hydraulic = buildProcessModel(list, registry)
-  const controllers = resolveContention(
-    wireFlowPumps(wirePumps(wireHeaters(wireControllers(defs), defs, net), defs, hydraulic), defs, hydraulic))
-    .map((c) => ({
-      ...c,
-      action: controllerAction(c, defs, net),
-      ...outputRange(c, defs),
-      ...(() => {
-        const pvDef = defs.find((d) => d.name === c.pvTag)
-        const driver = pvDef
-          ? (speedLoopCandidate(pvDef, defs, hydraulic) ?? flowLoopCandidate(pvDef, defs, hydraulic))
-          : undefined
-        return driver ? { pvDriver: driver.pump } : {}
-      })(),
-    }))
-  return { defs, net, hydraulic, controllers }
+  /**
+   * CASCADE FIRST — K17. A master's output is the slave's setpoint, so its
+   * `outTag` is already set before `wirePumps` and `wireFlowPumps` run, and
+   * they leave it alone by the rule they already have. That ordering is what
+   * makes the direct master → VSD shortcut impossible by construction rather
+   * than by a check.
+   */
+  /**
+   * CASCADE LAST, and that is not an accident either.
+   *
+   * A cascade can only be validated once the SLAVE is wired — the checks are
+   * "does it have a measurement, does it drive something, is that a variable
+   * speed drive" — so `wireCascade` runs after the two passes that answer
+   * them. The master is nonetheless kept away from the drive throughout,
+   * because both of those passes skip a controller whose record declares a
+   * cascade. Order decides when the link is made; the skip decides that the
+   * master can never be the drive's writer.
+   */
+  const controllers = resolveContention(wireCascade(
+    wireFlowPumps(wirePumps(wireHeaters(wireControllers(defs), defs, net), defs, hydraulic),
+      defs, hydraulic), defs))
+    .map((c) => {
+      const pvDef = defs.find((d) => d.name === c.pvTag)
+      const driver = pvDef
+        ? (speedLoopCandidate(pvDef, defs, hydraulic) ?? flowLoopCandidate(pvDef, defs, hydraulic))
+        : undefined
+      return {
+        ...c,
+        /**
+         * A CASCADE MASTER'S DIRECTION is the same question K14 answers for a
+         * speed loop — which side of the machine its transmitter is on —
+         * because the machine at the end of the cascade IS that machine. The
+         * answer is already in hand from `driver`; asking a second time would
+         * be a second opinion about one fact.
+         */
+        action: c.outKind === 'cascade' ? (driver?.action ?? 1) : controllerAction(c, defs, net),
+        ...outputRange(c, defs),
+        ...(driver ? { pvDriver: driver.pump } : {}),
+      }
+    })
+  return { defs, net, hydraulic, controllers: inCascadeOrder(controllers) }
 }
 
 /**
@@ -463,6 +565,16 @@ function pressureZone(model: ProcessModel, ...from: string[]): Set<string> {
 function wirePumps(controllers: ControllerSpec[], defs: TagDef[], model: ProcessModel): ControllerSpec[] {
   return controllers.map((c) => {
     if (c.outTag) return c
+    /**
+     * A DECLARED CASCADE MASTER IS NEVER GIVEN A DRIVE — K17.
+     *
+     * Its output is a setpoint; `wireCascade` connects it once the slave below
+     * is wired. Skipping it HERE is what makes `PIC-1 → P-101.SPD` impossible
+     * by construction rather than by a check somewhere downstream — and it
+     * holds even when the declaration turns out to be unusable, because a
+     * refused cascade must not silently become the shortcut it replaced.
+     */
+    if (defs.find((d) => d.name === c.tag)?.cascadeTo !== undefined) return c
     const pvDef = defs.find((d) => d.name === c.pvTag)
     if (!pvDef) return c
     const cand = speedLoopCandidate(pvDef, defs, model)
@@ -602,6 +714,16 @@ function walkStream(
 function wireFlowPumps(controllers: ControllerSpec[], defs: TagDef[], model: ProcessModel): ControllerSpec[] {
   return controllers.map((c) => {
     if (c.outTag) return c
+    /**
+     * A DECLARED CASCADE MASTER IS NEVER GIVEN A DRIVE — K17.
+     *
+     * Its output is a setpoint; `wireCascade` connects it once the slave below
+     * is wired. Skipping it HERE is what makes `PIC-1 → P-101.SPD` impossible
+     * by construction rather than by a check somewhere downstream — and it
+     * holds even when the declaration turns out to be unusable, because a
+     * refused cascade must not silently become the shortcut it replaced.
+     */
+    if (defs.find((d) => d.name === c.tag)?.cascadeTo !== undefined) return c
     const pvDef = defs.find((d) => d.name === c.pvTag)
     if (!pvDef) return c
     const cand = flowLoopCandidate(pvDef, defs, model)
@@ -631,6 +753,133 @@ function resolveContention(controllers: ControllerSpec[]): ControllerSpec[] {
     c.outKind === 'pump' && c.outTag !== undefined && (count.get(c.outTag) ?? 0) > 1
       ? { tag: c.tag, pvTag: c.pvTag }
       : c)
+}
+
+/**
+ * MASTERS BEFORE SLAVES.
+ *
+ * The cascade dependency is explicit and therefore has an explicit order: a
+ * master's output IS its slave's setpoint, so the master has to execute first
+ * or the slave spends a tick chasing yesterday's demand. One stable pass, and
+ * a cycle cannot get here — `cascadeProblem` refuses those before wiring.
+ *
+ * Nothing else about the runtime order moves. This is a sort of ONE list, not
+ * a scheduler: there is still exactly one pass over the controllers, inside
+ * the one simulation step, on the one clock.
+ */
+function inCascadeOrder(controllers: ControllerSpec[]): ControllerSpec[] {
+  if (!controllers.some((c) => c.outKind === 'cascade')) return controllers
+  const out: ControllerSpec[] = []
+  const placed = new Set<string>()
+  const place = (c: ControllerSpec, depth: number): void => {
+    if (placed.has(c.tag) || depth > controllers.length) return
+    placed.add(c.tag)
+    out.push(c)
+    const slave = c.outKind === 'cascade' ? controllers.find((x) => x.tag === c.outTag) : undefined
+    if (slave) place(slave, depth + 1)
+  }
+  // every master first, each dragging its own slave in behind it
+  for (const c of controllers) if (c.outKind === 'cascade') place(c, 0)
+  for (const c of controllers) if (!placed.has(c.tag)) { placed.add(c.tag); out.push(c) }
+  return out
+}
+
+/**
+ * CASCADE — a master whose output is another loop's SETPOINT.
+ *
+ * ── THE ONE RULE ──────────────────────────────────────────────────────────
+ *
+ *     PIC-1 → FIC-1.SP     and     FIC-1 → P-101.SPD
+ *     never  PIC-1 → P-101.SPD
+ *
+ * The master does not touch the drive. The slave is the sole writer of the
+ * final element, which is why this pass runs BEFORE `wirePumps` and
+ * `wireFlowPumps`: once a master's `outTag` is the slave, those passes skip it
+ * by the rule they already have ("a loop that already drives something is
+ * left alone").
+ *
+ * ── DECLARED, NEVER INFERRED ──────────────────────────────────────────────
+ *
+ * A cascade comes from `signal.cascadeTo` on the master's record and from
+ * nowhere else. Two loops that happen to measure the same plant and reach the
+ * same machine are a CONTENTION — which K15 already reports — and not a
+ * hierarchy to be guessed at.
+ *
+ * ── A REFUSED CASCADE DRIVES NOTHING ──────────────────────────────────────
+ *
+ * When the declaration cannot be honoured the master keeps `cascadeProblem`
+ * and no output at all. It deliberately does NOT fall back to driving the
+ * drive itself: that fallback is exactly the shortcut this phase forbids, and
+ * it would also put two writers on one machine.
+ */
+function wireCascade(controllers: ControllerSpec[], defs: TagDef[]): ControllerSpec[] {
+  const byTag = new Map(controllers.map((c) => [c.tag, c]))
+  const declared = new Map<string, string>()
+  for (const c of controllers) {
+    const to = defs.find((d) => d.name === c.tag)?.cascadeTo
+    if (to !== undefined) declared.set(c.tag, to)
+  }
+  if (declared.size === 0) return controllers
+
+  const problems = new Map<string, string>()
+  for (const [master, slave] of declared) {
+    const problem = cascadeProblem(master, slave, declared, byTag, defs)
+    if (problem !== undefined) problems.set(master, problem)
+  }
+
+  return controllers.map((c) => {
+    const slave = declared.get(c.tag)
+    if (slave !== undefined) {
+      const problem = problems.get(c.tag)
+      return problem !== undefined
+        // declared and unusable: no output, and the reason travels with it
+        ? { tag: c.tag, pvTag: c.pvTag, cascadeTo: slave, cascadeProblem: problem }
+        : { ...c, outTag: slave, outKind: 'cascade' as const, cascadeTo: slave }
+    }
+    // the other end of a WORKING link: the slave learns who owns its setpoint
+    const master = [...declared].find(([m, sl]) => sl === c.tag && !problems.has(m))?.[0]
+    return master !== undefined ? { ...c, cascadeFrom: master } : c
+  })
+}
+
+/**
+ * Why a declared cascade cannot be built, or `undefined` when it can.
+ *
+ * The eight checks §4 asks for, in the order that makes each message useful:
+ * a missing slave is not also usefully described as having no measurement.
+ */
+function cascadeProblem(
+  master: string, slave: string,
+  declared: Map<string, string>, byTag: Map<string, ControllerSpec>, defs: TagDef[],
+): string | undefined {
+  if (slave === master) return `${master} names itself as its own slave.`
+  const s = byTag.get(slave)
+  if (!s) {
+    const known = defs.some((d) => d.name === slave)
+    return known
+      ? `${slave} is not a control loop, so it has no setpoint to cascade onto.`
+      : `${slave} is not on this plant.`
+  }
+  // 8. a cycle: follow the declarations and see whether we come back
+  const seen = new Set([master])
+  for (let next: string | undefined = slave; next !== undefined; next = declared.get(next)) {
+    if (seen.has(next)) return `the cascade ${[...seen, next].join(' → ')} is a loop.`
+    seen.add(next)
+  }
+  // 4, 5, 6. the slave must be a complete, VSD-driving loop of its own
+  if (!defs.some((d) => d.name === s.pvTag)) return `${slave} has no measurement to control.`
+  if (s.outTag === undefined) {
+    return `${slave} drives nothing, so a setpoint sent to it would go nowhere.`
+  }
+  if (s.outKind !== 'pump') {
+    return `${slave} drives ${s.outTag}, which is not a variable speed drive.`
+  }
+  // 3. the slave's setpoint range is what the master's output is scaled onto
+  const sd = defs.find((d) => d.name === slave)
+  if (sd === undefined || !(sd.max > sd.min)) {
+    return `${slave} has no usable setpoint range for a master output to be scaled onto.`
+  }
+  return undefined
 }
 
 /**
@@ -1098,6 +1347,20 @@ function step(
             return f !== undefined ? { pvFault: f } : {}
           })()
         : {}),
+      /**
+       * K17: IS THE SLAVE FOLLOWING? A master whose slave is in MANUAL, or
+       * whose slave cannot reach its own process, is talking to nobody — so it
+       * holds rather than integrating against a path that cannot respond.
+       *
+       * The slave's verdict is the SLAVE's, computed when it ran a moment ago
+       * (masters execute first, so a slave's verdict from this same tick is
+       * not yet in `verdict` — its PREVIOUS tick's is, which is the same
+       * one-tick relationship every other input here has).
+       */
+      ...(c.outKind === 'cascade' && c.outTag !== undefined
+        ? { downstreamFollowing:
+            (tags[c.outTag]?.MODE ?? 0) >= 0.5 && (tags[c.outTag]?.AUTH ?? 1) >= 0.5 }
+        : {}),
     })
     t.AUTH = authority === 'available' ? 1 : 0
     verdict.set(c.tag, { authority, ...(blockedBy !== undefined ? { blockedBy } : {}) })
@@ -1107,7 +1370,8 @@ function step(
     // A SPEED loop is tuned as a speed loop. `TUNING` is indexed by what a
     // controller MEASURES; this one measures pressure like any other and
     // drives something else entirely. Nothing in `TUNING` changed.
-    const tune = c.outKind === 'pump'
+    const tune = c.outKind === 'cascade' ? CASCADE_TUNING
+      : c.outKind === 'pump'
       ? (cd?.measures === 'flow' ? FLOW_SPEED_TUNING : SPEED_TUNING)
       : cd?.measures ? TUNING[cd.measures] : DEFAULT_TUNING
     const ki = tune.kp / tune.ti
@@ -1126,6 +1390,23 @@ function step(
     const drive = (v: number) => {
       const el = tags[c.outTag!]
       if (!el) return
+      /**
+       * A CASCADE MASTER WRITES A SETPOINT, NOT AN ACTUATOR — K17.
+       *
+       * Its output is a per cent, as every controller's is, and the slave's
+       * setpoint is in the slave's own engineering units. The map between them
+       * is the SLAVE'S OWN CONFIGURED RANGE and nothing else: no limit is
+       * invented, and the master's gain keeps meaning what K14 measured it to
+       * mean because the algorithm still works in per cent throughout.
+       *
+       * This is the one and only place a master's output goes. It never
+       * reaches `SPD`.
+       */
+      if (c.outKind === 'cascade') {
+        const sd = defByName.get(c.outTag!)
+        if (sd && sd.max > sd.min) el.SP = sd.min + (clamp(v, 0, 100) / 100) * (sd.max - sd.min)
+        return
+      }
       if (c.outKind === 'pump') { if (el.SPD !== undefined) el.SPD = v }
       else if (el.OP !== undefined) el.OP = v
     }
@@ -1390,7 +1671,17 @@ function step(
      */
     const actual = el === undefined ? undefined
       : c.outKind === 'pump' ? (el.RAMP ?? 0) * 100
+      : c.outKind === 'cascade' ? t.OP          // a setpoint has no actuator of its own
       : el.POS ?? el.OP
+    /**
+     * K17: the cascade's own requested-versus-actual. The master ASKS for a
+     * setpoint, in the slave's units; the slave CARRIES one. They are the same
+     * number while the link is working and are still two different things.
+     */
+    const sd = c.outKind === 'cascade' && c.outTag !== undefined
+      ? defByName.get(c.outTag) : undefined
+    const commandedSp = sd && sd.max > sd.min && t.OP !== undefined
+      ? sd.min + (clamp(t.OP, 0, 100) / 100) * (sd.max - sd.min) : undefined
     const requested = c.outTag !== undefined ? t.OP : undefined
     loops[c.tag] = {
       tag: c.tag,
@@ -1405,6 +1696,12 @@ function step(
       tracking: requested !== undefined && actual !== undefined
         && Math.abs(requested - actual) > DEV_LIMIT,
       saturated: (t.SAT ?? 0) > 0 ? 1 : (t.SAT ?? 0) < 0 ? -1 : 0,
+      ...(c.cascadeTo !== undefined ? { cascadeTo: c.cascadeTo } : {}),
+      ...(c.cascadeFrom !== undefined ? { cascadeFrom: c.cascadeFrom } : {}),
+      ...(c.cascadeProblem !== undefined ? { cascadeProblem: c.cascadeProblem } : {}),
+      ...(commandedSp !== undefined ? { commandedSp } : {}),
+      ...(c.outKind === 'cascade' && c.outTag !== undefined && tags[c.outTag]?.SP !== undefined
+        ? { effectiveSp: tags[c.outTag]!.SP! } : {}),
     }
   }
   return { tags, branchFlows, pipePressures, hydraulic: hyd, loops }
