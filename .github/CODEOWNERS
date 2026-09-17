@@ -1,0 +1,11 @@
+# Code owners for IPD Studio.
+#
+# Every path is owned by the maintainer, so any pull request touching this
+# repository automatically requests a review from @Coldbari. That request is
+# what puts an outside contribution in the review queue instead of leaving it
+# to sit unseen, as PR #24 did for two weeks.
+#
+# GitHub never requests a review from the author of a pull request, so this
+# does not put the maintainer in the way of their own release PRs.
+
+* @Coldbari
