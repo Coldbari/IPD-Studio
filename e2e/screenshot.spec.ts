@@ -1,4 +1,4 @@
-import { test } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import fs from 'node:fs'
 import { openTemplate } from './helpers'
 
@@ -383,6 +383,9 @@ test('capture faceplate v2 and command journal', async ({ page }) => {
   await page.getByTestId('prop-controller').check()
   // run: tank faceplate first (bar + limit ticks + sparkline + alarm ack)
   await page.getByTestId('hmi-run-toggle').click()
+  // RUN opens on the operator OVERVIEW; the process screen is a nav click away
+  await page.getByTestId('op-nav-process').click()
+  await expect(canvas).toBeVisible()
   await page.waitForTimeout(1600)
   p = await world(800, 320)
   await page.mouse.click(p.x, p.y)

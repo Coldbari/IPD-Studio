@@ -103,20 +103,48 @@ test('31 / 32. both PDF paths render the controlled sheet', async ({ page }) => 
   // put IN the iframe — which is the controlled SVG.
   await page.evaluate(() => { window.print = () => {} })
 
+  /**
+   * WATCH FOR THE FRAME RATHER THAN POLLING FOR IT.
+   *
+   * Both print paths append a hidden iframe, write the controlled SVG into it,
+   * call `print()` and remove it again on `afterprint` — which in headless
+   * Chromium comes back almost at once. The frame therefore exists for about a
+   * tenth of a second, and a poll that happened to sample just after it had
+   * gone found nothing. That is what made this test fail intermittently, here
+   * and on CI.
+   *
+   * A MutationObserver installed BEFORE the click records what the product put
+   * in the frame, however briefly the frame lived. Same assertion, same
+   * content, no race.
+   */
+  await page.evaluate(() => {
+    const seen: string[] = []
+    ;(window as unknown as { __frames: string[] }).__frames = seen
+    new MutationObserver((muts) => {
+      for (const m of muts) {
+        for (const n of m.addedNodes) {
+          if (!(n instanceof HTMLIFrameElement)) continue
+          const grab = () => {
+            const html = n.contentDocument?.body?.innerHTML
+            if (html) seen.push(html)
+          }
+          grab()
+          setTimeout(grab, 0)
+          setTimeout(grab, 50)
+        }
+      }
+    }).observe(document.body, { childList: true, subtree: true })
+  })
+
   for (const label of ['PDF — this sheet', 'PDF — all sheets']) {
+    await page.evaluate(() => { (window as unknown as { __frames: string[] }).__frames.length = 0 })
     await page.getByTestId('tb-export').click()
     await page.getByRole('menuitem', { name: label, exact: true }).click()
-    await expect
-      .poll(async () => page.evaluate(() => {
-        const frames = [...document.querySelectorAll('iframe')]
-        return frames.some((f) => (f.contentDocument?.body?.innerHTML ?? '').includes('CHECKED AGAINST'))
-      }), { timeout: 5000 })
-      .toBe(true)
-    const text = await page.evaluate(() => {
-      const frames = [...document.querySelectorAll('iframe')]
-      const html = frames.map((f) => f.contentDocument?.body?.innerHTML ?? '').join(' ')
-      return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ')
-    })
+    const frameText = () => page.evaluate(() =>
+      (window as unknown as { __frames: string[] }).__frames
+        .join(' ').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' '))
+    await expect.poll(frameText, { timeout: 10_000 }).toContain('CHECKED AGAINST')
+    const text = await frameText()
     expect(text, label).toContain('2026-03-04')
     expect(text, label).toContain('IFC')
     expect(text, label).toContain('Issued for construction')

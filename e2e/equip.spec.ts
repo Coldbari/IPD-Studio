@@ -26,6 +26,12 @@ test('compressor: place, tag, start from faceplate, trip from events', async ({ 
   // run mode: click the equipment -> motor faceplate -> Start -> badge spins
   // (recompute coords: the alarm banner reshapes the canvas in run mode)
   await page.getByTestId('hmi-run-toggle').click()
+  // RUN opens the operator workstation on its OVERVIEW page — the process
+  // screen is one click away on the nav. That is the operator surface the
+  // K4/K9 work introduced; this test predates it and used to land straight on
+  // the drawing.
+  await page.getByTestId('op-nav-process').click()
+  await expect(canvas).toBeVisible()
   q = await world(352, 272)
   await page.mouse.click(q.x, q.y)
   await expect(page.getByTestId('faceplate')).toContainText('K-101')
