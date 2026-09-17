@@ -30,6 +30,8 @@ import { buildProcessView, processRoutes } from './sim/processView'
 import type { LoopState } from './sim/authority'
 import type { PumpEnvelope } from './sim/envelope'
 import { pumpEdgeMap, pumpEnvelopes } from './sim/envelope'
+import type { MinFlowProtection } from './sim/minflow'
+import { minFlowProtection } from './sim/minflow'
 
 /**
  * What the hydraulic solve managed this tick, published for the operator.
@@ -194,6 +196,15 @@ interface SimStoreState {
    * published so the faceplate and the diagnostics page read one answer.
    */
   loops: Record<string, LoopState>
+  /**
+   * WHAT THE MINIMUM-FLOW PROTECTION IS DOING — K18, per flow loop.
+   *
+   * A join of `loops` (the setpoint the controller was given and the one it
+   * controlled to) and `pumpEnvelopes` (the SIGNED flow the machine actually
+   * passed). Present only for a loop whose machine's record declares a
+   * minimum; absent IS `NOT_CONFIGURED`, and nothing is invented for it.
+   */
+  minFlow: Record<string, MinFlowProtection>
   /** What the hydraulic solve managed this tick. Read it before trusting
    *  anything above that came out of it. */
   hydraulic: HydraulicStatus
@@ -308,7 +319,7 @@ function supSets(shelved: Record<string, number>, oos: Record<string, true>, tag
 
 export const useSimStore = create<SimStoreState>()((set, get) => ({
   mode: 'edit', playing: false, speed: 1, t: 0,
-  tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, pumpEnvelopes: {}, loops: {}, controllers: [], hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {},
+  tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, pumpEnvelopes: {}, loops: {}, minFlow: {}, controllers: [], hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {},
 
   enterRun: (screens, registry, fluids) => {
     model = buildSimModel(screens, registry)
@@ -319,7 +330,7 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
     const tags0 = initTags(model)
     // a fresh History per run: a new identity is how React learns the old
     // trend data is gone, and nothing from the previous run can leak forward
-    set({ mode: 'run', playing: true, t: 0, tags: tags0, defs: tagDefMap(model.defs), quality: qualityMap(model, tags0, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, ...(() => { const pv = buildProcessView(model.hydraulic, model.defs, model.controllers, fluids ?? []); return { processView: pv, routes: processRoutes(pv) } })(), equipFlows: {}, pumpEnvelopes: {}, loops: {}, controllers: model.controllers, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, scenarioProblems: [],
+    set({ mode: 'run', playing: true, t: 0, tags: tags0, defs: tagDefMap(model.defs), quality: qualityMap(model, tags0, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, ...(() => { const pv = buildProcessView(model.hydraulic, model.defs, model.controllers, fluids ?? []); return { processView: pv, routes: processRoutes(pv) } })(), equipFlows: {}, pumpEnvelopes: {}, loops: {}, minFlow: {}, controllers: model.controllers, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, scenarioProblems: [],
       terminals: Object.fromEntries(terminalPressures(model.hydraulic, null)),
       terminalSpec: Object.fromEntries(model.hydraulic.nodes
         .filter((n) => n.kind === 'boundary' && n.tag !== undefined)
@@ -337,7 +348,7 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
     warm = undefined
     lastSolve = undefined
     pumpEdges = new Map()
-    set({ mode: 'edit', playing: false, t: 0, tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, pumpEnvelopes: {}, loops: {}, controllers: [], hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {} })
+    set({ mode: 'edit', playing: false, t: 0, tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, pumpEnvelopes: {}, loops: {}, minFlow: {}, controllers: [], hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {} })
   },
   playPause: () => set((s) => ({ playing: !s.playing })),
   setSpeed: (speed) => set({ speed }),
@@ -347,7 +358,7 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
     warm = undefined // RESET puts the plant back to its start: solve it afresh
     lastSolve = undefined
     const fresh = initTags(model)
-    set({ t: 0, tags: fresh, quality: qualityMap(model, fresh, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, equipFlows: {}, pumpEnvelopes: {}, loops: {}, controllers: model.controllers, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], playing: true,
+    set({ t: 0, tags: fresh, quality: qualityMap(model, fresh, {}), pipeFlows: {}, pipePressures: {}, branchFlows: {}, equipFlows: {}, pumpEnvelopes: {}, loops: {}, minFlow: {}, controllers: model.controllers, hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], playing: true,
       // RESET returns the plant to its engineering state, scenario included:
       // it is part of "where this run started", not part of the drawing
       scenario: null, scenarioProblems: [],
@@ -471,7 +482,7 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
       })
     set({
       t, tags, quality, pipeFlows: hyd.pipeFlow, pipePressures, branchFlows, equipFlows,
-      pumpEnvelopes: envelopes, loops,
+      pumpEnvelopes: envelopes, loops, minFlow: minFlowProtection(loops, envelopes),
       hydraulic, alarms, journal, historyVersion: s.history.version, shelved,
       ...(terminalsChanged ? { terminals: Object.fromEntries(resolved) } : {}),
     })

@@ -3229,3 +3229,276 @@ tsc -b clean · production build clean
   first — the same one-tick relationship every other controller input has.
 - Carried: PI not PID, no output rate limit, no protective action, no
   minimum-flow protection, no manufacturer data.
+
+---
+
+## K18 — minimum-flow protection
+
+```text
+PIC-1 ─► requested FIC SP ─► MIN-FLOW OVERRIDE ─► effective FIC SP
+  ─► FIC-1 ─► P-101.SPD ─► shaft ─► pump curve ─► solve ─► FT ─► next tick
+```
+
+The protective action K13 wrote down and refused. K13 kept three things apart —
+the hydraulic operating point (the solve's), the engineering envelope (the
+record's) and what the plant DOES about a violation — and shipped the first two.
+K18 is the third, and only the part of it the record can support.
+
+### The whole algorithm
+
+```text
+effective = max(requested, duty.minFlow)
+```
+
+One line, in the controller stage, applied to the setpoint the ALGORITHM uses
+and never written back to `SP`. There is no second PI loop, no integrator, no
+gain, no hysteresis, no deadband, no rate limit, no trip and no recirculation.
+A constraint on a setpoint needs none of them, and each one would have been a
+number this phase invented.
+
+Three consequences follow from writing it as a `max` rather than as a switch
+between two control laws:
+
+- **It cannot chatter.** `max` of two continuous quantities is continuous, so at
+  the crossing the effective setpoint is already equal to the limit. Nothing
+  jumps, so nothing needs a hysteresis width chosen for it.
+- **It has no state.** Two identical ticks give two identical answers, from any
+  history. There is no second clock and nothing to initialise.
+- **It reads no measurement.** The override is decided from the requested
+  setpoint and the engineering record alone, so it cannot look ahead and cannot
+  be confused by a bad reading.
+
+### Which loop carries it
+
+The one that **measures flow** and **drives the machine**. Both halves are
+load-bearing:
+
+| | |
+|---|---|
+| drives the machine | the protection's job is to stop *that* machine being commanded below its minimum, and the driving loop owns the only setpoint in the path |
+| measures flow | the limit is a flow. A pressure loop on the same drive has a setpoint in bar, and `max(3.2 bar, 20 m³/h)` is not arithmetic |
+
+Nothing is inferred. The machine is the one `wireFlowPumps` already linked in
+K15 from the topology; the limit is that machine's own `duty.minFlow`. Both are
+static, so `wireMinFlow` decides them once at build time — **after**
+`resolveContention`, because two loops fighting over one drive are both unwired
+and an unwired loop protects nothing.
+
+### Engineering data, and the refusals
+
+`duty.minFlow` is read and never derived. `TagDef.minFlowM3h` is the one field
+in this model that falls back to *nothing* rather than to a default, and that
+has not changed: **absent is not zero**, and with none declared the protection
+does not exist for that loop.
+
+Two declarations are refused rather than approximated:
+
+- **A machine with no drive.** K15 will not wire it, so there is no setpoint
+  path to protect. `NOT_CONFIGURED`.
+- **A loop ranged in other units.** A flow tag nobody has given units inherits
+  `UNITS.flow`, which *is* m³/h — so this guards a record that states something
+  else. There is no unit conversion for controller ranges anywhere in this
+  product, and applying a number in m³/h to a setpoint in L/s is exactly the
+  invented engineering the programme exists to avoid. The loop runs unprotected
+  and `min-flow-not-configured` says so, as INFO.
+
+### Five states, and why a demand is not a result
+
+```text
+NOT_CONFIGURED  no minimum on the record, or one this loop cannot be held to
+INACTIVE        a minimum exists and the setpoint already respects it
+ACTIVE          the setpoint is raised, and the solve cannot say what came of it
+EFFECTIVE       the setpoint is raised, and the machine IS passing the minimum
+UNABLE          the setpoint is raised, and the machine is NOT
+```
+
+Raising a setpoint asks the plant for flow. It does not make any. A stopped
+machine, a tripped one, a dead-headed one and one running backwards are all
+`UNABLE`, and none may ever read `EFFECTIVE` because the setpoint was raised.
+The faceplate keeps the four numbers apart for the same reason:
+
+```text
+Min flow             20.0 m³/h     what the record requires
+Requested SP         12.0 m³/h     what the loop was asked for
+Effective SP         20.0 m³/h     what it is controlling to
+Actual flow           7.3 m³/h     what the machine is passing
+Min-flow protection  UNABLE
+```
+
+### Signed, and read from one place
+
+"What is this machine passing?" is answered by K13's `PumpEnvelope.flowM3h` —
+the signed flow through the pump's own edge — and is not asked a second time.
+Two modules deriving one fact are two modules that can disagree about it. So no
+`Math.abs` stands between the solve and the verdict, and reverse flow cannot
+satisfy a positive minimum because the number is negative. The FT beside it
+reads a **magnitude** — an orifice plate does not know which way round it was
+installed — which is precisely why the protection is not judged on it.
+
+### The master, and the stop it must not integrate through
+
+A cascade master whose request is being overridden has stopped reaching the
+process *in the downward direction*: it can ask for less and less, and the
+plant will keep making the minimum. Left alone it winds to its bottom stop and
+then needs the whole of that travel back before anything responds.
+
+**No new anti-windup mechanism was written.** The existing conditional
+integration already asks the right question — *is the output against a stop
+that the error is pushing it further into?* — and the only thing K18 changes is
+WHICH stop:
+
+```text
+before   if (!((op >= hi && e > 0) || (op <= lo   && e < 0))) integrate
+after    if (!((op >= hi && e > 0) || (op <= stop && e < 0))) integrate
+         stop = max(lo, minFlowFloorPct)      and with no floor, stop === lo
+```
+
+`minFlowFloorPct` is the slave's configured range run backwards — the inverse
+of the map `drive()` applies — so nothing is invented for it. The output itself
+is **not** clamped to the floor: `op` stays the master's genuine request, which
+is what keeps `commandedSp` and `effectiveSp` two different readable numbers.
+
+Measured on the K18 fixture (slave 0–60 m³/h, minimum 20, floor therefore
+33.3 %), wound up at SP 2.8 bar and then asked for 2.2:
+
+| | with the floor | K17 baseline, no minimum |
+|---|---|---|
+| where the integrator came to rest | **I 34.0, OP 33.0** | I 23.5, OP 23.5 |
+| what the master was asking for | **19.8 m³/h** | 14.1 m³/h |
+| ticks to become useful again on a step up | **0** | 38 |
+
+Both plants end at the same flow. The floor changes the transient, not the
+destination.
+
+### MANUAL — the policy, and why it was not a choice
+
+**The protection acts on the setpoint. In MANUAL this runtime does not use the
+setpoint** — the operator's `OP` goes to the element and the algorithm does not
+run — so a setpoint override has nothing to act on and does not act. It is not
+"bypassed by policy"; it has no path. Making it act in MANUAL would mean
+overriding the operator's *output* instead, which is a different mechanism, is
+not what a setpoint override is, and would silently reinterpret a hand command.
+
+One line still uses the effective setpoint in MANUAL, and must: the bumpless
+transfer tracking, `I = OP − kp·e`, has to track against the setpoint AUTO will
+resume on. Tracking the requested value and then controlling to the protected
+one would kick the output by `kp·(20−12)/60·100 = 13.3 %` on transfer — which
+is the one thing that line exists to prevent. Measured, the transfer moves less
+than 2 %, and that residue is one tick of transmitter noise.
+
+Throughout MANUAL, K13's `pump-below-min-flow` goes on reporting the physical
+condition from the machine's end.
+
+### Timing
+
+| | |
+|---|---|
+| the OVERRIDE evaluates | the requested setpoint and the declared limit, in the controller stage, before the solve — no measurement at all |
+| the STATE evaluates | the signed solved flow of the tick that has just finished, the same instant `loops` and `pumpEnvelopes` describe |
+
+The state is a report and never an input: there is no path by which it reaches
+a controller. No stage was added to `step()`, and no clock.
+
+### The chatter that is real, and what was NOT invented for it
+
+A loop held exactly *on* its minimum sits on it, which means half the time it
+is a hair under. Measured on the K15 fixture at a declared minimum of 20 m³/h:
+
+```text
+mean 19.998    range 19.66 – 20.38    state crosses 140 times in 200 s
+K13's envelope crosses in exact lockstep — same signed flow, same limit,
+same test — so this is a property K18 made REACHABLE, not one it introduced
+```
+
+No hysteresis was chosen, and the override needs none — it does not chatter at
+all. What the **warning** is gated on instead is a fact the runtime already
+publishes: `SAT`. A loop that has asked for everything and still cannot get
+there is saturated at its top stop; a loop oscillating on setpoint is not
+saturated at all. Measured on the same fixture: dead-headed `SAT = +1`; asked
+for more than the plant can make `SAT = +1`; controlling at the limit `SAT = 0`
+throughout. That is a reuse of K14's published saturation, not a threshold.
+
+A STATE that does not chatter would need a deadband or an on-delay. **Choosing
+its width is a control-design decision this phase deliberately does not make**
+— see the limitations below.
+
+### Diagnostics
+
+| finding | severity | when |
+|---|---|---|
+| `min-flow-not-configured` | info | a declared limit this loop cannot be held to |
+| `min-flow-active` | info | the demand stands, the solve cannot report the outcome |
+| `min-flow-effective` | — | no diagnostic: a protection doing its job is not a finding |
+| `min-flow-unable` | warning | demanding the minimum, and the loop has run out of machine |
+
+`NOT_CONFIGURED` emits nothing where K13 already emits `pump-min-flow-unknown`:
+a second row for one gap is how two lists that must agree start to drift. A
+machine at rest emits nothing either — K16 clears `SAT` when a loop has no
+authority, so a stopped pump cannot raise this warning, which is the right
+answer twice over.
+
+`UNABLE` is a warning and not an alarm. No engineering alarm policy in this
+product says a machine below its minimum flow is critical, and K13's
+`pump-below-min-flow` — the same physical fact seen from the machine — is a
+warning too.
+
+### Two existing tests corrected
+
+`tests/hmi/flowControl.test.ts` asserted the ABSENCE of exactly this feature,
+and was right to: K13 §1 says protection is not that phase, and K15 must not
+have quietly added it.
+
+```text
+OLD  FIC-1 asked for 12 m³/h against a stated minimum of 20, delivered 12,
+     and K13 reported BELOW MINIMUM FLOW
+NEW  the same loop is held at 20, and K13 reports NORMAL
+PHYSICAL REASON  nothing about the hydraulics, the pump curve or the envelope
+     changed. The envelope is reporting a DIFFERENT OPERATING POINT, because
+     the machine is genuinely being run at 20 m³/h instead of 12
+```
+
+Both still guarantee what mattered about them: nothing trips, nothing
+throttles, no recirculation is invented, the mode is not touched, the
+operator's own setpoint is not overwritten — and the third test in that block,
+unchanged and still passing, says a machine with no stated minimum gets no
+constraint manufactured for it.
+
+### Three of my own tests were wrong
+
+The instructive one was the master's anti-windup. It drove the master hard down
+and asserted the integrator was held. It **was** held — at zero — but the floor
+had nothing to do with it: the master was slammed onto its own output stop and
+K14's existing `op <= lo && e < 0` had already frozen it. *A test that passes
+with the feature removed is not a test of the feature.* The floor only bites in
+the band the output stop cannot reach, and getting there needs the master wound
+up first and then asked for less.
+
+### Gate
+
+```text
+3696 tests passing · 7 skipped · 0 failing      (+43)
+tsc -b clean · production build clean
+209 Playwright passing · 16 skipped · 0 failing
+```
+
+### Limitations
+
+- **The STATE chatters when a loop controls exactly at its minimum**, and K13's
+  envelope chatters with it. Measured and written down above. The WARNING does
+  not. Giving the state ISA-18.2 deadband or an on-delay is a real control
+  design decision with a width attached, and no width was invented here.
+- **One limit, one direction.** `duty.minFlow` only. No maximum flow, no
+  minimum continuous stable flow separate from thermal minimum, no time-at-low-
+  flow accumulation.
+- **No recirculation.** Nothing in the engineering record describes a
+  controllable spillback path, so none was invented — which means a machine
+  whose only real protection would be recirculation reads `UNABLE`, correctly.
+- **No trip.** A minimum-flow trip is real equipment with a setting and a time
+  delay, and neither is on any record here. Unchanged from K13.
+- **Flow loops in m³/h only**, because there is no unit conversion for
+  controller ranges. Refused explicitly rather than approximated.
+- **The protection is not a mode.** There is no runtime enable/disable, because
+  a declared minimum is a property of the machine and not of the shift.
+- Carried: PI not PID, no output rate limit, one cascade topology (K17), no
+  manufacturer data, no scenario library (K9), pressure-only boundary dynamics
+  (K10), mixing unsupported (K5).

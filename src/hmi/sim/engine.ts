@@ -15,6 +15,7 @@ import { solveHydraulics } from './hydraulic/solver'
 import type { ProcessFault } from './quality'
 import type { ControlAuthority, LoopState } from './authority'
 import { authorityOf } from './authority'
+import type { MinFlowDemand } from './minflow'
 import { BOUNDS, DEFAULTS, SECONDS_PER_HOUR, clamp, volumeMoved } from './units'
 import { pipeTemperatures, tankPressureBar, tankTempRate } from './process'
 
@@ -49,6 +50,28 @@ export interface ControllerSpec {
   cascadeTo?: string
   cascadeFrom?: string
   cascadeProblem?: string
+  /**
+   * MINIMUM-FLOW PROTECTION — K18. All three are STATIC: they come from the
+   * wiring and the engineering records, neither of which changes while the
+   * plant runs, so `wireMinFlow` decides them once and the tick only applies
+   * them.
+   *
+   * `minFlow` is the declared minimum, in THIS loop's own setpoint units, on a
+   * FLOW loop that drives a machine whose record states one. It is the floor
+   * the setpoint is raised to and nothing else: no controller, no gain, no
+   * hysteresis. See `sim/minflow.ts`.
+   *
+   * `minFlowFloorPct` is that same floor expressed on a CASCADE MASTER's
+   * output scale — the inverse of the map `drive()` applies — so the master
+   * can stop integrating against a request that is not being applied.
+   *
+   * `minFlowProblem` is a DECLARED minimum that could not be applied to this
+   * loop. Like `cascadeProblem`, a refusal is carried rather than silently
+   * turned into an approximation.
+   */
+  minFlow?: number
+  minFlowFloorPct?: number
+  minFlowProblem?: string
   /**
    * OUTPUT RANGE, per cent. Defaults 0 and 100, which is every loop that
    * existed before K14 and is what a valve's travel is.
@@ -346,9 +369,18 @@ export function buildSimModel(screens: HmiScreen | HmiScreen[], registry?: Regis
    * cascade. Order decides when the link is made; the skip decides that the
    * master can never be the drive's writer.
    */
-  const controllers = resolveContention(wireCascade(
+  /**
+   * MINIMUM-FLOW LAST — K18, and for the same kind of reason cascade is.
+   *
+   * The protection belongs to whichever loop ends up driving the machine, and
+   * `resolveContention` can still take that drive away: two loops fighting
+   * over one `SPD` are BOTH unwired, and an unwired loop protects nothing. So
+   * the pass that reads the records runs after the pass that decides who is
+   * actually driving.
+   */
+  const controllers = wireMinFlow(resolveContention(wireCascade(
     wireFlowPumps(wirePumps(wireHeaters(wireControllers(defs), defs, net), defs, hydraulic),
-      defs, hydraulic), defs))
+      defs, hydraulic), defs)), defs)
     .map((c) => {
       const pvDef = defs.find((d) => d.name === c.pvTag)
       const driver = pvDef
@@ -883,6 +915,86 @@ function cascadeProblem(
 }
 
 /**
+ * Flow units a `duty.minFlow` in m³/h can be compared against directly.
+ *
+ * A flow tag nobody has given units inherits `UNITS.flow`, which IS m³/h, so
+ * this is a guard against a record that states something else rather than a
+ * restriction on ordinary drawings. There is no unit conversion for controller
+ * RANGES anywhere in this product, and applying a number in m³/h to a setpoint
+ * in L/s would be exactly the invented engineering this programme exists to
+ * avoid — so the protection refuses the loop and says why.
+ */
+const MIN_FLOW_UNITS = new Set(['m³/h', 'm3/h'])
+
+/**
+ * MINIMUM-FLOW PROTECTION — K18: which loop carries it, and what floor it puts
+ * under a master.
+ *
+ * ── WHICH LOOP ────────────────────────────────────────────────────────────
+ *
+ * The one that MEASURES FLOW and DRIVES THE MACHINE. Both halves are load-
+ * bearing. It has to drive the machine because the protection's whole job is
+ * to stop that machine being commanded below its minimum, and the driving loop
+ * is the only thing with a setpoint in the path. It has to measure flow
+ * because the limit is a flow and a setpoint is only comparable with it if it
+ * is in the same quantity: a pressure loop driving the same drive has a
+ * setpoint in bar, and `max(3.2 bar, 20 m³/h)` is not arithmetic, it is
+ * nonsense.
+ *
+ * Nothing is inferred. The machine is the one this loop already drives —
+ * `wireFlowPumps` established that link from the topology in K15 — and the
+ * limit is that machine's own `duty.minFlow`. No second opinion is formed
+ * about which pump a limit belongs to.
+ *
+ * ── AND THE FLOOR UNDER ITS MASTER ────────────────────────────────────────
+ *
+ * A cascade master's output is scaled onto the slave's configured setpoint
+ * range by `drive()`. The floor is that map run backwards: the percentage at
+ * which the master would be asking for exactly the minimum. It is used for ONE
+ * thing — deciding whether the integrator may keep winding down — and never to
+ * clamp the master's output, because the master's request has to stay
+ * observable for §8's requested-versus-effective distinction to mean anything.
+ *
+ * A floor at or below the bottom of the master's travel is not a stop at all
+ * and is not carried, so the ordinary path stays byte-for-byte the ordinary
+ * path.
+ */
+function wireMinFlow(controllers: ControllerSpec[], defs: TagDef[]): ControllerSpec[] {
+  const byTag = new Map(defs.map((d) => [d.name, d]))
+  const protectedLoops = controllers.map((c) => {
+    if (c.outKind !== 'pump' || c.outTag === undefined) return c
+    const cd = byTag.get(c.tag)
+    if (cd?.measures !== 'flow') return c
+    /**
+     * READ, NEVER DERIVED. `TagDef.minFlowM3h` is the one field in this model
+     * that falls back to nothing rather than to a default — see its own note —
+     * and absent here means the record states no minimum, which is a complete
+     * answer and not a gap to fill.
+     */
+    const limit = byTag.get(c.outTag)?.minFlowM3h
+    if (limit === undefined || !Number.isFinite(limit)) return c
+    const unit = cd.unit?.trim().toLowerCase()
+    if (unit !== undefined && !MIN_FLOW_UNITS.has(unit)) {
+      return { ...c, minFlowProblem: `the limit is stated in m³/h and ${c.tag} is ranged in `
+        + `${cd.unit}, which this model converts nothing between.` }
+    }
+    return { ...c, minFlow: limit }
+  })
+
+  if (!protectedLoops.some((c) => c.minFlow !== undefined)) return protectedLoops
+  const byCtl = new Map(protectedLoops.map((c) => [c.tag, c]))
+  return protectedLoops.map((c) => {
+    if (c.outKind !== 'cascade' || c.outTag === undefined) return c
+    const slave = byCtl.get(c.outTag)
+    const sd = byTag.get(c.outTag)
+    if (slave?.minFlow === undefined || sd === undefined || !(sd.max > sd.min)) return c
+    const pct = ((slave.minFlow - sd.min) / (sd.max - sd.min)) * 100
+    if (!(pct > (c.outMin ?? 0))) return c
+    return { ...c, minFlowFloorPct: clamp(pct, 0, 100) }
+  })
+}
+
+/**
  * The output range this loop may use.
  *
  * Only a speed loop has one that is not 0-100. Its ceiling is 100 % because
@@ -1321,6 +1433,16 @@ function step(
    * the ones the tick actually finished with.
    */
   const verdict = new Map<string, { authority: ControlAuthority; blockedBy?: string }>()
+  /**
+   * WHAT THE MINIMUM-FLOW PROTECTION DID TO EACH SETPOINT — K18.
+   *
+   * Recorded here, where the override is applied, and published at the END of
+   * the step with everything else the tick decided. A master reads its slave's
+   * entry from this map: masters run first, so by the time the snapshot is
+   * built the slave has already run and its effective setpoint is the one that
+   * was actually in force this tick.
+   */
+  const demands = new Map<string, MinFlowDemand>()
   for (const c of model.controllers) {
     const t = tags[c.tag]
     if (!t) continue
@@ -1411,13 +1533,68 @@ function step(
       else if (el.OP !== undefined) el.OP = v
     }
 
+    /**
+     * MINIMUM-FLOW PROTECTION — K18. THE ENTIRE OVERRIDE IS THIS LINE.
+     *
+     *     effective = max(requested, declared minimum)
+     *
+     * A constraint on the setpoint, evaluated from the setpoint and the record
+     * alone. It reads no measurement, so it cannot look ahead and cannot be
+     * confused by a bad one; it is continuous in the requested setpoint, so
+     * there is nothing for a threshold to chatter on and no hysteresis had to
+     * be invented; and it has no state, so two identical ticks produce two
+     * identical answers.
+     *
+     * It is applied to the setpoint the ALGORITHM uses and never written back
+     * to `SP`. That matters twice over: an operator's own entry is not
+     * destroyed — K15's rule — and a master's request stays visible beside the
+     * protected value it is being held to, which is what §5 asks for.
+     *
+     * `c.minFlow` is only ever set on a FLOW loop driving a machine whose
+     * record declares a minimum, so with none declared `effSp` IS `t.SP` and
+     * every path below is the path K14, K15 and K17 already took.
+     */
+    const effSp = c.minFlow !== undefined && t.SP !== undefined
+      ? Math.max(t.SP, c.minFlow) : t.SP
+    if (c.minFlow !== undefined || c.minFlowProblem !== undefined) {
+      demands.set(c.tag, {
+        pump: c.outTag,
+        ...(c.minFlow !== undefined ? { limitM3h: c.minFlow } : {}),
+        ...(c.minFlowProblem !== undefined ? { problem: c.minFlowProblem } : {}),
+        ...(t.SP !== undefined ? { requestedSp: t.SP } : {}),
+        ...(effSp !== undefined ? { effectiveSp: effSp } : {}),
+        overriding: t.SP !== undefined && effSp !== undefined && effSp > t.SP,
+      })
+    }
+
     if ((t.MODE ?? 0) < 0.5) {
       drive(clamp(t.OP ?? 0, lo, hi))
       // bumpless transfer: keep the integrator tracking the operator's OP
       // (I = OP − kp·e) so returning to AUTO resumes from here, no kick. With
       // no setpoint there is no error to track, so the integrator simply holds
       // the operator's output.
-      t.I = clamp((t.OP ?? 0) - (t.SP === undefined ? 0 : tune.kp * errorOf(t.SP)), -100, 100)
+      /**
+       * MANUAL AND THE PROTECTION — K18, the explicit policy.
+       *
+       * The protection acts on the SETPOINT, and in MANUAL this runtime does
+       * not use the setpoint: the operator's `OP` goes to the element and the
+       * algorithm does not run. There is therefore nothing for a setpoint
+       * override to act on, and it does not act — it is not "bypassed by
+       * policy", it has no path. Making it act in MANUAL would mean overriding
+       * the operator's OUTPUT instead, which is a different mechanism, is not
+       * what §4 defines, and would silently reinterpret a hand command.
+       *
+       * The one place the effective setpoint is still used here is the line
+       * below, and it must be: this is the bumpless-transfer tracking, and it
+       * has to track against the setpoint AUTO will resume on. Tracking the
+       * requested value and then controlling to the protected one would put a
+       * kick in the transfer — which is the single thing this line exists to
+       * prevent.
+       *
+       * K13's `pump-below-min-flow` continues to report the physical condition
+       * throughout, from the machine rather than from the loop.
+       */
+      t.I = clamp((t.OP ?? 0) - (effSp === undefined ? 0 : tune.kp * errorOf(effSp)), -100, 100)
       t.SAT = 0
       continue
     }
@@ -1430,7 +1607,7 @@ function step(
      * loop with nothing to aim at holds its output, and the faceplate says the
      * setpoint is unavailable rather than showing a figure nobody set.
      */
-    if (t.SP === undefined) { t.SAT = 0; drive(clamp(t.OP ?? 0, lo, hi)); continue }
+    if (effSp === undefined) { t.SAT = 0; drive(clamp(t.OP ?? 0, lo, hi)); continue }
     /**
      * NO AUTHORITY, NO INTEGRATION — K16.
      *
@@ -1454,12 +1631,36 @@ function step(
       drive(clamp(t.OP ?? 0, lo, hi))
       continue
     }
-    const e = errorOf(t.SP)
+    const e = errorOf(effSp)
     // conditional integration (anti-windup): freeze I while the output is
     // saturated in the error's direction, else overshoot on big transitions
     let I = t.I ?? 0
     let op = clamp(tune.kp * e + I, lo, hi)
-    if (!((op >= hi && e > 0) || (op <= lo && e < 0))) {
+    /**
+     * A MASTER MUST NOT INTEGRATE AGAINST A REQUEST NOBODY IS APPLYING — K18.
+     *
+     * When the minimum-flow protection is holding the slave's setpoint above
+     * what this master asked for, the master's output has stopped reaching the
+     * process in the downward direction: it can ask for less and less and the
+     * plant will keep making the minimum. Left alone it would wind all the way
+     * to its bottom stop and then need the whole of that travel back before
+     * the plant responded again.
+     *
+     * NO NEW MECHANISM. The existing anti-windup already asks exactly the
+     * right question — "is the output against a stop that the error is pushing
+     * it further into?" — and the only thing K18 changes is WHICH stop. The
+     * configured bottom of the travel is one; the minimum-flow floor, the same
+     * number expressed on this master's output scale, is another. Both are
+     * places the output cannot usefully go below, and the predicate is
+     * unchanged in every other respect.
+     *
+     * The output itself is NOT clamped to the floor. `op` remains the master's
+     * genuine request, so `commandedSp` keeps saying what the master wanted
+     * while `effectiveSp` says what the slave is carrying — and an operator can
+     * see the override rather than infer it. With no floor, `stop` IS `lo`.
+     */
+    const stop = c.minFlowFloorPct !== undefined ? Math.max(lo, c.minFlowFloorPct) : lo
+    if (!((op >= hi && e > 0) || (op <= stop && e < 0))) {
       I = clamp(I + ki * e * dt, -100, 100)
       op = clamp(tune.kp * e + I, lo, hi)
     }
@@ -1700,8 +1901,23 @@ function step(
       ...(c.cascadeFrom !== undefined ? { cascadeFrom: c.cascadeFrom } : {}),
       ...(c.cascadeProblem !== undefined ? { cascadeProblem: c.cascadeProblem } : {}),
       ...(commandedSp !== undefined ? { commandedSp } : {}),
-      ...(c.outKind === 'cascade' && c.outTag !== undefined && tags[c.outTag]?.SP !== undefined
-        ? { effectiveSp: tags[c.outTag]!.SP! } : {}),
+      /**
+       * THE SETPOINT THE SLAVE IS ACTUALLY CARRYING.
+       *
+       * `SP` is what the master wrote. Where the minimum-flow protection has
+       * raised it, the slave controlled to the raised value and THAT is the
+       * setpoint in force — which is precisely what this field has always
+       * claimed to be, and what lets a master's plate show 12 asked for beside
+       * 20 being held without either number being invented. The slave ran
+       * earlier in this same tick, so its entry is this tick's.
+       */
+      ...(c.outKind === 'cascade' && c.outTag !== undefined
+        ? (() => {
+            const sp = demands.get(c.outTag)?.effectiveSp ?? tags[c.outTag]?.SP
+            return sp !== undefined ? { effectiveSp: sp } : {}
+          })()
+        : {}),
+      ...(demands.get(c.tag) !== undefined ? { minFlow: demands.get(c.tag)! } : {}),
     }
   }
   return { tags, branchFlows, pipePressures, hydraulic: hyd, loops }

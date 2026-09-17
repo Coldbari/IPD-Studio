@@ -14,6 +14,7 @@ import { diagnosticsFor, CATEGORY_LABEL, DIAGNOSTIC_CATEGORIES, SEVERITY_LABEL }
 import { scenarioFindings } from '../sim/scenario'
 import { envelopeFindings } from '../sim/envelope'
 import { loopFindings } from '../sim/authority'
+import { minFlowFindings } from '../sim/minflow'
 import type { DiagnosticCategory, DiagnosticFinding, DiagnosticReport, DiagnosticSeverity } from '../../model/diagnostics'
 import { locateHmi } from '../locate'
 
@@ -92,7 +93,19 @@ export default function DiagnosticsPage({ onJumpTag }: { onJumpTag(tag: string):
    * wrong. A loop with no authority is a statement about the plant as it
    * stands this second, and it changes the moment somebody starts a pump.
    */
-  const loops = loopFindings(useSimStore((st) => st.loops))
+  /**
+   * K18: minimum-flow protection, in the SAME section as the loops above.
+   *
+   * It is a control-loop condition — a setpoint being held somewhere the
+   * operator did not put it — so it belongs beside the other things this
+   * product says about control loops rather than in a section of its own. On
+   * LIVE for the same reason they are: nothing about the records is wrong.
+   */
+  const loops = [
+    ...loopFindings(useSimStore((st) => st.loops)),
+    ...minFlowFindings(useSimStore((st) => st.minFlow)),
+  ].sort((a, b) => a.tag.localeCompare(b.tag, undefined, { numeric: true })
+    || a.id.localeCompare(b.id))
   const tags = useSimStore((s) => s.tags)
   const defs = useSimStore((s) => s.defs)
   const quality = useSimStore((s) => s.quality)

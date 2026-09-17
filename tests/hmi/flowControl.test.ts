@@ -413,26 +413,62 @@ describe('K, L — running out of machine, in both directions', () => {
 
 // ── M. The envelope is not suppressed ───────────────────────────────────────
 
-describe('M — K13 still reports what K15 causes', () => {
-  it('a controller holding the machine below its stated minimum flow is not excused', () => {
+/**
+ * CORRECTED AT K18 — the two tests below asserted the ABSENCE of the thing
+ * K18 was commissioned to build, and both had to change with it.
+ *
+ *   OLD: FIC-1 asked for 12 m³/h against a stated minimum of 20, the loop
+ *        delivered 12, and K13 reported BELOW MINIMUM FLOW. They asserted
+ *        exactly that, and they were right to: K13 §1 says protection is
+ *        deliberately not that phase, and K15 must not have quietly added it.
+ *   NEW: the same loop is held at 20. K18's override raises the setpoint the
+ *        ALGORITHM controls to, the plant makes it, and K13 reports NORMAL.
+ *   PHYSICAL REASON: nothing about the hydraulics, the pump curve or the
+ *        envelope changed — the envelope is reporting a DIFFERENT OPERATING
+ *        POINT, because the machine is genuinely being run at 20 m³/h now
+ *        instead of 12. The old numbers described a plant nobody was
+ *        protecting; asserting them after K18 would be asserting that the
+ *        protection does not work.
+ *
+ * What both tests still guarantee is what mattered about them in the first
+ * place: the protection acts on the COMMAND and on nothing else. Nothing
+ * trips, nothing throttles, no recirculation is invented, the mode is not
+ * touched, the operator's own setpoint is not overwritten, and — the third
+ * test below, unchanged and still passing — a machine with no stated minimum
+ * gets no constraint manufactured for it.
+ */
+describe('M — K13 reports the operating point, K18 commands it', () => {
+  it('a controller asked for less than the stated minimum is held AT the minimum', () => {
     start(reg({ 'duty.minFlow': '20 m³/h' }))
     lineUp(12); advance(500)
     const e = sim().pumpEnvelopes['P-1']!
-    expect(e.flowM3h!).toBeLessThan(20)
-    expect(e.state).toBe('BELOW MINIMUM FLOW')
-    // the loop caused it, is still in AUTO, and nothing backed off to hide it
+    expect(e.flowM3h!).toBeGreaterThanOrEqual(20)
+    expect(e.state).toBe('NORMAL')
+    expect(Math.abs(settledAt() - 20)).toBeLessThan(NOISE_BAND)
+    // the loop is still in AUTO and still the only writer of the drive
     expect(fic().MODE).toBe(1)
     expect(pump().SPD).toBeCloseTo(fic().OP!, 9)
-    expect(Math.abs(settledAt() - 12)).toBeLessThan(NOISE_BAND)
+    // AND THE OPERATOR'S OWN ENTRY SURVIVED. The override is applied to the
+    // setpoint the algorithm uses, never written back over what was typed.
+    expect(fic().SP).toBe(12)
+    // the COMMAND side, which is deterministic. The STATE is deliberately not
+    // asserted here: a loop controlling exactly ON its minimum crosses it with
+    // every noisy sample, so EFFECTIVE and UNABLE both occur — see the K18
+    // tests, which measure that and explain why no hysteresis was invented for
+    // it.
+    expect(sim().minFlow['FIC-1']).toMatchObject({
+      limitM3h: 20, requestedSp: 12, effectiveSp: 20, overriding: true,
+    })
   })
 
   it('and nothing trips, throttles or recirculates', () => {
     start(reg({ 'duty.minFlow': '20 m³/h' }))
     lineUp(12); advance(600)
-    expect(sim().pumpEnvelopes['P-1']!.state).toBe('BELOW MINIMUM FLOW')
     expect(pump().RUN).toBe(1)
     expect(pump().FAULT ?? 0).toBe(0)
     expect(sim().tags['HV-9']!.OP).toBe(100)
+    // the ONE thing that moved is the setpoint the algorithm controls to
+    expect(sim().minFlow['FIC-1']!.effectiveSp).toBe(20)
   })
 
   it('and with NO minimum stated the controller manufactures no constraint', () => {

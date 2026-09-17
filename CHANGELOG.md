@@ -6,6 +6,49 @@ All notable changes to IPD Studio. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Minimum-flow protection.** A pump whose engineering record declares
+  `duty.minFlow` is no longer only *reported* as running below it — the flow
+  loop that drives it will not be **commanded** below it. The whole override is
+  one line:
+
+  ```text
+  effective setpoint = max(requested setpoint, duty.minFlow)
+  ```
+
+  It is a constraint on a setpoint and not a second controller: no extra PI
+  loop, no gain, no hysteresis, no deadband, no output rate limit, and **no
+  automatic trip or recirculation** — neither is on any record here.
+
+  **A demand is not a result.** Raising a setpoint asks the plant for flow; it
+  does not make any. The faceplate keeps four numbers apart — what the record
+  requires, what the loop was asked for, what it is controlling to, and what
+  the machine is actually passing — and reports `EFFECTIVE` only when the
+  machine really is passing the minimum. A stopped, tripped, dead-headed or
+  reversed machine reads `UNABLE`, and the flow shown is always the solve's own
+  **signed** number.
+
+  **The operator's setpoint is never overwritten.** The override applies to the
+  setpoint the algorithm uses, so what was typed stays what was typed, and a
+  cascade master's request stays visible beside the value being held.
+
+  A machine whose record states **no** minimum gets no protection and nothing
+  assumed in its place — absent is not zero. A declared limit that cannot be
+  applied (a machine with no drive, or a loop ranged in units this model does
+  not convert) is **refused and reported**, never approximated.
+
+- `min-flow-active`, `min-flow-unable` and `min-flow-not-configured` on the
+  Diagnostics page's LIVE section, beside the other control-loop findings.
+
+### Changed
+
+- A cascade master no longer integrates downwards against a request the
+  minimum-flow protection is holding above it. This reuses the existing
+  anti-windup rather than adding one: the floor becomes another stop, the
+  master's output is not clamped to it, and with no minimum declared the
+  behaviour is byte-for-byte what it was.
+
 ## [0.22.0] — 2026-09-17 — real hydraulics and real control
 
 The HMI stopped approximating. Flow used to be a pump's rating multiplied by

@@ -67,6 +67,7 @@
  */
 
 import type { DiagnosticSeverity } from '../../model/diagnostics'
+import type { MinFlowDemand } from './minflow'
 import type { ProcessFault } from './quality'
 import type { ScenarioFinding } from './scenario'
 
@@ -169,6 +170,13 @@ export interface LoopState {
   effectiveSp?: number
   /** K17: a DECLARED cascade that could not be built, and why. */
   cascadeProblem?: string
+  /**
+   * K18: what the minimum-flow protection did to this loop's setpoint —
+   * present only on a loop that carries a declared minimum, or a declared one
+   * it could not be protected to. The COMMAND side only: see
+   * `sim/minflow.ts`, which joins it to what the machine actually passed.
+   */
+  minFlow?: MinFlowDemand
 }
 
 /** A runtime finding, in the one shape this product publishes. See

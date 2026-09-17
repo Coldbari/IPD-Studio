@@ -1157,3 +1157,75 @@ tsc -b clean · production build clean
 | P2 | The master's gains are this plant's, and this plant's inner loop has no lag; a slow inner loop would want the opposite treatment. |
 | P2 | No SP high/low limits narrower than a slave's range; no output rate limit; PI not PID. |
 | P2 | Carried: no protective action, no manufacturer data, demo template states no setpoint (K15), no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |
+
+---
+
+## 32. Step K18 — minimum-flow protection
+
+The P1 that had been carried since K13, and by K17 it had everything it needed:
+an envelope to detect with, an authority model to be honest about, and a
+cascade to put an override inside.
+
+The whole override is `effective = max(requested, duty.minFlow)`, applied to
+the setpoint the algorithm uses and never written back to `SP`. It is a
+CONSTRAINT, not a controller — no second PI loop, no gain, no hysteresis, no
+deadband, no rate limit, no trip, no recirculation. Writing it as a `max`
+rather than as a switch between two control laws is what makes it continuous,
+stateless and measurement-free, which in turn is why no hysteresis width had to
+be chosen for it.
+
+The loop that carries it must both drive the machine and measure flow. The
+first because the driving loop owns the only setpoint in the path; the second
+because the limit is a flow, and a pressure master on the same drive has a
+setpoint in bar. `wireMinFlow` runs after `resolveContention`, because two loops
+fighting over one drive are both unwired and an unwired loop protects nothing.
+
+The master needed one change and it was not a new mechanism. Conditional
+integration already asks "is the output against a stop the error is pushing it
+further into?", and K18 only changes WHICH stop: `lo` becomes
+`max(lo, minFlowFloorPct)`, where the floor is the slave's own range run
+backwards. The output is deliberately NOT clamped to it, so the master's
+request stays readable beside the value being held. Measured: the integrator
+comes to rest on the floor at OP 33.0 instead of winding to 23.5, and the
+master is useful again on the next tick instead of after 38 seconds.
+
+MANUAL was not a choice to make. The protection acts on the setpoint, and in
+MANUAL this runtime does not use the setpoint, so there is nothing to act on.
+The one line that still needs the effective value is the bumpless transfer
+tracking, which has to track the setpoint AUTO will resume on — otherwise the
+transfer kicks by 13.3 %.
+
+The interesting measurement was a nuisance, not a physics result. A loop held
+exactly on its minimum crosses it with every noisy sample: mean 19.998, range
+19.66–20.38, 140 state crossings in 200 seconds — and K13's envelope crosses in
+exact lockstep, because it is the same signed flow against the same limit. So
+this is a property K18 made REACHABLE rather than one it introduced. No
+hysteresis was invented for it. The warning is gated on `SAT` instead, which
+already distinguishes a loop that has run out of machine from one that is
+simply controlling: dead-headed +1, asked for the impossible +1, on the limit 0
+throughout.
+
+Two existing tests were corrected — both of them K15's assertions that this
+feature did not exist, which was true when they were written. Three of my own
+were wrong, and the best of them proved nothing: it asserted the master's
+integrator was held, and it was, but by K14's existing output stop rather than
+by the new floor. A test that passes with the feature removed is not a test of
+the feature.
+
+### State after K18
+
+```text
+3696 tests passing · 7 skipped · 0 failing
+tsc -b clean · production build clean
+209 Playwright passing · 16 skipped · 0 failing
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P2 | The protection STATE chatters when a loop controls exactly at its minimum, and so does K13's envelope. The WARNING does not. A non-chattering state needs ISA-18.2 deadband or an on-delay, and choosing the width is a control-design decision nobody has made. |
+| P2 | One limit, one direction: `duty.minFlow` only. No maximum flow, no separate thermal minimum, no time-at-low-flow accumulation. |
+| P2 | No recirculation and no trip — neither is on any engineering record here. A machine whose only real protection would be spillback reads UNABLE, correctly. |
+| P2 | Flow loops in m³/h only; there is no unit conversion for controller ranges, and a loop ranged otherwise is refused explicitly. |
+| P2 | Carried: one cascade topology (K17), PI not PID, no output rate limit, no manufacturer data, demo template states no setpoint (K15), no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |

@@ -15,6 +15,7 @@ import type { Quality } from './sim/quality'
 import { EQUIP_LABEL, equipmentState } from './sim/state'
 import { ENVELOPE_SEVERITY } from './sim/envelope'
 import { AUTHORITY_LABEL, AUTHORITY_SEVERITY } from './sim/authority'
+import { MIN_FLOW_SEVERITY } from './sim/minflow'
 import type { ThemeTokens } from './theme'
 import { SCALE, THEMES } from './theme'
 
@@ -189,6 +190,14 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
     speedLoop ? (s.tags[speedLoop.tag]?.MODE ?? 1) >= 0.5 : false)
   /** K16: what this loop can actually do about its process. */
   const loop = useSimStore((s) => s.loops[tag])
+  /**
+   * K18: what the minimum-flow protection is doing — to THIS loop's setpoint
+   * on a controller's plate, and to THIS machine on a pump's. Both read the
+   * one published answer rather than deriving a second.
+   */
+  const protection = useSimStore((s) => s.minFlow[tag])
+  const pumpProtection = useSimStore((s) =>
+    Object.values(s.minFlow).find((x) => x.pump === tag))
   /** K17: a master shows the whole chain, so it needs its slave's drive and
    *  the units its slave's setpoint is in. */
   const slaveTag = useSimStore((s) => s.loops[tag]?.cascadeTo)
@@ -232,6 +241,13 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
   }
+
+  /** A COLOUR IS A SEVERITY. A protection that is working is not a fault and
+   *  does not take the alarm palette; only UNABLE does. */
+  const protectionTone = (state: keyof typeof MIN_FLOW_SEVERITY) =>
+    MIN_FLOW_SEVERITY[state] === 'warning' ? theme.alarmMedium
+      : MIN_FLOW_SEVERITY[state] === 'info' ? theme.textMuted
+      : theme.textSecondary
 
   const props = widget.props ?? {}
   const isController = props.controller === true
@@ -319,6 +335,21 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
             )}
             {envelope?.minFlowM3h !== undefined && (
               <Value label="Minimum flow" value={envelope.minFlowM3h} unit="m³/h" />
+            )}
+            {/* AND WHETHER ANYTHING IS BEING DONE ABOUT IT — K18. Without this
+                line the machine reads BELOW MINIMUM FLOW with no indication
+                that a loop is holding its setpoint up trying to fix it, which
+                is the difference between a plant that is failing and one that
+                is defending itself. Which loop, because the operator has to
+                know where to go. */}
+            {pumpProtection && (
+              <div className="fp-kv" data-testid="fp-minflow-pump"
+                data-state={pumpProtection.state} data-loop={pumpProtection.tag}>
+                <span className="k">Min-flow protection</span>
+                <span className="v" style={{ color: protectionTone(pumpProtection.state) }}>
+                  {pumpProtection.state} · {pumpProtection.tag}
+                </span>
+              </div>
             )}
           </Section>
           <Section title="Command">
@@ -518,6 +549,38 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
               <button className="fp-btn" style={{ flex: '0 0 auto', width: 30 }} aria-label="Increase setpoint"
                 onClick={() => write(tag, 'SP', clamp((t.SP ?? t.PV ?? min) + 1, min, max))}>+</button>
             </div>
+            {/* MINIMUM-FLOW PROTECTION — K18, §5 and §17.
+                FOUR NUMBERS THAT MUST NOT BE COLLAPSED INTO FEWER. What the
+                record requires, what the loop was asked for, what it is
+                actually controlling to, and what the machine is passing. A
+                raised setpoint is a DEMAND; the flow beside it is the RESULT;
+                and the whole reason this block exists is that they are
+                routinely different. The flow shown is the solve's own SIGNED
+                number — a machine running backwards reads negative here. */}
+            {protection && (
+              <>
+                {protection.limitM3h !== undefined && (
+                  <Value label="Min flow" value={protection.limitM3h} unit={unit} />
+                )}
+                {protection.requestedSp !== undefined && (
+                  <Value label="Requested SP" value={protection.requestedSp} unit={unit} />
+                )}
+                {protection.effectiveSp !== undefined && (
+                  <Value label="Effective SP" value={protection.effectiveSp} unit={unit} />
+                )}
+                {protection.actualM3h !== undefined && (
+                  <Value label="Actual flow" value={protection.actualM3h} unit="m³/h" />
+                )}
+                <div className="fp-kv" data-testid="fp-minflow"
+                  data-state={protection.state}
+                  data-severity={MIN_FLOW_SEVERITY[protection.state] ?? 'none'}>
+                  <span className="k">Min-flow protection</span>
+                  <span className="v" style={{ color: protectionTone(protection.state) }}>
+                    {protection.state}
+                  </span>
+                </div>
+              </>
+            )}
             <input data-testid="fp-op" type="range" min={0} max={100} value={t.OP ?? 0} disabled={auto}
               aria-label="Controller output per cent"
               title={auto ? 'Output entry needs MANUAL mode' : 'Output %'}
