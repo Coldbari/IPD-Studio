@@ -427,15 +427,22 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
             </div>
           </Section>
           <Section title="Setpoint and output">
-            <div className="fp-row" style={{ alignItems: 'center' }}>
+            {/* NO SETPOINT IS NOT A SETPOINT OF FIFTY — K15. A loop with
+                nothing configured and nothing to calm-start from says so, and
+                the operator's first entry is what gives it one. The nudge
+                buttons start from the MEASUREMENT in that case, which is where
+                a calm start would have put it. */}
+            <div className="fp-row" style={{ alignItems: 'center' }} data-testid="fp-sp-row"
+              data-sp={t.SP === undefined ? 'unavailable' : 'set'}>
               <span className="k" style={{ flex: '0 0 auto', fontSize: SCALE.font.sm }}>SP</span>
               <button className="fp-btn" style={{ flex: '0 0 auto', width: 30 }} aria-label="Decrease setpoint"
-                onClick={() => write(tag, 'SP', clamp((t.SP ?? 50) - 1, min, max))}>−</button>
+                onClick={() => write(tag, 'SP', clamp((t.SP ?? t.PV ?? min) - 1, min, max))}>−</button>
               <input data-testid="fp-sp" type="number" aria-label="Setpoint" style={{ width: 64 }}
-                value={Math.round((t.SP ?? 50) * 10) / 10}
+                placeholder="- - -" title={t.SP === undefined ? 'No setpoint: this loop has nothing to aim at' : 'Setpoint'}
+                value={t.SP === undefined ? '' : Math.round(t.SP * 10) / 10}
                 onChange={(e) => write(tag, 'SP', clamp(Number(e.target.value), min, max))} />
               <button className="fp-btn" style={{ flex: '0 0 auto', width: 30 }} aria-label="Increase setpoint"
-                onClick={() => write(tag, 'SP', clamp((t.SP ?? 50) + 1, min, max))}>+</button>
+                onClick={() => write(tag, 'SP', clamp((t.SP ?? t.PV ?? min) + 1, min, max))}>+</button>
             </div>
             <input data-testid="fp-op" type="range" min={0} max={100} value={t.OP ?? 0} disabled={auto}
               aria-label="Controller output per cent"

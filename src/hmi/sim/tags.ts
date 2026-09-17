@@ -133,6 +133,17 @@ export interface TagDef {
   bindTank?: string
   bindPipe?: string
   base?: number
+  /**
+   * A CONTROLLER'S CONFIGURED SETPOINT, from `signal.setpoint`.
+   *
+   * The engineering model has read this field since the datasheet work — it is
+   * in `SignalEngineering.setpoint` — and until K15 it was dropped at the
+   * boundary into the runtime, which is why every controller came up at 50
+   * whatever its record said and whatever it measured. Absent means the record
+   * states none, and that is what lets `initTags` tell a CONFIGURED setpoint
+   * from a DEFAULTED one instead of overwriting both.
+   */
+  setpoint?: number
 }
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
@@ -246,6 +257,9 @@ function defFor(w: HmiWidget, registry: Registry | undefined): TagDef | null {
         bindTank: typeof p.bindTank === 'string' ? p.bindTank : undefined,
         bindPipe: typeof p.bindPipe === 'string' ? p.bindPipe : undefined,
         base: num(p.base),
+        // carried ONLY when the record states one; there is no widget prop for
+        // a setpoint and no simulator default. See `TagDef.setpoint`.
+        ...(eng.setpoint !== undefined ? { setpoint: eng.setpoint } : {}),
       }
     }
     default:

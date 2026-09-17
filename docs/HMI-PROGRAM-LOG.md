@@ -965,3 +965,68 @@ tsc -b clean · production build clean
 | P2 | Still detection only on the envelope: no protective action, no minimum-flow trip, because no field defines one. |
 | P2 | Still no manufacturer equipment data — one valve constant for every valve, and `duty.speed` is text nobody reads. |
 | P2 | No scenario library (K9); boundary dynamics are pressure only (K10); mixing unsupported (K5). |
+
+
+---
+
+## 29. Step K15 — controller calm-start, and flow → speed
+
+Both of K14's P1 findings, taken in the order it listed them.
+
+The setpoint defect turned out not to need a new field. `signal.setpoint` has
+been on the instrument record and read by `engineeringFor` since the datasheet
+work — it was simply never carried onto the `TagDef`, so the runtime could not
+tell a configured setpoint from a defaulted one and gave everything 50. The fix
+is one line of carriage plus a precedence that was already implicit: a runtime
+write, else the record, else the loop's own measurement, else nothing at all.
+
+The calm start then exposed something real. With loops no longer pinned against
+a stop by a fictitious setpoint, a loop sitting ON setpoint with a noisy
+transmitter and no authority over its process integrates on the noise — the
+lower stop blocks the downward half and the integrator ratchets. Measured at
+21 % of output after 36 minutes on a plant whose pump is stopped. Predates K15,
+recorded as a K16 finding, not patched with a deadband.
+
+The flow loop's interesting part is the binding. K14's pressure-zone walk is
+the wrong question for flow: pressure is shared across a junction and flow
+DIVIDES at one, so a transmitter past a tee reads a fraction of what the
+machine is passing. `flowLoopCandidate` walks the machine's own stream instead
+and stops at the first branch, vessel or boundary. A test moves the whole P&ID
+by 4000 × 2500 and the answer is identical.
+
+Orientation is the honest gap: a flow element in this model carries none,
+because `measurementOf` takes the magnitude and no record states which way
+round it was fitted. What the loop actually needs — the sign of the controlled
+stream — comes out of the walk for free, and a line drawn backwards gets
+`sense −1` while the plant runs identically.
+
+Gains measured again rather than reused: 0.71 % of span per % of output against
+the pressure loop's 0.4 %, because capacity goes as speed where head goes as
+speed squared. K14's 1.8 puts the loop gain at 1.28 and produces a 22 m³/h
+swing that never settles. 1.0 gives the same margin K14 settled on.
+
+And the limit of one fixed gain is PINNED rather than described: hold the
+discharge boundary near the machine's shutoff head and the loop hunts, between
+3.4 and 37.6 m³/h on a 50 s period. A test asserts that it hunts, and that it
+hunts boundedly.
+
+### State after K15
+
+```text
+3564 tests passing · 7 skipped · 0 failing
+tsc -b clean · production build clean
+207 Playwright passing · 2 failing, both pre-existing on a5b9793
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P1 | Cascade — one loop trimming another's setpoint — is now the missing piece in three places at once: it is the answer to two loops on one drive, to a flow loop that needs a pressure master, and to minimum-flow protection. |
+| P1 | A loop at setpoint with no process authority integrates on measurement noise. Output tracking, or a mode that is not AUTO on a dead plant, is the real fix. |
+| P2 | One fixed gain per loop type; the flow loop's is set by the machine's capacity and the resistance in front of it, and its failure mode is pinned by a test. |
+| P2 | No output rate limit on any loop; the drive's ramp is all that softens a step. |
+| P2 | PI, not PID — there is no derivative term in this codebase. |
+| P2 | A flow element carries no installed orientation on its record. |
+| P2 | The bundled demo template states no setpoint, so its loop now calm-starts. |
+| P2 | Still detection only on the envelope, still no manufacturer equipment data, no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |

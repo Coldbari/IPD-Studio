@@ -9,7 +9,7 @@ import { boundarySignal, operatingPressure, processFor } from '../../model/proce
 import { DEFAULTS } from '../../hmi/sim/units'
 import { suctionFor } from '../../model/suction'
 import { TERMINAL_SYMBOLS } from '../../hmi/sim/tags'
-import { buildSimModel, speedLoopCandidate } from '../../hmi/sim/engine'
+import { buildSimModel, flowLoopCandidate, speedLoopCandidate } from '../../hmi/sim/engine'
 
 const RELIEF_SYMBOLS = new Set(['psv', 'pse', 'pvsv', 'psv.pilot', 'vacuum-breaker', 'breather', 'flame-arrestor'])
 
@@ -435,10 +435,112 @@ export const pumpSpeedNoDrive: Rule = {
       if (!wired || wired.outTag !== undefined) continue
       const pvDef = model.defs.find((d) => d.name === wired.pvTag)
       if (!pvDef) continue
-      const cand = speedLoopCandidate(pvDef, model.defs, model.hydraulic)
-      if (!cand || cand.vsd) continue
+      // ONE question per quantity, and each is the same function the wiring
+      // uses: a check that re-derives the binding is a check that drifts.
+      const pressure = speedLoopCandidate(pvDef, model.defs, model.hydraulic)
+      const flow = flowLoopCandidate(pvDef, model.defs, model.hydraulic)
+      const cand = pressure ?? flow
+      if (!cand) continue
+      const what = pressure ? `the pressure ${pressure.pump} makes` : `the flow through ${flow!.pump}`
+      if (flow?.ambiguous === true) {
+        out.push(finding(pumpSpeedNoDrive, c.name,
+          `${c.name} measures a flow that more than one machine's stream passes through, so there is no single drive for it to command. Give the loop a control valve, or a flow element on one machine's own line.`))
+        continue
+      }
+      if (cand.vsd) continue
       out.push(finding(pumpSpeedNoDrive, c.name,
-        `${c.name} measures the pressure ${cand.pump} makes and has no valve to throttle, but ${cand.pump} does not declare a variable speed drive — so the loop controls nothing. Set "Variable speed drive" to Yes on ${cand.pump}, or give the loop a control valve.`))
+        `${c.name} measures ${what} and has no valve to throttle, but ${cand.pump} does not declare a variable speed drive — so the loop controls nothing. Set "Variable speed drive" to Yes on ${cand.pump}, or give the loop a control valve.`))
+    }
+    return out
+  },
+}
+
+/**
+ * TWO LOOPS ON ONE DRIVE.
+ *
+ * A machine has one speed reference. Two controllers writing it every tick is
+ * not control, it is a race decided by iteration order, and the second one
+ * would silently undo the first — so `buildSimModel` unwires BOTH rather than
+ * picking a winner, and this is what says so. There is no defensible rule for
+ * which loop should own a machine; the engineer has to choose, or build the
+ * cascade this phase deliberately does not.
+ */
+export const pumpSpeedContended: Rule = {
+  id: 'pump-speed-contended',
+  title: 'Two controllers on one drive',
+  severity: 'critical',
+  discipline: 'process',
+  why: 'A drive has one speed reference. Two loops writing it would take turns overriding each other, so neither is connected until the configuration says which one owns the machine.',
+  run(ix) {
+    const screens = ix.doc.hmiScreens ?? []
+    if (screens.length === 0) return []
+    const model = buildSimModel(screens, ix.doc.registry)
+    const out = []
+    // the same question `resolveContention` asks, asked of the records
+    const claims = new Map<string, string[]>()
+    for (const c of model.defs) {
+      if (c.kind !== 'controller') continue
+      const wired = model.controllers.find((x) => x.tag === c.name)
+      if (!wired || wired.outTag !== undefined) continue
+      const pvDef = model.defs.find((d) => d.name === wired.pvTag)
+      if (!pvDef) continue
+      const cand = speedLoopCandidate(pvDef, model.defs, model.hydraulic)
+        ?? flowLoopCandidate(pvDef, model.defs, model.hydraulic)
+      if (!cand || !cand.vsd) continue
+      claims.set(cand.pump, [...(claims.get(cand.pump) ?? []), c.name])
+    }
+    for (const [pump, loops] of [...claims].sort((a, b) => a[0].localeCompare(b[0]))) {
+      if (loops.length < 2) continue
+      out.push(finding(pumpSpeedContended, pump,
+        `${loops.join(' and ')} would both command ${pump}'s speed, so neither is connected. A drive has one speed reference: give one of them a control valve, or cascade one onto the other's setpoint.`))
+    }
+    return out
+  },
+}
+
+/**
+ * A LOOP WITH NOTHING TO AIM AT, AND ONE AIMED OFF ITS OWN SCALE.
+ *
+ * K15 stopped inventing a setpoint of 50 for every controller. A loop takes
+ * `signal.setpoint` if its record states one, else starts at its own
+ * measurement — and a loop whose measurement is not bound to anything the
+ * simulation produces has neither, so it holds its output and does nothing.
+ * That is the honest behaviour and it is worth saying out loud, because a
+ * controller that does nothing looks exactly like one that is satisfied.
+ *
+ * The second case is the opposite: a setpoint the record states that the
+ * instrument cannot read. It is NOT clamped — an operator may legitimately ask
+ * for something the plant cannot make, and the loop will saturate and say so —
+ * but a setpoint five times full scale is a filled-in field, not an intention.
+ */
+export const controllerSetpoint: Rule = {
+  id: 'controller-setpoint',
+  title: 'Controller setpoint unusable',
+  severity: 'warning',
+  discipline: 'process',
+  why: 'A loop with no setpoint holds its output and looks satisfied; a setpoint outside the transmitter range can never be reached.',
+  run(ix) {
+    const screens = ix.doc.hmiScreens ?? []
+    if (screens.length === 0) return []
+    const model = buildSimModel(screens, ix.doc.registry)
+    const out = []
+    for (const wired of model.controllers) {
+      if (wired.outTag === undefined) continue      // drives nothing: no setpoint needed
+      const cd = model.defs.find((d) => d.name === wired.tag)
+      const pvDef = model.defs.find((d) => d.name === wired.pvTag)
+      if (!cd || !pvDef) continue
+      if (cd.setpoint !== undefined) {
+        if (cd.setpoint < cd.min || cd.setpoint > cd.max) {
+          out.push(finding(controllerSetpoint, wired.tag,
+            `${wired.tag}'s setpoint of ${cd.setpoint} is outside its ${cd.min}-${cd.max} range, so the loop will sit against a stop. It is used as stated; nothing here changes it.`))
+        }
+        continue
+      }
+      const bound = pvDef.kind === 'tank' || pvDef.bindTank !== undefined || pvDef.bindPipe !== undefined
+      if (!bound) {
+        out.push(finding(controllerSetpoint, wired.tag,
+          `${wired.tag} has no configured setpoint and ${wired.pvTag} is not bound to anything the simulation produces, so there is nothing to start one from. It will hold its output and move nothing. Set "Setpoint" on its record, or bind ${wired.pvTag}.`))
+      }
     }
     return out
   },
@@ -449,4 +551,5 @@ export const PROCESS_RULES: Rule[] = [
   pumpSuctionInsufficient, pumpSuctionUnsupplied,
   terminalNoPressure, terminalBadPressure, terminalBadSignal,
   pumpSpeedConfig, pumpFlowConfig, pumpSpeedNoDrive,
+  pumpSpeedContended, controllerSetpoint,
 ]

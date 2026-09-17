@@ -22,6 +22,10 @@ describe('HMI demo template', () => {
     let tags = initTags(model)
     tags['P-101']!.RUN = 1
     tags['HV-101']!.OPEN = 1 // line up the drain — calm start ships it closed
+    // The demo's records carry no `signal.setpoint`, so K15's calm start puts
+    // LIC-101 at the level it finds. The operator's first act on this screen is
+    // to ask for a level, and that is what this line is.
+    tags['LIC-101']!.SP = 50
     const rng = makeRng(3)
     // TK-101 is 120 m³ and starts at 35 %: filling to setpoint against the
     // open drain is well over half an hour of process time, then the loop settles.

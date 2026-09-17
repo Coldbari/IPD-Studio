@@ -52,7 +52,13 @@ describe('auto-wired control loops', () => {
   it('holds level at SP against a constant drain (AUTO)', () => {
     // 100 m³ from 30 % to 50 % is 20 m³; at a net 30 m³/h that is ~40 minutes
     // of filling before the loop even reaches setpoint.
-    const { tags } = runFor(3 * 3600)
+    //
+    // THE SETPOINT IS STATED. It used to arrive from `initTags`' placeholder
+    // `SP: 50` — the middle of the 0-100 span every tag once inherited, and
+    // never anybody's engineering decision. K15's calm start puts an
+    // unconfigured loop at its own measurement instead, so the fifty this test
+    // has always been about is written down here where it belongs.
+    const { tags } = runFor(3 * 3600, (t) => { t['LIC-101']!.SP = 50 })
     expect(Math.abs(tags['TK-101']!.PV! - 50)).toBeLessThan(4)
   })
   it('tracks an SP change', () => {
@@ -106,6 +112,7 @@ describe('auto-wired control loops', () => {
     let tags = initTags(model)
     tags['P-201']!.RUN = 1
     tags['FV-201']!.OP = 22   // 6.45 m³/h in, against 11.18 m³/h of drain
+    tags['LIC-201']!.SP = 50  // stated: K15 no longer defaults a setpoint
     const rng = makeRng(4)
     // Six process-hours: 20 m³ to fill from 30 % to setpoint at ~6 m³/h is
     // over three of them before the drain valve has anything to do.

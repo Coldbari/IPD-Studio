@@ -72,6 +72,35 @@ All notable changes to IPD Studio. Format follows
 - A driven machine now trends its speed **command** and its **actual shaft**
   as two series, so a drive taking time to get somewhere is visible.
 
+- **Controllers come up asking for nothing.** A loop no longer starts at 50 —
+  a number left over from when every tag ran 0-100, and one that asks a 0-10 bar
+  loop for five times full scale. It takes the **Setpoint** its record states,
+  and where the record states none it starts at its own measurement: error zero,
+  output held, nothing moving until an operator asks for something.
+
+  An explicitly configured setpoint is never replaced by the plant's state, at
+  RUN or at RESET. A setpoint the plant cannot reach is still accepted, still
+  saturates, and is reported rather than quietly corrected. A loop with neither
+  a record nor a measurement to start from now shows **no setpoint** instead of
+  a number nobody set.
+
+- **Flow control on a drive.** A flow controller with no valve to throttle
+  commands the speed of the machine whose flow it measures — the same PI, the
+  same speed command, the same drive, with gains of its own because a flow loop
+  on a centrifugal machine has nearly twice the gain of a pressure one.
+
+  The machine is found by walking **that machine's own stream**, so a
+  transmitter past a tee is refused rather than wired to a flow that is only
+  part of what the pump is passing. Move the whole drawing and the binding is
+  the same.
+
+- Two controllers that would command one drive are **both** left unconnected
+  and reported by `pump-speed-contended`, rather than taking turns overriding
+  each other.
+
+- `controller-setpoint` reports a setpoint outside the loop's range, or a loop
+  with nothing to aim at.
+
 
 ### Added
 

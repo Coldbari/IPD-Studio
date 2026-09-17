@@ -8,7 +8,7 @@ import { buildTagDefs } from './tags'
 import type { Registry } from '../../model/registry'
 import type { FlowNetwork } from './network'
 import { buildNetwork } from './network'
-import type { ProcessModel } from './hydraulic/model'
+import type { ProcessEdge, ProcessModel } from './hydraulic/model'
 import { buildProcessModel } from './hydraulic/model'
 import type { SolveResult } from './hydraulic/solver'
 import { solveHydraulics } from './hydraulic/solver'
@@ -146,6 +146,51 @@ const DEFAULT_TUNING = { kp: 2, ti: 120 }
  */
 const SPEED_TUNING = { kp: 1.8, ti: 12 }
 
+/**
+ * THE FLOW LOOP'S OWN TUNING — K15.
+ *
+ * A THIRD ENTRY, not a reuse of either neighbour. `TUNING.flow` is a flow loop
+ * driving a VALVE; `SPEED_TUNING` is a PRESSURE loop driving a drive. Neither
+ * describes flow driving a drive, and the measurement below is why that
+ * matters rather than being tidiness.
+ *
+ * ── PROCESS GAIN, MEASURED OPEN-LOOP ──────────────────────────────────────
+ *
+ * The loop in MANUAL, the output walked across its range, the transmitter read
+ * at each step on `tests/hmi/flowControl.test.ts`'s fixture (0-60 m³/h span):
+ *
+ *   output   20 %    40 %    60 %    80 %   100 %
+ *   FT      8.82   17.31   26.00   34.39   43.05  m³/h
+ *
+ * 0.71 % of span per % of output — nearly TWICE the pressure loop's 0.4 %, and
+ * very nearly a straight line, because capacity goes as speed where head goes
+ * as speed squared. Reusing K14's 1.8 would put the loop gain at 1.28 and it
+ * does exactly what a loop gain above one does: 112 % overshoot and a 22 m³/h
+ * swing that never settles. That was measured too, not feared.
+ *
+ *   kp   ti    step 20→30 m³/h            step 15→38 m³/h
+ *   ─────────────────────────────────────────────────────────────────────
+ *   1.8  12    never settles, 112 % overshoot, 22 m³/h swing   UNSTABLE
+ *   1.3  12    299 s, 17 % overshoot      299 s, 6 % overshoot  degrading
+ *   1.0  12    102 s,  5 % overshoot      112 s, 2 % overshoot  ← chosen
+ *   0.8  12    102 s,  3 % overshoot      112 s, 1 % overshoot  fine, slower
+ *   0.7  16    131 s,  3 % overshoot      188 s, 1 % overshoot  sluggish
+ *
+ * 1.0 puts the loop gain at 0.71 — the same margin K14 settled on, and 1.8×
+ * below where this fixture goes unstable. Checked at dt = 0.2 s as well as
+ * dt = 1 s (94 s and 102 s to settle).
+ *
+ * `ti` is shared with `SPEED_TUNING` and for the same reason: the dominant lag
+ * is the DRIVE's, not the process's — the hydraulics are quasi-steady, so both
+ * loops are waiting on the same 2 s ramp.
+ *
+ * NOT UNIVERSAL, and this loop's gain is even more plant-dependent than K14's:
+ * it is set by the machine's rated capacity and by how much resistance stands
+ * in front of it. A 400 m³/h machine on the same instrument span would need a
+ * tenth of this. See the limitation recorded in `docs/HMI-AUDIT.md`.
+ */
+const FLOW_SPEED_TUNING = { kp: 1.0, ti: 12 }
+
 /** Equipment dynamics: pump spin-up seconds, coast-down seconds, valve
  *  stroke %/s, and the deviation band+delay that raises a valve DEV alarm. */
 const RAMP_S = 2
@@ -191,7 +236,8 @@ export function buildSimModel(screens: HmiScreen | HmiScreen[], registry?: Regis
   // the registry comes too: a TAGGED TERMINAL's boundary pressure is on its
   // engineering record, and the topology is where that becomes a fixed node
   const hydraulic = buildProcessModel(list, registry)
-  const controllers = wirePumps(wireHeaters(wireControllers(defs), defs, net), defs, hydraulic)
+  const controllers = resolveContention(
+    wireFlowPumps(wirePumps(wireHeaters(wireControllers(defs), defs, net), defs, hydraulic), defs, hydraulic))
     .map((c) => ({
       ...c,
       action: controllerAction(c, defs, net),
@@ -408,6 +454,163 @@ function wirePumps(controllers: ControllerSpec[], defs: TagDef[], model: Process
 }
 
 /**
+ * THE MACHINE WHOSE FLOW A FLOW TRANSMITTER IS MEASURING.
+ *
+ * ── A DIFFERENT QUESTION FROM K14'S, ASKED DIFFERENTLY ────────────────────
+ *
+ * `speedLoopCandidate` above walks a PRESSURE ZONE: everywhere reachable
+ * without crossing a pump, because a pump is the boundary between two
+ * pressures and every node on one side of it sees what the machine is making.
+ * That is exactly the wrong question for flow. Pressure is shared across a
+ * junction; FLOW DIVIDES AT ONE. A transmitter on the far side of a tee is not
+ * measuring the machine's flow, it is measuring part of it, and a loop built
+ * on that would be controlling a fraction it cannot see the rest of.
+ *
+ * So this walks THE MACHINE'S OWN STREAM: out from its discharge (and back
+ * from its suction) node by node, stopping at the first thing that makes the
+ * flow no longer the pump's — a branch, a vessel, a battery limit. If the
+ * transmitter's edge is on that walk, it is carrying every cubic metre the
+ * machine is passing and nothing else.
+ *
+ * Nothing here reads a coordinate, a widget position or a drawing order. Move
+ * the whole P&ID and the answer is the same, because the answer is the
+ * connectivity.
+ *
+ * ── ORIENTATION, AND THE GAP ──────────────────────────────────────────────
+ *
+ * `sense` is the sign a FORWARD-pumping machine puts on the transmitter's
+ * edge, and it comes out of the walk for free: each step knows whether it left
+ * the node by the edge's `from` end or its `to` end.
+ *
+ * It is NOT the instrument's installed orientation. This model does not have
+ * one — `measurementOf` takes the magnitude and says why: a flow element does
+ * not know which way round it was fitted, and no engineering record here
+ * states it. That gap is real and is reported rather than papered over. What
+ * `sense` gives is the sign of the CONTROLLED STREAM, derived from the
+ * topology, which is what tells the loop whether the magnitude it is reading
+ * is the flow it is trying to control or the same number flowing backwards.
+ */
+export interface FlowLoopCandidate {
+  pump: string
+  /** True when the machine's record declares a drive. */
+  vsd: boolean
+  /** The sign forward pumping puts on the measured edge. */
+  sense: 1 | -1
+  /** +1: more speed, more measured flow. Measured, not assumed — see the
+   *  tuning notes and `tests/hmi/flowControl.test.ts`. */
+  action: 1 | -1
+  /** More than one machine's stream contains this transmitter. */
+  ambiguous: boolean
+}
+
+export function flowLoopCandidate(
+  pvDef: TagDef, defs: TagDef[], model: ProcessModel,
+): FlowLoopCandidate | undefined {
+  if (pvDef.measures !== 'flow' || pvDef.bindPipe === undefined) return undefined
+  const ftEdge = model.edgeOfPipe.get(pvDef.bindPipe)
+  if (ftEdge === undefined) return undefined
+
+  const hits: { pump: string; sense: 1 | -1 }[] = []
+  for (const p of model.edges) {
+    if (p.kind !== 'pump' || p.tag === undefined) continue
+    const down = walkStream(model, p, p.to, ftEdge)
+    const up = down ?? walkStream(model, p, p.from, ftEdge)
+    if (up !== undefined) hits.push({ pump: p.tag, sense: up })
+  }
+  const first = hits[0]
+  if (!first) return undefined
+  return {
+    pump: first.pump,
+    vsd: defs.find((d) => d.name === first.pump)?.vsd === true,
+    sense: first.sense,
+    // Raising the speed raises the flow through the machine's OWN stream, and
+    // the transmitter reads that stream's magnitude either side of the
+    // machine. Confirmed against the fixture rather than inherited from K14.
+    action: 1,
+    ambiguous: hits.length > 1,
+  }
+}
+
+/**
+ * Follow one machine's stream from `start`, and report the sign forward
+ * pumping puts on `target` if the stream reaches it.
+ *
+ * Stops where the flow stops being the machine's: a node with anything other
+ * than exactly one onward edge is a branch or a dead end, and a vessel or
+ * boundary node is where the stream ends. `undefined` means the transmitter is
+ * not on this machine's stream.
+ */
+function walkStream(
+  model: ProcessModel, pumpEdge: ProcessEdge, start: string, target: string,
+): 1 | -1 | undefined {
+  /** Leaving the discharge, forward flow runs away from the node; arriving at
+   *  the suction, it runs towards it. */
+  const outward = start === pumpEdge.to
+  let node = start
+  let via = pumpEdge.id
+  const seen = new Set<string>([pumpEdge.id])
+  for (let step = 0; step < 64; step++) {
+    if (model.nodes.find((n) => n.id === node)?.kind !== 'junction') return undefined
+    const onward = model.edges.filter((e) => e.id !== via && (e.from === node || e.to === node))
+    if (onward.length !== 1) return undefined     // a branch: the flow divides
+    const e = onward[0]!
+    if (seen.has(e.id)) return undefined
+    seen.add(e.id)
+    const leavesByFrom = e.from === node
+    if (e.id === target) {
+      // forward flow runs along `e` in its own `from → to` sense when it
+      // leaves a discharge node by `from`, or arrives at a suction node by `to`
+      return (outward ? leavesByFrom : !leavesByFrom) ? 1 : -1
+    }
+    if (e.kind === 'pump') return undefined       // another machine: not ours
+    node = leavesByFrom ? e.to : e.from
+    via = e.id
+  }
+  return undefined
+}
+
+/**
+ * Give a FLOW controller with no valve in its loop the variable-speed machine
+ * whose flow it measures.
+ *
+ * Same shape as `wirePumps`, same refusals: a valve in the loop still wins,
+ * and a machine that has not declared a drive is left alone and reported.
+ */
+function wireFlowPumps(controllers: ControllerSpec[], defs: TagDef[], model: ProcessModel): ControllerSpec[] {
+  return controllers.map((c) => {
+    if (c.outTag) return c
+    const pvDef = defs.find((d) => d.name === c.pvTag)
+    if (!pvDef) return c
+    const cand = flowLoopCandidate(pvDef, defs, model)
+    if (!cand || !cand.vsd || cand.ambiguous) return c
+    return { ...c, outTag: cand.pump, outKind: 'pump' as const, action: cand.action }
+  })
+}
+
+/**
+ * ONE CONTROLLER PER DRIVE.
+ *
+ * Two loops writing one machine's `SPD` every tick is not control, it is a
+ * race decided by iteration order — and the second one would silently undo the
+ * first. K15 does not resolve it by picking a winner, because there is no
+ * defensible rule for which loop should own a machine; it UNWIRES BOTH and
+ * `pump-speed-contended` reports the configuration. Cascade — one loop trimming
+ * another's setpoint — is the real answer and is deliberately not this phase.
+ */
+function resolveContention(controllers: ControllerSpec[]): ControllerSpec[] {
+  const count = new Map<string, number>()
+  for (const c of controllers) {
+    if (c.outKind !== 'pump' || c.outTag === undefined) continue
+    count.set(c.outTag, (count.get(c.outTag) ?? 0) + 1)
+  }
+  if ([...count.values()].every((n) => n < 2)) return controllers
+  return controllers.map((c) =>
+    c.outKind === 'pump' && c.outTag !== undefined && (count.get(c.outTag) ?? 0) > 1
+      ? { tag: c.tag, pvTag: c.pvTag }
+      : c)
+}
+
+/**
  * The output range this loop may use.
  *
  * Only a speed loop has one that is not 0-100. Its ceiling is 100 % because
@@ -487,7 +690,17 @@ export function initTags(model: SimModel): Tags {
       // OP 0, not a placeholder: a controller that has not executed has no
       // output, and whatever sits in this field is what drives a final element
       // on the very first solve. The first tick computes the real one.
-      case 'controller': tags[d.name] = { PV: 0, SP: 50, OP: 0, MODE: 1, I: 0, SAT: 0 }; break
+      /**
+       * NO `SP: 50` ANY MORE — see the calm-start pass below.
+       *
+       * Fifty was never anybody's setpoint. It was the middle of the 0-100
+       * span every tag used to inherit, left in place after ranges became real
+       * engineering data; on a 0-10 bar loop it asks for five times the
+       * highest pressure the instrument can read, and a K14 speed loop obeys
+       * it by slamming the machine to 100 % and sitting there. `PV` and `SP`
+       * are filled in below, from the plant, once the network has been solved.
+       */
+      case 'controller': tags[d.name] = { PV: 0, OP: 0, MODE: 1, I: 0, SAT: 0 }; break
     }
   }
 
@@ -566,6 +779,54 @@ export function initTags(model: SimModel): Tags {
     const seeded = measurementOf(d, tags, byPipe, pipeTemps, model, hyd)
     if (seeded !== undefined) tags[d.name]!.PV = clamp(seeded, d.min, d.max)
   }
+
+  /**
+   * CALM START FOR A CONTROLLER — K15.
+   *
+   * The same doctrine the bound transmitters above follow: a screen comes up
+   * showing what the plant is doing, and nothing is asked to move until an
+   * operator asks. A controller that comes up demanding a setpoint nobody
+   * configured is asking the plant to move.
+   *
+   * SETPOINT PRECEDENCE, and the order is the existing architecture's rather
+   * than a new policy:
+   *
+   *  1. A RUNTIME WRITE — an operator on the faceplate, or a scenario, which
+   *     K8 deliberately routes through the same write path. Last write wins,
+   *     which is what a DCS does. Nothing here can reach it: this runs at RUN
+   *     and at RESET, before anybody has written anything.
+   *  2. `signal.setpoint` ON THE ENGINEERING RECORD. An explicitly configured
+   *     setpoint, and it is NEVER replaced by the plant's current state — a
+   *     record that says 3.5 bar means 3.5 bar at every start.
+   *  3. CALM START FROM THE MEASUREMENT. No configured setpoint, so the loop
+   *     starts where the plant already is and asks for no change. Error is
+   *     zero, output holds, and the first thing that moves is whatever an
+   *     operator does next.
+   *  4. NOTHING. A loop whose PV is not bound to anything this simulation
+   *     produces has no reading to start from and no record to obey, so its
+   *     setpoint is UNAVAILABLE rather than invented. `step` will not run the
+   *     algorithm without one, and the faceplate says so.
+   *
+   * Step 3 reads the PV tag AFTER the seeding loop above, so it is the solved
+   * value and not the span midpoint the tag was created with.
+   */
+  for (const c of model.controllers) {
+    const t = tags[c.tag]
+    const cd = model.defs.find((d) => d.name === c.tag)
+    if (!t || !cd) continue
+    const pvDef = model.defs.find((d) => d.name === c.pvTag)
+    // BOUND means the simulation actually produces this reading. An unbound
+    // display sits at its own span midpoint, and starting a setpoint from a
+    // midpoint would be inventing one with extra steps.
+    const bound = pvDef !== undefined && (pvDef.kind === 'tank'
+      || pvDef.bindTank !== undefined || pvDef.bindPipe !== undefined)
+    const pv = tags[c.pvTag]?.PV
+    if (bound && pv !== undefined) t.PV = pv
+    if (cd.setpoint !== undefined) t.SP = cd.setpoint
+    else if (bound && pv !== undefined) t.SP = pv
+    // else: left UNSET. Absent is not zero and is not fifty.
+  }
+
   return tags
 }
 
@@ -768,7 +1029,8 @@ function step(
     // A SPEED loop is tuned as a speed loop. `TUNING` is indexed by what a
     // controller MEASURES; this one measures pressure like any other and
     // drives something else entirely. Nothing in `TUNING` changed.
-    const tune = c.outKind === 'pump' ? SPEED_TUNING
+    const tune = c.outKind === 'pump'
+      ? (cd?.measures === 'flow' ? FLOW_SPEED_TUNING : SPEED_TUNING)
       : cd?.measures ? TUNING[cd.measures] : DEFAULT_TUNING
     const ki = tune.kp / tune.ti
     const errorOf = (sp: number) => (((sp - pv) * (c.action ?? 1)) / span) * 100
@@ -793,12 +1055,24 @@ function step(
     if ((t.MODE ?? 0) < 0.5) {
       drive(clamp(t.OP ?? 0, lo, hi))
       // bumpless transfer: keep the integrator tracking the operator's OP
-      // (I = OP − kp·e) so returning to AUTO resumes from here, no kick
-      t.I = clamp((t.OP ?? 0) - tune.kp * errorOf(t.SP ?? 50), -100, 100)
+      // (I = OP − kp·e) so returning to AUTO resumes from here, no kick. With
+      // no setpoint there is no error to track, so the integrator simply holds
+      // the operator's output.
+      t.I = clamp((t.OP ?? 0) - (t.SP === undefined ? 0 : tune.kp * errorOf(t.SP)), -100, 100)
       t.SAT = 0
       continue
     }
-    const e = errorOf(t.SP ?? 50)
+    /**
+     * NO SETPOINT, NO ALGORITHM — K15.
+     *
+     * `?? 50` used to stand here, and fifty was the middle of the 0-100 span
+     * every tag once inherited. On a ranged loop it is not a setpoint, it is a
+     * number; acting on it makes a plant move for a reason nobody chose. A
+     * loop with nothing to aim at holds its output, and the faceplate says the
+     * setpoint is unavailable rather than showing a figure nobody set.
+     */
+    if (t.SP === undefined) { t.SAT = 0; drive(clamp(t.OP ?? 0, lo, hi)); continue }
+    const e = errorOf(t.SP)
     // conditional integration (anti-windup): freeze I while the output is
     // saturated in the error's direction, else overshoot on big transitions
     let I = t.I ?? 0

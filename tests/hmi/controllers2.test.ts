@@ -20,6 +20,10 @@ describe('bumpless MAN → AUTO transfer', () => {
     const model = buildSimModel(screen)
     const rng = makeRng(1)
     let tags = initTags(model)
+    // The precondition this test has always relied on, now STATED: K15's calm
+    // start puts an unconfigured loop at its own measurement, so "PV stuck
+    // below SP" has to be arranged rather than inherited from a placeholder.
+    tags['LIC-1']!.SP = 50
     // Long AUTO stretch with PV stuck below SP: the output winds to its rail.
     // It takes process-minutes now rather than process-seconds — a level loop's
     // integral time is 600 s, which is the point of retuning it for real units.

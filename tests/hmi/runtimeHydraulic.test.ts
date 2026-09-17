@@ -167,13 +167,32 @@ describe('flow follows pressure through the running plant', () => {
     for (const [id, f] of Object.entries(sim().pipeFlows)) {
       expect(Math.abs(f), `pipe ${id}`).toBeLessThan(SHUT_LEAK_MAX)
     }
-    // EXACT. This used to read `toBeCloseTo(30, 3)`, because LIC-101 came up
-    // in AUTO with a placeholder 40 % in its output field and LV-101 was
-    // seeded to match it — so the vessel lost 5e-5 % over the second the
-    // actuator took to stroke shut. K3.3 removed the placeholder: a valve has
-    // no command until its controller has run, and a calm start is still.
-    expect(pv('TK-101')).toBeCloseTo(30, 6)
-    expect(pv('TK-102')).toBeCloseTo(10, 6)
+    /**
+     * OLD: `toBeCloseTo(30, 6)`. NEW: 5 decimal places.
+     *
+     * PHYSICAL REASON. K3.3 made this bit-exact by removing a placeholder 40 %
+     * from the controller's output field. It stayed bit-exact for a reason
+     * nobody chose: `initTags` also seeded every controller's SETPOINT to 50,
+     * which on PIC-101's 0-10 bar span is five times full scale, so the loop
+     * sat pinned hard against its lower output stop and its integrator was
+     * frozen there by the anti-windup. Nothing moved because nothing could.
+     *
+     * K15 starts an unconfigured loop AT ITS OWN MEASUREMENT, so PIC-101 now
+     * comes up on setpoint rather than 49 bar away from it — which is the
+     * point of the change. A loop on setpoint with a noisy transmitter
+     * dithers, and this one has no process gain at all while the pump is
+     * stopped, so its output drifts up off the stop and cracks PV-101 open by
+     * a fraction of a per cent.
+     *
+     * The vessel therefore loses 2.4e-6 % over these twenty seconds — through
+     * a SHUT path, at 3.5e-4 m³/h, below the `SHUT_LEAK_MAX` ceiling the
+     * assertion above already holds every pipe to. The claim this test makes —
+     * a calm start moves nothing above the blocked-element leak — is intact;
+     * what is gone is a bit-exactness that was an artefact of a setpoint
+     * nobody set. The integrator drift itself is reported as a finding.
+     */
+    expect(pv('TK-101')).toBeCloseTo(30, 5)
+    expect(pv('TK-102')).toBeCloseTo(10, 5)
   })
 
   it('4. starting the pump develops flow in BOTH legs of the tee, and FT-101 reads its own edge', () => {

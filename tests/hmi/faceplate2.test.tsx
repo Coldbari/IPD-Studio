@@ -64,7 +64,11 @@ describe('Faceplate v2', () => {
   it('SP steppers clamp to the widget range', async () => {
     const host = await mount(<Faceplate widget={w('c')} onClose={() => {}} />)
     const plus = [...host.querySelectorAll('button')].find((b) => b.textContent === '+')!
-    for (let i = 0; i < 60; i++) await act(async () => plus.click())
+    // Enough clicks to reach the top from anywhere on a 0-100 range. Sixty was
+    // enough while `initTags` seeded every controller at 50; K15 does not, so
+    // the count has to cover the whole travel rather than half of it. The
+    // subject is the CLAMP, and it is unchanged.
+    for (let i = 0; i < 120; i++) await act(async () => plus.click())
     expect(useSimStore.getState().tags['LIC-1']!.SP).toBe(100)
   })
 

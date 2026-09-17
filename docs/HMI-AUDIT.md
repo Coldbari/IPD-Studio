@@ -2547,3 +2547,249 @@ tsc -b clean · production build clean
   likes in one tick; the drive's own ramp is what softens it.
 - **No protective action**, still. K13's envelope is reported and K14 does not
   act on it.
+
+## K15 — controller calm-start, and flow → speed
+
+K14 closed by naming the defect it had just made dangerous, and K15 fixes it
+before adding anything. Then it adds one more loop type on the same machinery.
+
+### Part 1 — the setpoint nobody set
+
+**Where 50 came from.** `initTags` seeded every controller with `SP: 50` — the
+middle of the 0-100 span every tag inherited before ranges became engineering
+data. It survived the ranges. On a 0-10 bar loop it asks for five times full
+scale, and a K14 speed loop obeys it: machine to 100 %, saturated, and a plant
+moving because of a number nobody chose.
+
+**What was already there and was being dropped.** `signal.setpoint` is a real
+field on an instrument record, and `engineeringFor` has read it into
+`SignalEngineering.setpoint` since the datasheet work. It was **never carried
+onto the `TagDef`**, so the runtime could not tell a *configured* setpoint from
+a *defaulted* one. That is the whole defect: the distinction existed in the
+engineering model and did not survive the crossing into the simulation.
+
+**Precedence, and it is the existing architecture's:**
+
+```text
+1  a RUNTIME WRITE      operator, or a scenario — K8 routes both through the
+                        same write path on purpose. Last write wins, as a DCS
+                        does. Nothing at RUN can reach it.
+2  signal.setpoint      the RECORD. Never replaced by the plant's state, at
+                        RUN or at RESET. A stated 0 is a setpoint, not an
+                        absence.
+3  CALM START           the loop's own measurement. Error zero, output held,
+                        nothing asked to move.
+4  NOTHING              a PV bound to nothing the simulation produces has no
+                        reading and no record. SP is UNAVAILABLE, the
+                        algorithm does not run, and the plate shows no number.
+```
+
+Step 3 reads the PV **after** `initTags` seeds the bound transmitters, so it is
+the solved value rather than the span midpoint the tag was created with. The
+controller's own `PV` is seeded the same way, so a loop no longer shows 0 until
+its first tick.
+
+**Step 4 is why `?? 50` is gone from `step()` as well.** A loop with no setpoint
+holds its output rather than acting on a number that was never a setpoint, and
+the faceplate shows an empty field with `title="…nothing to aim at"` — still
+enterable, because the operator's first act is to give it one.
+
+**An impossible setpoint is still accepted.** A record stating 50 bar on a 0-10
+bar loop is used as stated, saturates at 100 %, exposes `SAT +1`, keeps
+anti-windup, and manufactures no pressure. `controller-setpoint` (`warning`)
+reports it; **nothing clamps it.**
+
+#### What the calm start exposed, and what was not hidden
+
+With loops no longer pinned against a stop by a fictitious setpoint, a loop
+sitting **on** setpoint with a noisy transmitter and no process authority — a
+pressure loop on a plant whose pump is stopped — **integrates on noise**. The
+lower output stop blocks the downward half of the noise and the integrator
+ratchets up: measured on the `runtimeHydraulic` fixture, 0.3 % of output at
+20 s and 21 % at 36 minutes.
+
+That is what a PI does in AUTO on a plant it cannot affect, it predates K15,
+and it is recorded as a K16 finding rather than patched with a deadband.
+`runtimeHydraulic.test.ts`'s calm-start assertion moved from 6 to 5 decimal
+places for it — with the OLD/NEW/PHYSICAL REASON written into the test — while
+its actual subject, *no pipe above `SHUT_LEAK_MAX`*, is untouched.
+
+**Four existing tests now state the setpoint they always meant** (`SP = 50`),
+rather than inheriting it. Each one's own name said so already — "holds level
+at **SP**", "PV stuck below **SP**".
+
+### Part 2 — flow → VSD speed
+
+#### The binding, and why K14's rule could not be reused
+
+`speedLoopCandidate` walks a **pressure zone**: everywhere reachable without
+crossing a pump. Right for pressure, which is shared across a junction. **Wrong
+for flow, which divides at one** — a transmitter past a tee reads a fraction of
+the machine's output, and a loop built on it controls something it cannot see
+the whole of.
+
+`flowLoopCandidate` walks **the machine's own stream** instead: out from its
+discharge and back from its suction, node by node, stopping at the first thing
+that makes the flow no longer the pump's — a branch, a vessel, a battery limit,
+another machine. If the transmitter's edge is on that walk, it carries every
+cubic metre the machine passes and nothing else.
+
+Asked of the **K7 hydraulic topology**. No coordinate, no drawing order, no
+nearest-anything: a test moves the whole P&ID by 4000 × 2500 units and the
+binding is identical.
+
+| Case | Result |
+| --- | --- |
+| FT on the discharge line | bound to `P-1` |
+| FT on the suction line | bound to `P-1` — it is one stream |
+| FT past a tee | **no candidate.** The loop is not wired |
+| FT between two machines in series | `ambiguous`, reported, not wired |
+| machine with no `duty.vsd` | refused, `pump-speed-no-drive` |
+
+#### Orientation — the gap, stated
+
+**The instrument's installed orientation is not in this engineering model.**
+`measurementOf` takes the magnitude and documents why: a flow element does not
+know which way round it was fitted, and no record here states it. That gap is
+real and is not filled with a guess.
+
+What the loop needs is not the instrument's orientation but **the sign of the
+controlled stream**, and the walk produces it for free — each step knows whether
+it left a node by the edge's `from` end or its `to` end. So `sense` is a
+topological fact:
+
+- a line drawn with the flow → `sense +1`
+- **the same line drawn backwards** → `sense −1`, and the loop behaves
+  identically, because the transmitter reads a magnitude and the stream is the
+  same stream.
+
+Where the solved sign contradicts `sense`, K13 already says so on the machine
+itself — `pump-reverse-flow`. No second mechanism was built for it.
+
+#### Action, measured rather than inherited
+
+Open loop, in MANUAL, output walked across its range:
+
+| output | 20 % | 40 % | 60 % | 80 % | 100 % |
+| --- | --- | --- | --- | --- | --- |
+| FT | 8.82 | 17.31 | 26.00 | 34.39 | 43.05 m³/h |
+
+More speed is more flow, monotonically, from either side of the machine. So
+`action = +1` — and it is asserted from that table, not assumed because K14's
+was +1.
+
+#### Tuning — a third entry, and the reason it had to be
+
+**0.71 % of span per % of output**, nearly twice the pressure loop's 0.4 %, and
+very nearly a straight line because **capacity goes as speed where head goes as
+speed squared.** Reusing K14's `kp = 1.8` puts the loop gain at 1.28 and it does
+exactly what that means:
+
+| Kp | Ti | step 20→30 m³/h | step 15→38 m³/h | |
+| --- | --- | --- | --- | --- |
+| 1.8 | 12 | never settles, 112 % overshoot, 22 m³/h swing | | **UNSTABLE** |
+| 1.3 | 12 | 299 s, 17 % overshoot | 299 s, 6 % | degrading |
+| **1.0** | **12** | **102 s, 5 % overshoot** | **112 s, 2 %** | **chosen** |
+| 0.8 | 12 | 102 s, 3 % | 112 s, 1 % | fine, slower |
+| 0.7 | 16 | 131 s, 3 % | 188 s, 1 % | sluggish |
+
+1.0 puts the loop gain at 0.71 — the same margin K14 settled on, 1.8× below
+where this fixture goes unstable. Checked at dt = 0.2 s as well as 1 s.
+`ti` is shared with `SPEED_TUNING` because the dominant lag is the **drive's**
+2 s ramp, not the process: the hydraulics are quasi-steady.
+
+**`TUNING` was not touched.** Its entries are indexed by what a loop MEASURES;
+these two are indexed by what a loop DRIVES, which is a different question.
+
+#### Where one fixed gain stops working — pinned, not hidden
+
+Hold the discharge boundary at 2.5 barg and the machine faces 1.5 bar of
+adverse head. It makes `6.18·r²` bar of shutoff head, so below about half speed
+it delivers nothing and just above it the flow rises almost vertically. The
+process gain there is several times what the loop was tuned for, and the result
+is a **limit cycle** — measured between 3.4 and 37.6 m³/h on a ~50 s period.
+
+A test asserts exactly that: it hunts, and it hunts **boundedly** — every value
+finite, inside the instrument span, output inside its limits, integrator inside
+its clamp, solve still converged. This is not a defect in the loop, the solver
+or the drive. It is what a single fixed gain means on a centrifugal machine,
+and the honest thing is to record where it stops working rather than tune the
+fixture until the boundary never moves.
+
+#### Step response and disturbance rejection
+
+Steps of 20→30, 30→20 and 15→38 m³/h all settle inside 150 s with under 20 %
+overshoot and a settled spread at the transmitter's noise floor. A test walks
+the whole chain — output, `SPD`, `RAMP`, pump head, solved flow, FT — and
+checks each moved, with command and shaft still tens of per cent apart one
+second into a ramp.
+
+Disturbances, neither of which the controller is told about:
+
+| Disturbance | Kicked to | Recovered |
+| --- | --- | --- |
+| HV-9 100 % → 70 % | below setpoint | back to 25.00, output up 10 points |
+| BL-D 1 barg → 1.8 barg | below setpoint | back to 25.00, shaft faster |
+
+#### Saturation
+
+| Condition | Result |
+| --- | --- |
+| SP 55 m³/h (unreachable) | OP 100 %, `SAT +1`, `I` clamped at 100 and held |
+| SP 3 m³/h (below turndown) | OP 20 %, `SAT −1`, `I` held at 28 rather than unwinding |
+| no `duty.minSpeed` stated | floor is **0**. None invented |
+| fifteen minutes on a stop, then SP 25 | back on setpoint inside 200 s |
+
+#### One controller per drive
+
+Two loops writing one machine's `SPD` is a race decided by iteration order.
+K15 **unwires both** rather than picking a winner — there is no defensible rule
+for which loop owns a machine — and `pump-speed-contended` (`critical`) names
+both loops and the machine. Both keep tracking their own measurements; the
+machine sits where K12 puts a running drive. **Cascade is the real answer and
+is deliberately not this phase.**
+
+### Diagnostics added
+
+| Finding | Severity | Fires when |
+| --- | --- | --- |
+| `pump-speed-contended` | `critical` | two loops would command one drive |
+| `controller-setpoint` | `warning` | a stated setpoint outside the loop's range, or a wired loop with neither a record nor a bound PV to start one from |
+| `pump-speed-no-drive` | `warning` | extended: now covers a FLOW loop on a fixed-speed machine, and an ambiguous stream |
+
+Each check calls **the same function the wiring uses**. A check that
+re-derives a binding is a check that drifts away from what it is checking.
+
+### History
+
+A flow loop trends `SP`, `PV`, `OP` beside the machine's `SPD` and `RAMP`,
+exactly as a pressure loop does. Nothing about the pressure loop's history
+changed.
+
+### Gate
+
+```text
+3564 tests passing · 7 skipped · 0 failing      (+60)
+tsc -b clean · production build clean
+207 Playwright passing · 2 failing — the SAME two as on a5b9793
+```
+
+### Limitations
+
+- **Two loop types, one machine each.** Pressure → speed and flow → speed. No
+  cascade, no parallel-pump staging, no lead/lag — and a machine claimed by two
+  loops is refused rather than arbitrated.
+- **One fixed gain per loop type**, and the flow loop's is more
+  plant-dependent than the pressure loop's: it is set by the machine's rated
+  capacity and by the resistance in front of it. A 400 m³/h machine on the same
+  instrument span would need a tenth of it. The failure mode is pinned by a
+  test rather than described.
+- **A flow element carries no installed orientation** in this engineering
+  model. The controlled stream's sense is derived from the topology instead.
+- **PI, not PID.** Still no derivative term anywhere.
+- **No output rate limit.** The drive's own ramp is the only thing softening a
+  step.
+- **A loop at setpoint with no process authority integrates on measurement
+  noise** — reported, not patched.
+- **The bundled demo template carries no `signal.setpoint`**, so its level loop
+  now calm-starts and holds the level it finds until an operator asks for one.
