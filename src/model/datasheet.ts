@@ -64,6 +64,24 @@ export const DATASHEET_SECTIONS: Record<'general' | 'process' | 'element' | 'sig
      * share a machine.
      */
     { key: 'signal.cascadeTo', label: 'Cascade to (slave loop)' },
+    /**
+     * K21 — THE FASTEST THIS CONTROLLER'S OUTPUT MAY MOVE.
+     *
+     * A CONTROL-layer constraint, on THIS controller's own output, and not a
+     * property of the machine it drives: the same drive commanded by a
+     * different loop may be allowed to move at a different rate, and a master
+     * whose output is a setpoint has a rate limit too.
+     *
+     * DISTINCT FROM THE PHYSICAL RAMP. K12's drive already takes time to
+     * change the shaft, and a valve already strokes at a finite speed; those
+     * are what the ACTUATOR does with a command. This is how fast the command
+     * itself is permitted to change, and both apply at once.
+     *
+     * Stated with its unit — "10 %/s", "600 %/min" — because a bare rate is
+     * the classic way a factor of sixty gets into a plant. Absent means no
+     * rate limit is configured, and the output moves as the algorithm asks.
+     */
+    { key: 'signal.outputRateLimit', label: 'Output rate limit (e.g. 10 %/s)' },
     { key: 'signal.power', label: 'Power supply' },
     { key: 'signal.fail', label: 'Fail action' },
     { key: 'signal.ex', label: 'Hazardous area rating' },

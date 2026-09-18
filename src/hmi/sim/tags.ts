@@ -74,6 +74,17 @@ export interface TagDef {
   deadband?: number
   alarmDelay?: number
   priority?: 'high' | 'medium' | 'low'
+  /**
+   * K21: the fastest THIS controller's output may move, %/s
+   * (`signal.outputRateLimit`).
+   *
+   * A CONTROL-layer constraint on the command, and not the actuator's own
+   * dynamics — K12's drive ramp and a valve's stroke rate are what the
+   * hardware does with a command, and both still apply underneath this.
+   * Absent means no limit is configured and the output moves as the algorithm
+   * asks, exactly as it did before K21.
+   */
+  outputRateLimitPctPerS?: number
   /** The physical quantity this tag carries. Undefined for equipment states
    *  (a motor's RUN) and for instruments whose letters name nothing this
    *  simulation models. */
@@ -277,6 +288,12 @@ function defFor(w: HmiWidget, registry: Registry | undefined): TagDef | null {
         limits,
         deadband: num(p.deadband), alarmDelay: num(p.alarmDelay),
         priority: eng.priority ?? prio(p.priority),
+        // K21: read from the RECORD only. There is no widget prop for it and
+        // deliberately so — an output rate limit is engineering data, and the
+        // whole reason `model/signalData.ts` exists is that such data stopped
+        // living in HMI props.
+        ...(eng.outputRateLimitPctPerS !== undefined
+          ? { outputRateLimitPctPerS: eng.outputRateLimitPctPerS } : {}),
         bindTank: typeof p.bindTank === 'string' ? p.bindTank : undefined,
         bindPipe: typeof p.bindPipe === 'string' ? p.bindPipe : undefined,
         base: num(p.base),

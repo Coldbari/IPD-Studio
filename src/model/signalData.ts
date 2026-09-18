@@ -41,6 +41,21 @@ export interface SignalEngineering {
   max?: number
   limits: { LL?: number; L?: number; H?: number; HH?: number }
   priority?: AlarmPriority
+  /**
+   * K21 — the fastest this controller's OUTPUT may move, in PER CENT OF
+   * OUTPUT PER SECOND (`signal.outputRateLimit`).
+   *
+   * Always converted into %/s here, so no caller has to ask what unit it just
+   * received — the same rule every other quantity in this product follows.
+   *
+   * ABSENT MEANS NO RATE LIMIT. Not zero, which would freeze the output, and
+   * not a default: a controller whose record says nothing moves its output as
+   * fast as the algorithm asks, exactly as every controller did before K21.
+   * Nothing derives it from the drive's ramp, the valve's stroke rate, the
+   * sample time or the rated speed — those are different concepts, and §3 of
+   * the K21 brief exists because they are so easy to confuse.
+   */
+  outputRateLimitPctPerS?: number
 }
 
 const EMPTY: SignalEngineering = { limits: {} }
@@ -121,13 +136,53 @@ export function engineeringFor(registry: Registry | undefined, tag: string | und
       HH: numericField(fields, 'alarm.HH'),
     },
     priority: asPriority(fields['alarm.priority']),
+    ...(outputRate(fields['signal.outputRateLimit']) !== undefined
+      ? { outputRateLimitPctPerS: outputRate(fields['signal.outputRateLimit'])! } : {}),
   }
+}
+
+/** Seconds in each time unit a rate may legitimately be stated per. */
+const PER: Record<string, number> = {
+  s: 1, sec: 1, secs: 1, second: 1, seconds: 1,
+  min: 60, mins: 60, minute: 60, minutes: 60,
+  h: 3600, hr: 3600, hour: 3600, hours: 3600,
+}
+
+/**
+ * K21 — an output rate as an engineer writes one, in %/s.
+ *
+ * "10 %/s", "10 % / s", "600 %/min", "36000 %/h. A BARE NUMBER is %/s,
+ * because the quantity being rated is the controller output and this product
+ * has exactly one unit for that — per cent. That is the same rule
+ * `duty.minSpeed` already follows for a bare percentage, and it is a
+ * DECLARED convention rather than a guess between candidates.
+ *
+ * WHAT IS REFUSED, rather than approximated: a numerator that is not per cent.
+ * "2 m³/h/s" is a rate of something, but not of this controller's output, and
+ * there is no conversion between a flow and an output position — the same
+ * reason K18 refuses a `duty.minFlow` in m³/h on a loop ranged in l/s. Zero
+ * and negative are refused too: a zero rate limit would freeze the output for
+ * ever, which is a trip and not a rate limit, and a negative one is not a
+ * rate. All three read as NOT CONFIGURED.
+ */
+function outputRate(raw: string | undefined): number | undefined {
+  const text = raw?.trim()
+  if (!text) return undefined
+  const m = /^([-+]?\d*\.?\d+)\s*(%?)\s*(?:\/\s*([a-z]+))?$/i.exec(text.replace(/\s+/g, ' '))
+  if (!m) return undefined
+  const value = Number(m[1])
+  if (!Number.isFinite(value) || value <= 0) return undefined
+  const per = m[3]?.toLowerCase()
+  // no denominator at all is per second: "10" and "10 %" both mean 10 %/s
+  if (per === undefined) return value
+  const seconds = PER[per]
+  return seconds === undefined ? undefined : value / seconds
 }
 
 /** True when the record says nothing about signals at all. */
 export const isEmptySignal = (e: SignalEngineering): boolean =>
   e.type === undefined && e.units === undefined && e.systemTag === undefined &&
   e.setpoint === undefined && e.min === undefined && e.max === undefined &&
-  e.priority === undefined &&
+  e.priority === undefined && e.outputRateLimitPctPerS === undefined &&
   e.limits.LL === undefined && e.limits.L === undefined &&
   e.limits.H === undefined && e.limits.HH === undefined

@@ -3760,3 +3760,175 @@ plant that will call them from one that will not.
   topology (K17), PI not PID, no output rate limit, no manufacturer data, no
   scenario library (K9), pressure-only boundary dynamics (K10), mixing
   unsupported (K5).
+
+---
+
+## K21 — controller output rate limiting
+
+A CONTROL-layer constraint on how fast a controller's COMMAND may change,
+added beside the actuator dynamics K12 already had rather than in place of
+them. Both apply at once.
+
+### The signal path, no longer collapsed
+
+```text
+algorithm ──► requested OP ──► RATE LIMIT ──► commanded OP
+                 (t.OP)                          (t.OPC)
+                                                    │
+                                     SPD ──► physical ramp ──► shaft
+```
+
+Before K21 the first two were one variable. `OP` is the REQUEST — the
+algorithm's output in AUTO, the operator's slider in MANUAL — and `OPC` is the
+COMMAND that reaches the element. `OPC` is written only where a limit is
+configured, so an unconfigured plant has no second signal on the tag, nothing
+new in history, and nothing published on the loop.
+
+`LoopState` carries three of the four: `requestedOp` (the raw request, present
+only with a limit configured), `requested` (the command — and therefore the
+correct right-hand side of the `tracking` comparison) and `actual` (the shaft).
+
+### The engineering source
+
+Searched before adding. **Nothing represented a controller output rate.**
+`RAMP_S`, `COAST_S` and `STROKE_RATE` are code constants for physical actuator
+dynamics, and §3 forbids deriving a control-layer limit from them. One field,
+on the INSTRUMENT record beside `signal.cascadeTo`:
+
+| Field | Unit | Absent |
+|---|---|---|
+| `signal.outputRateLimit` | %/s | no limit at all |
+
+Parsed explicitly. `10 %/s`, `10 % / s`, `600 %/min`, `36000 %/h` → 10. A bare
+number is %/s by declared rule, because the controller output has exactly one
+unit — the same convention `duty.minSpeed` already uses for a bare percentage.
+Refused rather than approximated: zero (that is a trip), negative, a
+denominator this model has no seconds for, and a numerator that is not per cent
+(`2 m³/h/s`) — there is no conversion between a flow and an output position.
+
+### The equation
+
+```text
+maxDelta   = rate · dt
+commanded  = clamp(requested, prevCmd - maxDelta, prevCmd + maxDelta)
+```
+
+`dt` is the simulation timestep. No wall clock, no elapsed browser time, no
+timer, no accumulator. Every path out of the controller stage — AUTO, MANUAL,
+the no-setpoint hold and K16's no-authority hold — goes through one `send()`,
+because a constraint on the output path that some paths bypass is not a
+constraint on the output path.
+
+### Anti-windup: reused, not invented
+
+The clause most likely to have been a hard stop, and it was not one. The
+existing conditional integration already asks *"is the output against a stop
+the error is pushing it further into?"*, and K18 established that a new
+constraint changes WHICH STOP rather than adding a mechanism. K21 does it a
+third time, with stops that are dynamic:
+
+```text
+reachHi = min(hi,   prevCmd + rate·dt)
+reachLo = max(stop, prevCmd - rate·dt)
+```
+
+With no limit, `reachHi` IS `hi` and `reachLo` IS `stop`, and the predicate is
+character-for-character K18's. **`kp`, `ti`, `ki` and the integrator clamp are
+untouched.**
+
+### Three states that are not each other
+
+`SAT` is still judged against `hi`/`lo`, the CONFIGURED travel, and
+deliberately not against the rate window. A loop crawling to 90 % at its
+configured rate is not saturated — it has plenty of machine and simply is not
+allowed there yet. Reusing `SAT` would tell an operator the setpoint is
+unreachable when it is merely not reachable this second, which is the exact
+conflation K16 fought once already for authority.
+
+```text
+RATE LIMITED   the command is being held back by the record's rate
+SATURATED      the output is against its configured travel stop
+NO AUTHORITY   the output does not reach the process at all
+```
+
+Any combination is possible, and a rate-limited loop still HAS authority.
+
+### MANUAL
+
+Decided from the architecture, not from preference. `lo` and `hi` — this
+controller's other configured output constraints — have always clamped a hand
+command, so a constraint on the OUTPUT PATH binds in MANUAL. The minimum-flow
+override does not, because it acts on the SETPOINT and MANUAL does not use one.
+Two different answers, each following from what the constraint acts upon.
+
+The operator's entry survives in `OP`; the plate shows it beside the commanded
+value. The bumpless transfer tracks the COMMAND, because that is where the
+plant actually is.
+
+### Startup
+
+K15's calm start seeds a speed loop's `OP` and `I` at the machine's rest speed
+— 100 % for a VSD. `OPC` is undefined until the first `send`, and `prevCmd`
+falls back to `OP`, so the first command equals the first request and the
+limiter does nothing. **No jump was introduced by the limiter existing**, which
+is §7's requirement. Six of the K21 tests were written assuming a loop ramping
+up from zero and were corrected, not the code.
+
+### Both lags exist; which one binds depends on the numbers
+
+K12's drive covers its full travel in `RAMP_S` = 2 s — 50 points of speed per
+second.
+
+```text
+limit TIGHTER than 50 %/s  — the control layer binds, the drive keeps up
+limit LOOSER  than 50 %/s  — the drive binds, exactly as before K21
+no limit                   — the drive binds, exactly as before K21
+```
+
+Measured all three ways. K21 added a layer; it did not replace one, and neither
+is derived from the other.
+
+### Cascade
+
+Each controller's configured limit applies to that controller's OWN output. A
+master's output is its slave's setpoint, so a master's limit rate-limits that;
+a slave's limit rate-limits the speed command. Two limits exist only where two
+records state two. A merely rate-limited slave is NOT `downstream`
+unavailability — K17's authority is for a slave in MANUAL or one that cannot
+reach its process, not one taking the time its record permits — so the master
+keeps integrating through ordinary transients.
+
+### Minimum flow
+
+Untouched and in order: the override remains a SETPOINT constraint applied
+before the algorithm, the rate limit an OUTPUT constraint applied after it.
+Measured: with a 1 %/s limit the effective setpoint is at the minimum on the
+very first tick, however slowly the output is allowed to chase it.
+
+### Diagnostics, history and the operator surface
+
+**No diagnostic row and no alarm.** A loop moving at exactly the rate its
+record permits is the system working as designed — the same judgement K19 made
+for EFFECTIVE — and it is transient by nature, so a row would flicker on every
+setpoint change. It is a published loop state and a faceplate row.
+
+**No journal events.** 200 ticks of rate limiting write nothing; history keeps
+its existing controller-output semantics.
+
+The controller plate gains three rows, shown only when a limit is configured:
+Commanded, Actual, and the rate itself with `RATE LIMITED` while it binds — in
+the ordinary text tone, never the alarm palette, and never the saturation row.
+
+### Limitations carried
+
+- The field is per controller in per cent of output. A valve's `STROKE_RATE`
+  still applies underneath and the two have not been reconciled into one story.
+- No rate limit on a setpoint as such: a master's limit constrains its output
+  (which is its slave's setpoint), but a loop's own SP moves as fast as an
+  operator types it.
+- No separate up/down rates — one symmetric limit, because one number is what
+  a record states.
+- Carried: no off-delay, no start-up bypass, no latching (K20); no
+  recirculation, no trip, flow loops in m³/h only (K18); one cascade topology
+  (K17), PI not PID, no manufacturer data, no scenario library (K9),
+  pressure-only boundary dynamics (K10), mixing unsupported (K5).

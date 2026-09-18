@@ -73,6 +73,20 @@ export interface ControllerSpec {
   minFlowFloorPct?: number
   minFlowProblem?: string
   /**
+   * OUTPUT RATE LIMIT — K21, %/s, from THIS controller's own record
+   * (`signal.outputRateLimit`). Static for a run, like everything above.
+   *
+   * A CONTROL-layer constraint on how fast the COMMAND may change, applied
+   * between the algorithm and the final element. It is not the actuator's own
+   * dynamics: K12's drive still takes `RAMP_S` to move the shaft and a valve
+   * still strokes at `STROKE_RATE`, and both happen underneath this to
+   * whatever command comes out of it.
+   *
+   * Absent means unconstrained, and then every line below is byte-for-byte the
+   * line K14 through K20 already executed.
+   */
+  outputRatePctPerS?: number
+  /**
    * OUTPUT RANGE, per cent. Defaults 0 and 100, which is every loop that
    * existed before K14 and is what a valve's travel is.
    *
@@ -378,9 +392,9 @@ export function buildSimModel(screens: HmiScreen | HmiScreen[], registry?: Regis
    * the pass that reads the records runs after the pass that decides who is
    * actually driving.
    */
-  const controllers = wireMinFlow(resolveContention(wireCascade(
+  const controllers = wireOutputRate(wireMinFlow(resolveContention(wireCascade(
     wireFlowPumps(wirePumps(wireHeaters(wireControllers(defs), defs, net), defs, hydraulic),
-      defs, hydraulic), defs)), defs)
+      defs, hydraulic), defs)), defs), defs)
     .map((c) => {
       const pvDef = defs.find((d) => d.name === c.pvTag)
       const driver = pvDef
@@ -995,6 +1009,36 @@ function wireMinFlow(controllers: ControllerSpec[], defs: TagDef[]): ControllerS
 }
 
 /**
+ * OUTPUT RATE LIMITING — K21: which loops carry one, and how fast.
+ *
+ * Read from the CONTROLLER'S OWN record and applied to the CONTROLLER'S OWN
+ * output. That sentence is the whole of §12: a master with a limit rate-limits
+ * its own output — which happens to be its slave's setpoint — and a slave with
+ * one rate-limits the speed command it writes. Two limits exist only where two
+ * records state two, and neither is inferred from the other.
+ *
+ * NOTHING IS DERIVED. Not from the drive's `RAMP_S`, not from a valve's
+ * `STROKE_RATE`, not from the sample time, not from the rated speed. Those
+ * describe what an ACTUATOR does with a command; this describes how fast the
+ * command itself may change, and confusing the two would make the drive's
+ * physical lag look like an engineering decision somebody made.
+ *
+ * Runs LAST in the wiring pipeline because it constrains the output, and
+ * everything before it decides what the output is for: an unwired loop drives
+ * nothing and a rate limit on nothing is not worth carrying.
+ */
+function wireOutputRate(controllers: ControllerSpec[], defs: TagDef[]): ControllerSpec[] {
+  const byTag = new Map(defs.map((d) => [d.name, d]))
+  return controllers.map((c) => {
+    // a loop with no final element has no output path for a rate to constrain
+    if (c.outTag === undefined) return c
+    const rate = byTag.get(c.tag)?.outputRateLimitPctPerS
+    if (rate === undefined || !Number.isFinite(rate) || rate <= 0) return c
+    return { ...c, outputRatePctPerS: rate }
+  })
+}
+
+/**
  * The output range this loop may use.
  *
  * Only a speed loop has one that is not 0-100. Its ceiling is 100 % because
@@ -1534,6 +1578,46 @@ function step(
     }
 
     /**
+     * OUTPUT RATE LIMITING — K21. THE CONTROL LAYER'S OWN CONSTRAINT.
+     *
+     *   algorithm ──► requested OP ──► RATE LIMIT ──► commanded OP
+     *                                                      │
+     *                                            SPD ──► physical ramp ──► shaft
+     *
+     * `OP` is what was ASKED FOR and `OPC` is what was COMMANDED. They are two
+     * different numbers and K21 exists to stop them being one: an operator
+     * looking at an output of 90 while the drive is being told 50 is entitled
+     * to see both, and a plant where those differ silently is one where nobody
+     * can explain why the machine is not where the screen says.
+     *
+     * `OPC` IS ONLY WRITTEN WHEN A LIMIT IS CONFIGURED. With none, every line
+     * below is byte-for-byte the line K14 through K20 already executed, there
+     * is no second signal on the tag, and nothing new reaches history.
+     *
+     * THE TIMESTEP IS THE SIMULATION'S. `rate * dt` and nothing else — no
+     * wall clock, no elapsed browser time, no timer, no accumulator. Two
+     * identical ticks produce two identical commands.
+     */
+    const rate = c.outputRatePctPerS
+    /** The command the element is on, before this tick decides anything. */
+    const prevCmd = clamp(t.OPC ?? t.OP ?? 0, lo, hi)
+    const maxDelta = rate !== undefined ? rate * dt : Infinity
+    /**
+     * Send a request to the element THROUGH the limiter.
+     *
+     * Every path out of the controller stage goes through this — AUTO, MANUAL,
+     * held, and the no-setpoint hold — because a constraint on the output path
+     * that some paths bypass is not a constraint on the output path.
+     */
+    const send = (requested: number) => {
+      const v = rate === undefined ? requested
+        : clamp(requested, prevCmd - maxDelta, prevCmd + maxDelta)
+      if (rate !== undefined) t.OPC = v
+      drive(v)
+      return v
+    }
+
+    /**
      * MINIMUM-FLOW PROTECTION — K18. THE ENTIRE OVERRIDE IS THIS LINE.
      *
      *     effective = max(requested, declared minimum)
@@ -1580,7 +1664,23 @@ function step(
     }
 
     if ((t.MODE ?? 0) < 0.5) {
-      drive(clamp(t.OP ?? 0, lo, hi))
+      /**
+       * MANUAL AND THE RATE LIMIT — K21, §8, and it is a DIFFERENT answer from
+       * K19's for the minimum-flow override, for a reason that is not
+       * arbitrary.
+       *
+       * The override acts on the SETPOINT, and in MANUAL this runtime does not
+       * use the setpoint, so it has no path. The rate limit acts on the OUTPUT
+       * PATH, and in MANUAL the output path is exactly what the operator's
+       * hand is driving — so it does have one. The precedent is already in
+       * this line: `lo` and `hi`, the controller's other configured output
+       * constraints, have always clamped a hand command here.
+       *
+       * The operator's own entry survives in `OP`, the way K15 requires and
+       * the way the minimum-flow override leaves `SP` alone. The faceplate
+       * shows the slider's value against the value actually being commanded.
+       */
+      const cmd = send(clamp(t.OP ?? 0, lo, hi))
       // bumpless transfer: keep the integrator tracking the operator's OP
       // (I = OP − kp·e) so returning to AUTO resumes from here, no kick. With
       // no setpoint there is no error to track, so the integrator simply holds
@@ -1606,7 +1706,11 @@ function step(
        * K13's `pump-below-min-flow` continues to report the physical condition
        * throughout, from the machine rather than from the loop.
        */
-      t.I = clamp((t.OP ?? 0) - (effSp === undefined ? 0 : tune.kp * errorOf(effSp)), -100, 100)
+      // ...and the bumpless transfer tracks the COMMANDED output, because that
+      // is where the plant actually is and therefore what AUTO must resume
+      // from. Tracking the slider instead would kick by the whole rate-limited
+      // difference on the transfer.
+      t.I = clamp(cmd - (effSp === undefined ? 0 : tune.kp * errorOf(effSp)), -100, 100)
       t.SAT = 0
       continue
     }
@@ -1619,7 +1723,7 @@ function step(
      * loop with nothing to aim at holds its output, and the faceplate says the
      * setpoint is unavailable rather than showing a figure nobody set.
      */
-    if (effSp === undefined) { t.SAT = 0; drive(clamp(t.OP ?? 0, lo, hi)); continue }
+    if (effSp === undefined) { t.SAT = 0; send(clamp(t.OP ?? 0, lo, hi)); continue }
     /**
      * NO AUTHORITY, NO INTEGRATION — K16.
      *
@@ -1640,7 +1744,18 @@ function step(
      */
     if (authority !== 'available') {
       t.SAT = 0
-      drive(clamp(t.OP ?? 0, lo, hi))
+      /**
+       * K21: the HOLD holds the COMMAND, which is where the plant was left.
+       *
+       * With no rate limit configured `prevCmd` IS `clamp(t.OP, lo, hi)` and
+       * this is K16's line unchanged. With one, holding the request instead
+       * would let the limiter walk the command toward a stale number while the
+       * loop is blind — which is the opposite of a hold.
+       *
+       * A rate-limited loop still HAS authority; this branch is about not
+       * having it, and the two are never conflated. See §9.
+       */
+      send(prevCmd)
       continue
     }
     const e = errorOf(effSp)
@@ -1672,7 +1787,32 @@ function step(
      * see the override rather than infer it. With no floor, `stop` IS `lo`.
      */
     const stop = c.minFlowFloorPct !== undefined ? Math.max(lo, c.minFlowFloorPct) : lo
-    if (!((op >= hi && e > 0) || (op <= stop && e < 0))) {
+    /**
+     * ...AND NEITHER MAY IT INTEGRATE AGAINST A MOVE THE RATE LIMIT IS NOT
+     * LETTING IT MAKE — K21, §15.
+     *
+     * NO NEW ANTI-WINDUP. The existing predicate already asks exactly the
+     * right question — "is the output against a stop that the error is pushing
+     * it further into?" — and K18 already established that the answer is to
+     * change WHICH STOP rather than to add a mechanism. This is the same move
+     * a third time.
+     *
+     * The difference is that these stops are DYNAMIC: the furthest the command
+     * can go this tick is one `rate * dt` either side of where it already is,
+     * intersected with the configured travel. A loop asking for 90 whose
+     * command may only reach 50 is against a stop in exactly the sense the
+     * predicate means, and winding the integrator while it crawls there is
+     * precisely the windup this clause has always existed to prevent.
+     *
+     * With no rate limit `maxDelta` is Infinity, `reachHi` IS `hi`, `reachLo`
+     * IS `stop`, and the predicate is character-for-character K18's.
+     *
+     * NOTHING WAS RETUNED. `kp`, `ti` and `ki` are untouched, and so is the
+     * integrator's own clamp.
+     */
+    const reachHi = Math.min(hi, prevCmd + maxDelta)
+    const reachLo = Math.max(stop, prevCmd - maxDelta)
+    if (!((op >= reachHi && e > 0) || (op <= reachLo && e < 0))) {
       I = clamp(I + ki * e * dt, -100, 100)
       op = clamp(tune.kp * e + I, lo, hi)
     }
@@ -1686,8 +1826,22 @@ function step(
      * loop is satisfied there or has run out of machine, and those are very
      * different things: the second means the setpoint is not reachable.
      */
+    /**
+     * SATURATION IS STILL SATURATION — K21, §14.
+     *
+     * Judged against `hi` and `lo`, the CONFIGURED travel, and deliberately
+     * not against the rate window. A loop crawling to 90 % at its configured
+     * rate is not saturated; it has plenty of machine left and simply is not
+     * allowed to get there yet. Reusing `SAT` for that would tell an operator
+     * the setpoint is unreachable when the truth is that it is merely not
+     * reachable this second, and K16 already fought this exact conflation once
+     * for authority.
+     *
+     * RATE LIMITED, SATURATED and NO AUTHORITY are three states, and a loop
+     * can be in any combination of them.
+     */
     t.SAT = op >= hi && e > 0 ? 1 : op <= lo && e < 0 ? -1 : 0
-    drive(op)
+    send(op)
   }
 
   // 1.5) equipment dynamics: pumps spin up and coast down, valves stroke
@@ -1895,7 +2049,12 @@ function step(
       ? defByName.get(c.outTag) : undefined
     const commandedSp = sd && sd.max > sd.min && t.OP !== undefined
       ? sd.min + (clamp(t.OP, 0, 100) / 100) * (sd.max - sd.min) : undefined
-    const requested = c.outTag !== undefined ? t.OP : undefined
+    /**
+     * K21: THE COMMAND, not the request. `OPC` exists only where a rate limit
+     * is configured, so with none this is `t.OP` exactly as it always was.
+     */
+    const requested = c.outTag !== undefined ? (t.OPC ?? t.OP) : undefined
+    const requestedOp = c.outputRatePctPerS !== undefined ? t.OP : undefined
     loops[c.tag] = {
       tag: c.tag,
       mode: (t.MODE ?? 0) >= 0.5 ? 'AUTO' : 'MANUAL',
@@ -1903,7 +2062,20 @@ function step(
       ...(v.blockedBy !== undefined ? { blockedBy: v.blockedBy } : {}),
       ...(c.outTag !== undefined ? { actuator: c.outTag } : {}),
       ...(requested !== undefined ? { requested } : {}),
+      ...(requestedOp !== undefined ? { requestedOp } : {}),
       ...(actual !== undefined ? { actual } : {}),
+      ...(c.outputRatePctPerS !== undefined
+        ? {
+            outputRatePctPerS: c.outputRatePctPerS,
+            /**
+             * BINDING, not merely configured. The limit is in force all the
+             * time; this says whether it is currently costing the loop
+             * anything, which is the only part an operator needs to react to.
+             */
+            rateLimited: requestedOp !== undefined && requested !== undefined
+              && Math.abs(requestedOp - requested) > 1e-9,
+          }
+        : {}),
       // the SAME deviation limit a stuck valve's DEV alarm already uses; no new
       // threshold was introduced for this
       tracking: requested !== undefined && actual !== undefined

@@ -138,7 +138,15 @@ export interface LoopState {
   authority: ControlAuthority
   /** The final element, when the loop has one. */
   actuator?: string
-  /** What the controller asked the actuator for, %. */
+  /**
+   * What the controller asked the ACTUATOR for, %.
+   *
+   * K21: this is the COMMANDED output — the value after any configured output
+   * rate limit, because that is what the element was actually told. It is the
+   * right side of the `tracking` comparison for the same reason: an actuator
+   * is following, or failing to follow, the command it was given and not a
+   * number the algorithm kept to itself.
+   */
   requested?: number
   /**
    * What the actuator ACTUALLY is — a valve's stroked `POS`, a drive's shaft
@@ -148,6 +156,33 @@ export interface LoopState {
   actual?: number
   /** True while the two differ by more than the existing deviation limit. */
   tracking: boolean
+  /**
+   * K21 — WHAT THE ALGORITHM ASKED FOR, before the output rate limit.
+   *
+   * Present ONLY on a loop whose record configures a rate limit; with none
+   * there is nothing for it to differ from and publishing a duplicate of
+   * `requested` would invite somebody to compare them and find them always
+   * equal. Three values, kept apart:
+   *
+   *     requestedOp  90 %   the algorithm (or the operator's hand) asked
+   *     requested    60 %   the rate limit allowed, and the element was told
+   *     actual       45 %   the shaft has reached so far
+   */
+  requestedOp?: number
+  /**
+   * K21 — true while the rate limit is actually HOLDING THE OUTPUT BACK.
+   *
+   * NOT the same as `saturated`, which is the configured travel, and NOT the
+   * same as an unavailable `authority`. A rate-limited loop is working: it has
+   * authority, it has machine left, and it is moving as fast as its record
+   * permits. That is why it carries no severity anywhere and produces no
+   * diagnostic row — see the K21 report.
+   */
+  rateLimited?: boolean
+  /** K21 — the configured limit itself, %/s, so the faceplate can show what is
+   *  constraining the loop without deriving it a second time. Absent means the
+   *  record states none and the plate shows nothing rather than a zero. */
+  outputRatePctPerS?: number
   /**
    * WHICH machine is de-energised, when that is why authority is gone.
    *

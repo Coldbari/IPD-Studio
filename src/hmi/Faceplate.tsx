@@ -617,6 +617,44 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
               onChange={(e) => write(tag, 'OP', Number(e.target.value))} style={{ width: '100%', marginTop: SCALE.space.md }} />
             <div className="fp-kv"><span className="k">Output</span>
               <span className="v">{(t.OP ?? 0).toFixed(1)}<span className="u">%</span></span></div>
+            {/* OUTPUT RATE LIMITING — K21, §18. THREE NUMBERS THAT ARE NOT ONE.
+                The slider above is what was ASKED FOR. This is what the element
+                was actually TOLD, and the actuator's own value beside it is how
+                far the machine has got. Collapse any two and an operator
+                watching a drive sit at 45 while the screen says 90 has no way
+                to tell a rate limit from a fault.
+                Only shown when a limit is CONFIGURED: with none the three
+                numbers cannot differ and the rows would be noise. No fabricated
+                default is ever displayed. */}
+            {loop?.outputRatePctPerS !== undefined && (
+              <>
+                <div className="fp-kv" data-testid="fp-op-commanded" data-limited={loop.rateLimited ? 'yes' : 'no'}>
+                  <span className="k">Commanded</span>
+                  <span className="v">{(loop.requested ?? 0).toFixed(1)}<span className="u">%</span></span>
+                </div>
+                {loop.actual !== undefined && (
+                  <div className="fp-kv" data-testid="fp-op-actual">
+                    <span className="k">Actual</span>
+                    <span className="v">{loop.actual.toFixed(1)}<span className="u">%</span></span>
+                  </div>
+                )}
+                {/* A RATE LIMIT IS NOT A FAULT. A loop moving at exactly the
+                    rate its record permits is the system working as designed,
+                    so this takes the ordinary text tone and never the alarm
+                    palette — the same judgement K19 made for EFFECTIVE. It is
+                    also deliberately NOT the saturation row above: that one is
+                    about running out of machine, and this one is about not
+                    being allowed there yet. */}
+                <div className="fp-kv" data-testid="fp-op-rate" data-rate-limited={loop.rateLimited ? 'yes' : 'no'}>
+                  <span className="k">Rate limit</span>
+                  <span className="v" style={{
+                    color: loop.rateLimited ? theme.textSecondary : theme.textMuted,
+                  }}>
+                    {loop.outputRatePctPerS.toFixed(1)} %/s{loop.rateLimited ? ' · RATE LIMITED' : ''}
+                  </span>
+                </div>
+              </>
+            )}
             {/* SATURATION, SAID RATHER THAN IMPLIED. An output resting at its
                 limit is either a satisfied loop or one that has run out of
                 machine, and only the second means the setpoint is unreachable.

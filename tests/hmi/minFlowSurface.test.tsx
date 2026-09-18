@@ -321,6 +321,75 @@ describe('K20 — the pump\'s plate says whether the limit is alarmed', () => {
   })
 })
 
+/**
+ * K21 — THE THREE NUMBERS AN OUTPUT RATE LIMIT MAKES DIFFERENT.
+ *
+ * Without them an operator watching a drive sit at 45 % while the screen says
+ * 90 % has no way to tell a configured rate limit from a fault. Shown ONLY
+ * when a limit is configured, because with none the three cannot differ.
+ */
+describe('K21 — the controller plate shows requested, commanded and actual', () => {
+  const rated = (rate: string): Registry => ({
+    ...reg('20 m³/h'),
+    'FIC-1': { key: 'FIC-1', kind: 'instrument', fields: { 'signal.outputRateLimit': rate } },
+  })
+
+  it('no limit configured means no extra rows at all', async () => {
+    start(reg('20 m³/h'))
+    lineUp(30); advance(200)
+    const host = await mount(<Faceplate widget={w('fic')} onClose={() => {}} />)
+    expect(q(host, 'fp-op-rate')).toBeNull()
+    expect(q(host, 'fp-op-commanded')).toBeNull()
+    // ...and the plate is otherwise exactly the plate K20 shipped
+    expect(q(host, 'fp-op')).not.toBeNull()
+  })
+
+  it('a configured limit shows the rate, and is plain while it is not binding', async () => {
+    start(rated('20 %/s'))
+    lineUp(30); advance(400)
+    const host = await mount(<Faceplate widget={w('fic')} onClose={() => {}} />)
+    const rate = q(host, 'fp-op-rate')!
+    expect(rate.textContent).toContain('20.0 %/s')
+    // a settled loop is not being held back, so no RATE LIMITED and no alarm tone
+    expect(rate.getAttribute('data-rate-limited')).toBe('no')
+    expect(rate.textContent).not.toContain('RATE LIMITED')
+  })
+
+  it('...and says RATE LIMITED, in the ORDINARY tone, while it is', async () => {
+    start(rated('2 %/s'))
+    lineUp(25); advance(400)
+    await act(() => { sim().writeTag('FIC-1', 'SP', 55) })
+    advance(1)
+    const host = await mount(<Faceplate widget={w('fic')} onClose={() => {}} />)
+    const rate = q(host, 'fp-op-rate')!
+    expect(rate.getAttribute('data-rate-limited')).toBe('yes')
+    expect(rate.textContent).toContain('RATE LIMITED')
+    /**
+     * A RATE LIMIT IS NOT A FAULT. A loop moving at exactly the rate its
+     * record permits is the system working, so it never takes the alarm
+     * palette — the same judgement K19 made for EFFECTIVE. The SATURATION row,
+     * which IS a warning, is a different row about a different thing.
+     */
+    expect(rate.querySelector('.v')!.getAttribute('style'))
+      .not.toContain('alarm')
+  })
+
+  it('the requested, commanded and actual values are three separate rows', async () => {
+    start(rated('2 %/s'))
+    lineUp(25); advance(400)
+    await act(() => { sim().writeTag('FIC-1', 'SP', 55) })
+    advance(1)
+    const host = await mount(<Faceplate widget={w('fic')} onClose={() => {}} />)
+    const request = Number((q(host, 'fp-op')! as HTMLInputElement).value)
+    const command = Number(q(host, 'fp-op-commanded')!.textContent!.replace(/[^\d.-]/g, ''))
+    const actual = Number(q(host, 'fp-op-actual')!.textContent!.replace(/[^\d.-]/g, ''))
+    // the slider still shows what the ALGORITHM asked for
+    expect(request).toBeGreaterThan(command)
+    expect(q(host, 'fp-op-commanded')!.getAttribute('data-limited')).toBe('yes')
+    expect(Number.isFinite(actual)).toBe(true)
+  })
+})
+
 // ── The Diagnostics page ────────────────────────────────────────────────────
 
 describe('the Diagnostics page carries it on LIVE, among the control loops', () => {
