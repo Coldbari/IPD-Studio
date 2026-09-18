@@ -1935,3 +1935,83 @@ tsc -b clean · production build clean
 | P2 | **No `duty.maxSpeed`.** A machine that genuinely cannot run to rated still cannot say so, and the 100 % ceiling remains the curve's domain. |
 | P2 | `duty.speed` is declared and unconsumed. It is a rated speed in rpm and must never be read as a percentage ceiling. |
 | P2 | Carried: no setpoint rate limiting (K21–K25); no off-delay, start-up bypass or latching (K20); no recirculation or trip (K18); one cascade topology (K17), PI not PID, no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |
+
+---
+
+## 41. Step K27 — datasheet capability and the model-truth boundary
+
+A data-model audit. **No field was added, no value invented, no runtime
+behaviour changed, no serialization touched.**
+
+### The inventory
+
+All **81 declared fields**, cross-checked against what the runtime actually
+reads. **24 are consumed**; the rest a record may state and nothing looks at.
+That is legitimate — a datasheet carries far more than a simulator needs — and
+it is exactly why the classes have to be written down.
+
+`src/model/capability.ts` records the equipment side in four classes:
+
+| Class | Meaning | Examples |
+|---|---|---|
+| **ENGINEERING** | a record states it, the runtime reads it | `duty.capacity`, `duty.head`, `duty.vsd`, `duty.minSpeed`, `duty.minFlow`, `duty.power` |
+| **DECLARED** | a record may state it, nothing reads it | `duty.speed`, `duty.designTemperature`, `element.cv`, `element.characteristic`, `actuation.actuator` |
+| **ASSUMPTION** | the model states it because no record does | `RAMP_S`, `COAST_S`, `STROKE_RATE`, `VALVE_K`, `PIPE_K` |
+| **DOMAIN** | the range a quantity is defined on | speed 0–100 %, valve position 0–100 %, controller output 0–100 % |
+
+### The rule, made unbreakable
+
+The danger is one-directional: an item moving from ASSUMPTION to ENGINEERING
+because a convenient default exists. So the central test is **behavioural**,
+not a restatement of the table — for every `DECLARED` field it builds the same
+plant twice, once with the field stated and once without, and compares a
+120-tick trace of eight signals. A control case proves the comparison can tell
+the difference. Wiring one in without reclassifying it now fails a test rather
+than changing a plant for a reason nobody wrote down.
+
+### Rated speed is not a maximum
+
+`duty.speed` is declared, consumed **nowhere**, and means **rated rpm**. The
+pump curve is parameterised by *fraction* of rated speed and never by rpm, so
+there is **no relationship through which it could enter the physics** — and
+none was invented. Doubling it changes nothing, measured.
+
+It would become necessary only if a maximum speed in rpm ever arrived, which
+is what it would be converted against. **No such concept exists**: the audit
+searched for a maximum, an overspeed, a motor or drive limit and a rated-speed
+ceiling, and found none. A rated speed is the speed a machine is designed to
+run *at*, not a limit it may not pass — and a drive commanded above rated is a
+real thing a real plant does.
+
+### Two fields that describe modelled physics and are not read
+
+`element.cv` is *the* parameter that would set a valve's hydraulic resistance;
+the solver uses `VALVE_K`, one constant for every valve. `element.characteristic`
+can say LINEAR while `R = K/f⁴` is equal-percentage-ish for everything. Neither
+is a defect — `PIPE_K`'s own comment already records that diameter would enter
+if the record ever held one — but both are now classified rather than merely
+true.
+
+### Serialization
+
+`EngineeringRecord.fields` is a free-form `Record<string, string>` keyed by
+field id, so the stored shape never depended on the catalogue. A project
+carrying an undeclared field round-trips and runs identically — proven rather
+than assumed.
+
+### State after K27
+
+```text
+4086 tests passing · 7 skipped · 0 failing  (+29)
+tsc -b clean · production build clean
+209 Playwright passing · 16 skipped · 0 failing
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P2 | **`element.cv` and `element.characteristic` are declared and unmodelled.** Wiring either in is a hydraulic modelling decision with a stated physical relationship, not a spare-field opportunity. |
+| P2 | **No maximum speed, and no engineering owner for any physical rate.** Both need a datasheet decision before a schema one. |
+| P2 | **33 fields are consumed nowhere**, and the product does not distinguish, on the form, which fields reach the simulation. That is a UI question this phase deliberately did not open. |
+| P2 | Carried: no setpoint rate limiting (K21–K25); no off-delay, start-up bypass or latching (K20); no recirculation or trip (K18); one cascade topology (K17), PI not PID, no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |
