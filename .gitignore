@@ -29,3 +29,17 @@ zz*.html
 docs/superpowers/
 docs/ENGINEERING-PLATFORM-PLAN.md
 docs/DWG-IMPORT-SPIKE.md
+
+# Editor and IDE state — per-developer, never shared
+.vscode/
+.idea/
+*.swp
+
+# Build and tool caches. `tsc -b` emits one .tsbuildinfo per project, so match
+# them all rather than only the root one named above.
+*.tsbuildinfo
+.vite/
+playwright/.cache/
+
+# Log files. .gstack/ already covers its own; this catches strays elsewhere.
+*.log
