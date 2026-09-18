@@ -42,6 +42,54 @@ case and rough seat count. Pricing depends on scope; responses are quick.
 Startups, small consultancies, and single-seat users get proportionate pricing —
 ask.
 
+## 3. Commercial license categories
+
+Commercial use is licensed in four categories. They differ in *what you are
+permitted to do*, not in which build you get — there is one codebase.
+
+**These categories describe scope, not settled terms.** Every one of them is
+granted only through a **separate written commercial agreement**, negotiated
+case by case. The descriptions below exist so you can tell which conversation
+to start; they are not an offer, and nothing in them is a commitment.
+
+| Category | For | Scope of the separate agreement |
+|---|---|---|
+| **Commercial** | A company using IPD Studio for its own work | Internal business use, paid client and consulting work, paid training delivery. Per-seat. No redistribution, no embedding, no hosting for third parties. |
+| **Enterprise** | A larger organization wanting coverage across teams | The same permitted uses, scoped organization-wide rather than per named seat, with commercial terms agreed in writing. |
+| **OEM** | A company embedding IPD Studio in a product it sells | Embedding, redistribution, and — where the agreement expressly says so — source-code access, modification rights, and sublicensing to that company's customers. See [OEM-LICENSE-TEMPLATE.md](OEM-LICENSE-TEMPLATE.md), a **draft term sheet for legal review, not a license grant**. |
+| **SaaS** | A company hosting IPD Studio for its own customers | Operating IPD Studio as a hosted or white-labeled service for third parties. |
+
+### What is true of all four
+
+- **The public PolyForm Noncommercial license does not grant commercial rights
+  of any kind.** [LICENSE](LICENSE) permits noncommercial purposes only, and its
+  "No Other Rights" section states that it does not allow you to sublicense or
+  transfer your license to anyone else. Commercial rights come from a separate
+  agreement or they do not exist. Reading this file is not a grant; neither is
+  having the source, which is public.
+- **Non-exclusive by default.** A commercial license does not restrict the
+  copyright holder from licensing IPD Studio to anyone else, on any terms.
+  PolyForm's "No Other Rights" section expressly preserves that freedom. Any
+  departure from non-exclusivity would have to be negotiated, priced and
+  written down specifically — assume it is not on the table unless it is.
+- **No published price list.** Pricing depends on scope, seat count and
+  deployment model. Email with your use case and you will get a figure for
+  yours.
+- **What the agreement covers is what the agreement says.** Support
+  commitments, response times, warranties, indemnities, liability limits,
+  sublicensing rights, update entitlements and exclusivity are **not** implied
+  by any category above, are not promised here, and exist only where a signed
+  agreement sets them out.
+- **Third-party obligations travel with the code.** Any commercial licensee
+  receives the same third-party dependencies on their own terms, including
+  `@joint/core` under MPL-2.0. See [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
+- **The noncommercial license is unaffected.** Selling commercial licenses
+  changes nothing for the users in section 1. The two run in parallel over the
+  same code.
+
+**To start:** email praharshchamp610@gmail.com with what you want to do, roughly
+how many people, and whether you are embedding, hosting or just using it.
+
 ## Which one do I need?
 
 | You want to… | License needed |
