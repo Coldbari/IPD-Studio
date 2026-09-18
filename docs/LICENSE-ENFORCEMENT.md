@@ -18,11 +18,35 @@ or failed to publish source — commercial use *is* the violation.
 | Hosted, modified, source published | Permitted | **Violation** |
 | Student / university / NGO / govt use | Permitted | Permitted |
 
-⚠️ **Anyone can still lawfully use v0.12.1 or earlier under the AGPL,
-commercially.** Before sending any notice, establish *which version* they
-have. Check their bundle for the `@license` banner (it carries the version) or
-for post-0.13.0 features. Accusing someone over a legitimately AGPL-licensed
-copy is the one mistake that costs you credibility.
+### The boundary, exactly
+
+The relicence is a single commit, and that commit — not a version number — is
+the reliable boundary:
+
+```
+978d84b   2026-09-01T13:19:19Z   feat: v0.13.0 — PolyForm licensing, accounts, and cloud drawings
+```
+
+Everything from `978d84b` forward is PolyForm. Its parent and everything before
+it is AGPL-3.0-only. Verify with `git show 978d84b^:LICENSE | head -2`.
+
+Note that the published documents describe the AGPL era as running "up to and
+including v0.12.1", but no `v0.11.x` or `v0.12.x` tag or GitHub Release exists —
+the highest AGPL-era tag is `v0.10.0`, and those later versions were deployed as
+hosted builds rather than tagged. Quote the commit boundary, not the version,
+in anything you send.
+
+⚠️ **AGPL rights to pre-relicence versions are perpetual and cannot be
+revoked.** AGPL-3.0 §2 states the rights it grants "are irrevocable provided
+the stated conditions are met". The relicence changed the terms for *new*
+releases; it took nothing away from anyone who already had an older one.
+**Anyone holding a pre-`978d84b` copy may use it commercially, modify it, and
+redistribute it under the AGPL — lawfully, and with nothing owed to you.**
+
+Before sending any notice, establish *which version* they have. Check their
+bundle for the `@license` banner (it carries the version) or for post-0.13.0
+features. Accusing someone over a legitimately AGPL-licensed copy is the one
+mistake that costs you credibility.
 
 ## 1. Fingerprints already in the code
 
@@ -32,8 +56,9 @@ GitHub code search find them in minified bundles too:
 
 - `@license IPD Studio v` — the build banner, injected by `vite.config.ts`
   and preserved through minification. Its presence dates their copy.
-- `SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0` — on all 137 source
-  files. Present in any copy of the *source*; its deliberate removal is
+- `SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0` — on 303 of the 304
+  source files as of v0.22.0 (the exception is `src/vite-env.d.ts`, a one-line
+  type reference). Present in any copy of the *source*; its deliberate removal is
   evidence of wilfulness, which matters for damages.
 - `application/x-pnid` (the file MIME type)
 - `.pnid` file extension + `schemaVersion` JSON shape
@@ -48,8 +73,17 @@ GitHub code search find them in minified bundles too:
   [`application/x-pnid`](https://github.com/search?q=%22application%2Fx-pnid%22&type=code)
   and [`instr.bubble`](https://github.com/search?q=%22instr.bubble%22+%22hmi-spin%22&type=code)
   — anything outside `Coldbari/IPD-Studio` and its forks deserves a look.
-  Note the two pre-existing forks (`GonzaloMig`, `dk009dk`) hold perpetual
-  AGPL rights to the code as it stood at fork time; they are not violations.
+  Check the fork list before assuming anything: `gh api
+  repos/Coldbari/IPD-Studio/forks -q '.[] | "\(.full_name) \(.created_at)"'`.
+  **Six forks were created before the relicence** (`2026-09-01T13:19:19Z`) and
+  hold perpetual AGPL rights to the code as it stood at fork time —
+  `dk009dk`, `GonzaloMig`, `PriceTT`, `hj91`, `Akashashokan`, `ugljesa1987`.
+  **They are not violations, whatever they do commercially with that code.**
+  Forks created after that timestamp (`zantiu`, `Excalibur-osu`, `dsmithnh3` at
+  the time of writing) received PolyForm-licensed code instead. Note that a
+  fork's *current* LICENSE file shows only what it last synced — `dk009dk` now
+  displays PolyForm, which does not remove the AGPL rights it already
+  received.
 - **Google / Bing:** `"IPD Studio"`, `"P&ID editor" "hmi-spin"`,
   `intext:"application/x-pnid"`. Add `-github.com` to surface commercial sites.
 - **Google Alerts** (one-time setup at google.com/alerts): alerts for
