@@ -200,6 +200,21 @@ export const EQUIPMENT_CAPABILITY: readonly CapabilityFact[] = [
     absent: null,
   },
   {
+    id: 'tankFullHeadBar',
+    cls: 'ASSUMPTION',
+    meaning: 'the static head a full vessel puts on its outlet, 0.3 bar, proportional to '
+      + 'level. One figure for every vessel because no drawing carries a vessel height. '
+      + 'ITS JUSTIFICATION IS A WATER ASSUMPTION AND K32 RECORDS IT AS ONE: the docblock '
+      + 'calls it “≈ 3 m of liquid”, and 0.3 bar over 3 m implies ρ = 0.3e5/(3·g) = 1019.7 '
+      + 'kg/m³. Unlike a pump’s `duty.head` this is NOT converted against the service, and '
+      + 'that asymmetry is deliberate: a pump’s metres are stated by an engineer, a '
+      + 'vessel’s three metres are stated by nobody, and converting a length no record '
+      + 'contains would be inventing an elevation. Reconciling the two is a K33 decision '
+      + 'and needs a vessel height to become real data first',
+    unit: 'bar at 100 % level',
+    absent: null,
+  },
+  {
     id: 'VALVE_K',
     cls: 'ASSUMPTION',
     meaning: 'one resistance coefficient for every valve, sized so a default machine '
@@ -548,3 +563,57 @@ export const HYDRAULIC_RESISTANCE_IS_FLUID_INDEPENDENT = true
  * when it cannot answer rather than returning a plausible number.
  */
 export const HYDRAULIC_BOUNDARY_IS_DECLARED = true
+
+/**
+ * K32 — THE FLUID-COUPLING CONSISTENCY AUDIT, AND WHAT IT FOUND.
+ *
+ * K31 drew a boundary through the middle of the hydraulics: density couples the
+ * pump head where a record states a LENGTH, and nothing else. A boundary is
+ * only honest if it sits in the same place everywhere, so K32 searched for
+ * every water-shaped constant and every density consumer in the product and
+ * checked. It changed no equation.
+ *
+ * ── CONSISTENT ────────────────────────────────────────────────────────────
+ *
+ * RESISTANCE. Exactly two things modify `ProcessEdge.resistance` at solve time:
+ * `valveResistance(openFraction)`, a function of POSITION, and `pipeFactor`,
+ * the plugged-line scenario — a geometric restriction. Neither takes a density,
+ * a fluid, a viscosity or a temperature, and nothing else writes R at all.
+ *
+ * DENSITY CONSUMERS. Two, and only one reads the value: `hydraulic/fluidhead.ts`
+ * turns it into a pump head, and `sim/fluids.ts`'s `hasProperties` only asks
+ * whether it is present. Viscosity and heat capacity are consumed nowhere.
+ *
+ * THE PUMP CURVE is in PRESSURE end to end. `duty.head` is the head AT the
+ * rated flow, runout sits at 1.5× it, and the metres→bar conversion happens
+ * ONCE, upstream of the curve — so the coupling cannot be applied twice, and
+ * density commutes exactly with the speed² affinity law.
+ *
+ * THE SUCTION CHECK is not an NPSH calculation, says so in capitals, and reads
+ * no density, no vapour pressure and no temperature. K31 did not change it and
+ * could not have: it never consults the pump's head.
+ *
+ * PRESSURE BASIS. Bar absolute in the solve; gauge→absolute happens once, in
+ * `operatingPressure`, on the engineering side. K6/K7 unchanged.
+ *
+ * ── TWO FINDINGS, RECORDED AND NOT FIXED ──────────────────────────────────
+ *
+ * 1. THE VESSEL STATIC HEAD carries an unrecorded water basis — see the
+ *    `tankFullHeadBar` row above. Three water densities now exist in this
+ *    product and no two are equal: 1019.7 kg/m³ in the vessel head, 1000.016
+ *    in the legacy pump-head basis, 1000 in `LIQUID_CP_KJ_PER_M3_K`. None was
+ *    written as a density before K31 and K32; none is wrong; they simply were
+ *    never reconciled because nothing required them to be.
+ *
+ * 2. THE SUCTION CHECK SOURCES A VESSEL AT ATMOSPHERE plus its static head,
+ *    while the runtime solver sources the same vessel at its STATED OPERATING
+ *    PRESSURE plus the same static head. A closed vessel is therefore checked
+ *    as if vented, understating `sourcePressure` and `maxFlow`. This is
+ *    fluid-INDEPENDENT — it is a divergence between two pressure sources, not
+ *    a density defect — so it is a pressure-convention question for K33.
+ *
+ * Both are pinned by `tests/model/fluidConsistency.test.ts`, which asserts the
+ * CURRENT behaviour so that changing either has to come past a test that says
+ * what is being changed and why.
+ */
+export const FLUID_COUPLING_AUDITED = true
