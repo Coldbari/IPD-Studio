@@ -2193,3 +2193,88 @@ tsc -b clean · production build clean
 | P2 | **No characteristic vocabulary, representation or position→coefficient map.** Three separate decisions, all absent. |
 | P2 | **Pipe length exists nowhere**, and nominal size is not an inside diameter. |
 | P2 | Carried: no maximum speed or physical-rate owner (K26/K27); no setpoint rate limiting (K21–K25); one cascade topology (K17), PI not PID, pressure-only boundary dynamics (K10), mixing unsupported (K5). |
+
+---
+
+## 44. Step K30 — the hydraulic physics boundary, decided
+
+A decision phase. **No equation changed.** The only source change is one
+capability row and three documentation constants.
+
+### The decision
+
+**The hydraulic model is FLUID-INDEPENDENT.** It does not consume
+`Fluid.densityKgM3` and is not intended to. Every resistance is a **calibrated
+simulator coefficient** with any fluid effect already baked in — not an
+engineering pipe or valve coefficient, and never to be described as one.
+
+### The claim that supports
+
+**Training and demonstration process simulation**: a plant that responds
+causally, in the right direction, with the right shapes and the right
+interactions between control, protection and hydraulics. **Not** an engineering
+hydraulic calculation, and **not** a prediction of a particular manufacturer's
+equipment. The equations support the first and not the other two, and K30
+declined to upgrade the claim merely because fields could one day be added.
+
+### The one place a density already sits
+
+`duty.head` is stated in **metres**, as a pump curve is written, and converts at
+1 bar = 10.197 m — which is **water**. Measured:
+
+| Fluid | ρ | 35 m really is | model says |
+|---|---|---|---|
+| water | 1000 | 3.432 bar | 3.432 bar |
+| sulphuric acid | 1840 | 6.315 bar | 3.432 bar (**−46 %**) |
+| petrol | 740 | 2.540 bar | 3.432 bar (**+35 %**) |
+
+It is now **recorded as an ASSUMPTION** in the capability table rather than
+corrected. Correcting only that would make the model *partly* fluid-aware —
+the state `sim/fluids.ts` warns about by name: a half-applied correction is
+worse than none, because the numbers still look right. Stating `duty.head` in
+bar bypasses the conversion entirely.
+
+### The rest of the boundary
+
+- **Pressure basis** — the solve is bar absolute; a record is read as *gauge*
+  unless its unit says otherwise. K6/K7 unchanged, no second convention.
+- **Multi-fluid** — `fluids.ts` resolves a service per edge and reports MIXED,
+  so the model knows which stream is which. **The hydraulics do not distinguish
+  their physics at all.** Stated, not papered over.
+- **Mixing** — not implemented, not designed. Would need mass fractions,
+  component properties, mixture density and viscosity rules, and an energy
+  balance.
+- **The pump curve is a HYBRID** — two engineering inputs (`duty.head` at rated
+  flow, `duty.capacity`) feeding a **shape the model assumes**. `RUNOUT_FACTOR`
+  = 1.5 and the affinity scaling are the model's. It is "the shape of a
+  centrifugal curve, which is all the model claims" — not vendor performance
+  data.
+- **Validity** — one incompressible liquid, single phase, quasi-steady. No
+  vapour, phase change, compressibility, elevation beyond a vessel's own liquid
+  head, transient acoustics or Reynolds dependence, so no laminar/turbulent
+  distinction. Gas and two-phase are outside the model entirely.
+
+### What is *not* the obstacle
+
+The **solver architecture** could accept a fluid-dependent resistance without
+touching node pressure, edge flow or boundary semantics — resistance is already
+a per-edge scalar and a stream is already resolved per edge. Pump head would
+need density passed in, a callback signature change. **The numerical
+architecture is not the obstacle; the engineering data is.**
+
+### State after K30
+
+```text
+4164 tests passing · 7 skipped · 0 failing  (+20)
+tsc -b clean · production build clean
+209 Playwright passing · 16 skipped · 0 failing
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P2 | **The eight prerequisites are unchanged** — K30 decided, it did not shorten K29's list. One of the eight exists (density as data). A fluid-coupled model remains a future phase with a written contract. |
+| P2 | **`duty.head` in metres carries a water basis**, now named. Any plant on a fluid materially denser or lighter than water has a pump pressure that is wrong by that ratio, and the record says so. |
+| P2 | **Multi-fluid plants get one set of hydraulics.** The model knows the services apart and treats them identically. |
+| P2 | Carried: no maximum speed or physical-rate owner (K26/K27); no setpoint rate limiting (K21–K25); one cascade topology (K17), PI not PID, pressure-only boundary dynamics (K10), mixing unsupported (K5). |

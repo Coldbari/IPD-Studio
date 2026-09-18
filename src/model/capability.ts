@@ -203,6 +203,18 @@ export const EQUIPMENT_CAPABILITY: readonly CapabilityFact[] = [
     absent: null,
   },
   {
+    id: 'HEAD metres → bar',
+    cls: 'ASSUMPTION',
+    meaning: 'a pump’s `duty.head` is stated in METRES, as a pump curve is written, and the '
+      + 'model converts it at 1 bar = 10.197 m — which is WATER. Measured: a machine stated '
+      + 'at 35 m delivers 3.432 bar for every fluid, against 6.315 bar on sulphuric acid '
+      + '(ρ 1840, +84 %) and 2.540 bar on petrol (ρ 740, −26 %). THE ONE PLACE A DENSITY '
+      + 'ALREADY HIDES in this model, and K30 names it rather than leaving it in a units '
+      + 'table. Stating `duty.head` in BAR bypasses the conversion entirely',
+    unit: 'bar per metre of liquid',
+    absent: null,
+  },
+  {
     id: 'PIPE_K',
     cls: 'ASSUMPTION',
     meaning: 'line loss for one pipe run. Its own comment already records that diameter '
@@ -442,3 +454,93 @@ export const HYDRAULIC_MODEL_PREREQUISITES = true
  * coefficient. None of the three exists.
  */
 export const NO_SCHEMA_WITHOUT_A_RUNTIME_RELATIONSHIP = true
+
+/**
+ * THE HYDRAULIC MODEL IS FLUID-INDEPENDENT — K30's decision, made explicitly.
+ *
+ * ── THE DECISION ──────────────────────────────────────────────────────────
+ *
+ * The hydraulic model does NOT consume `Fluid.densityKgM3`, and is not
+ * intended to. Every resistance is a CALIBRATED SIMULATOR COEFFICIENT with any
+ * fluid effect already baked into it, sized so a default machine through a
+ * typical path settles at its rated duty. They are not engineering pipe or
+ * valve coefficients and must never be described as ones.
+ *
+ * ── WHAT THE PRODUCT THEREFORE CLAIMS ─────────────────────────────────────
+ *
+ * TRAINING AND DEMONSTRATION PROCESS SIMULATION: a plant that responds
+ * causally and in the right direction, with the right shapes and the right
+ * interactions between control, protection and hydraulics. It is NOT an
+ * engineering hydraulic calculation and NOT a prediction of a particular
+ * manufacturer's equipment. The equations support the first claim and not the
+ * other two, and K30 declined to upgrade the claim merely because fields could
+ * one day be added.
+ *
+ * ── THE ONE PLACE A DENSITY ALREADY SITS ──────────────────────────────────
+ *
+ * `duty.head` in metres converts at a water basis — see the `HEAD metres → bar`
+ * row above. It is recorded as an ASSUMPTION rather than corrected, because
+ * correcting only that would make the model PARTLY fluid-aware, which is the
+ * state `sim/fluids.ts` warns about by name: a half-applied correction is
+ * worse than none, because the numbers still look right.
+ *
+ * ── WHAT WOULD HAVE TO BE TRUE INSTEAD ────────────────────────────────────
+ *
+ * For a fluid-coupled engineering model, ALL of:
+ *
+ *   coefficient kind        Cv or Kv, recorded, not inferred
+ *   coefficient reference   the COEFFICIENT's basis, which is not the fluid's
+ *   fluid reference         parsed, not the prose `referenceCondition` is today
+ *   density, per stream     available; most services state none
+ *   pipe length             does not exist anywhere
+ *   inside diameter         `spec.size` is NOMINAL; needs schedule + a standard
+ *   roughness               no field
+ *   characteristic          no vocabulary, representation or position map
+ *
+ * Eight prerequisites, of which one exists. That is the contract, and it is
+ * K29's list unchanged — K30 did not shorten it by deciding.
+ *
+ * ── WHAT WOULD NOT HAVE TO CHANGE ─────────────────────────────────────────
+ *
+ * The SOLVER could accept a fluid-dependent resistance without touching node
+ * pressure, edge flow or boundary semantics: resistance is already a per-edge
+ * scalar on `ProcessEdge`, and `sim/fluids.ts` already resolves a stream per
+ * edge. Pump head would need density passed in, which is a callback signature
+ * change. So the numerical architecture is not the obstacle; the engineering
+ * data is.
+ */
+export const HYDRAULICS_ARE_FLUID_INDEPENDENT = true
+
+/**
+ * THE REST OF THE BOUNDARY, decided with it — K30.
+ *
+ * PRESSURE BASIS. The solve works in BAR ABSOLUTE throughout. An engineering
+ * record is read as GAUGE unless its unit says otherwise: `operatingPressure`
+ * adds one atmosphere except for `bara`, `atm`, `kpa`, `mpa` and `pa`. K6/K7's
+ * convention is unchanged and no second convention was introduced.
+ *
+ * MULTI-FLUID. `sim/fluids.ts` resolves a service PER EDGE and reports MIXED
+ * where two meet, so the model already knows which stream is which. The
+ * hydraulics do not distinguish their physics at all — every stream gets the
+ * same calibrated resistances — and that limitation is stated rather than
+ * papered over.
+ *
+ * MIXING. Not implemented and not designed. Were it ever wanted it would need
+ * mass fractions, component properties, a mixture density and a mixture
+ * viscosity rule, and an energy balance to go with them. None exists.
+ *
+ * THE PUMP CURVE is a HYBRID and is classified as such: two ENGINEERING inputs
+ * — `duty.head` at the rated flow and `duty.capacity` — feeding a SHAPE the
+ * model assumes. The quadratic fall from shutoff to runout, `RUNOUT_FACTOR`
+ * = 1.5, and the affinity scaling are the model's, not a manufacturer's. It is
+ * "the shape of a centrifugal curve, which is all the model claims", and it is
+ * not vendor performance data.
+ *
+ * VALIDITY. One incompressible liquid, single phase, quasi-steady, re-solved
+ * each tick. No vapour, no phase change, no compressibility, no elevation
+ * except a vessel's own liquid head, no transient acoustics, no Reynolds
+ * dependence and so no laminar/turbulent distinction. Gas and two-phase are
+ * outside the model entirely. The solver says so in its own header and reports
+ * when it cannot answer rather than returning a plausible number.
+ */
+export const HYDRAULIC_BOUNDARY_IS_DECLARED = true
