@@ -158,13 +158,29 @@ export const CONSTRAINTS: readonly ConstraintFact[] = [
     antiWindup: 'observes',
   },
   {
-    id: 'sp-domain',
+    id: 'sp-limits',
     layer: 'setpoint',
-    what: 'nothing, in the engine — see `NO_ENGINEERING_SP_LIMITS`',
-    owner: 'the faceplate’s entry field, and K17’s cascade map. NOT the engine.',
-    source: null,
+    what: 'the band this loop may be operated over — what it may be ASKED for',
+    owner: 'engine: the controller stage, where the setpoint is READ, so every path meets it once',
+    source: 'signal.spLow / signal.spHigh',
     unit: 'the loop’s own setpoint unit',
-    absent: 'there is no engineering SP limit in this product; the calibrated range bounds an input widget and scales a master’s output, and neither is a control constraint',
+    absent: 'no engineering limit on that side — never zero, never the end of the calibrated range, and never the other limit mirrored',
+    /**
+     * A SETPOINT constraint creates no windup of its own: the loop controls to
+     * the limited setpoint and reaches it normally, so the output is never
+     * against a stop. The ONE case where it would is a cascade master whose
+     * slave caps the setpoint it is being sent — see `CASCADE_SP_CEILING_GAP`.
+     */
+    antiWindup: 'n/a',
+  },
+  {
+    id: 'calibrated-range',
+    layer: 'setpoint',
+    what: 'nothing, as a control constraint — it bounds an entry widget and scales a cascade map',
+    owner: 'the faceplate’s entry field, and K17’s cascade map. NOT the engine.',
+    source: 'signal.range',
+    unit: 'the loop’s own setpoint unit',
+    absent: 'the tag falls back to its measure’s default span; either way this is a CAPABILITY statement about an instrument and never an operating limit',
     antiWindup: 'n/a',
   },
   {
@@ -240,32 +256,59 @@ export const CONSTRAINTS: readonly ConstraintFact[] = [
 ]
 
 /**
- * THERE ARE NO ENGINEERING SETPOINT LIMITS IN THIS PRODUCT, and K22 declined
- * to invent any.
+ * THE FOUR THINGS THAT ARE NOT EACH OTHER — K23 finished what K22 found.
  *
- * The audit looked for them and found three things that are NOT them:
+ * K22 recorded that this product had NO engineering setpoint limits and that
+ * three separate things were being made to stand in for them. K23 introduced
+ * the real one, so the statement now reads:
  *
- *   1. THE CALIBRATED RANGE (`signal.range`) bounds the faceplate's setpoint
- *      ENTRY FIELD. That is input hygiene on a widget, and the engine does not
- *      enforce it — a scenario or a test writing a setpoint beyond the range
- *      gets exactly what it asked for.
- *   2. THE SAME RANGE is what K17 scales a master's output onto, because a
- *      slave's setpoint has to be expressed in the slave's own units and the
- *      record states no other span. That is a MAP, not a limit.
- *   3. `signal.setpoint` is a CONFIGURED STARTING VALUE (K15), not a bound.
+ *   1. `signal.spLow` / `signal.spHigh` — the OPERATING LIMITS. An AUTHORITY
+ *      statement: what this loop may be ASKED for. Enforced in the engine
+ *      where the setpoint is read, so an operator, a scenario, a direct write
+ *      and a cascade master all meet it exactly once.
+ *   2. `signal.range` — the CALIBRATED RANGE. A CAPABILITY statement about the
+ *      INSTRUMENT: what it can MEASURE. It bounds the faceplate's entry widget
+ *      and is the span K17 scales a master's output onto. It is not, and after
+ *      K23 is not mistaken for, a control constraint.
+ *   3. `signal.setpoint` — where the loop STARTS (K15). Not a bound, and a
+ *      starting value outside the operating limits starts where the record
+ *      says and is then held, rather than being silently normalised.
+ *   4. `duty.minFlow` — a requirement of the MACHINE, which raises the
+ *      setpoint after the operating limits have bounded it (K18).
  *
- * A transmitter's range is a statement about an INSTRUMENT. Treating it as a
- * controller's permitted setpoint span would be the same category error as
- * treating `duty.minFlow` as a VSD minimum speed, and §7 of the K22 brief
- * exists to forbid it.
+ * A transmitter's range is a statement about an instrument. Treating it as a
+ * controller's permitted span would be the same category error as treating
+ * `duty.minFlow` as a VSD minimum speed.
  *
- * WHAT HAPPENS INSTEAD is better than a clamp would be: a loop asked for more
- * than the plant can make runs its output to the top of its travel and reports
- * `SAT +1`. The operator is told the setpoint is unreachable, which is the
- * fact they need. Silently rewriting the entry to the top of a range would
- * hide it behind a number that looks achievable.
+ * WITH NO LIMITS STATED nothing changed: a loop asked for more than the plant
+ * can make still runs its output to the top of its travel and reports `SAT +1`,
+ * telling the operator the setpoint is unreachable. That is K22's behaviour and
+ * K23 preserved it exactly — only a CONFIGURED limit constrains anything.
  */
-export const NO_ENGINEERING_SP_LIMITS = true
+export const SETPOINT_CONCEPTS_ARE_DISTINCT = true
+
+/**
+ * A GAP K23 MEASURED AND DELIBERATELY DID NOT CLOSE.
+ *
+ * A cascade master whose SLAVE has a configured `spHigh` keeps integrating
+ * while the slave caps the setpoint it is being sent — the master is asking
+ * for a setpoint nobody is applying, which is word for word the condition K18
+ * introduced `minFlowFloorPct` to handle on the FLOOR side.
+ *
+ * MEASURED on the K15 cascade fixture with the slave limited to 30 of its 0-60
+ * range: the master's integrator runs from 3.5 to 71.1 and then STOPS. It is
+ * BOUNDED — the existing predicate catches it at the master's own output
+ * ceiling and `SAT +1` is published — so nothing runs away and nothing is
+ * unreported. What it costs is recovery: the master must unwind ~50 points of
+ * travel before the slave's setpoint moves again.
+ *
+ * Closing it means expressing the slave's `spHigh` on the master's output
+ * scale as a stop, the exact mirror of `minFlowFloorPct`. That is a fourth use
+ * of the same mechanism rather than a new one — but §18 of the K23 brief lists
+ * "implementation requires new anti-windup" as a hard stop, and the behaviour
+ * is bounded and visible, so it is reported here for K24 rather than taken on.
+ */
+export const CASCADE_SP_CEILING_GAP = true
 
 /**
  * WHAT `SAT` MEANS, stated once so it cannot drift into "something limited me".

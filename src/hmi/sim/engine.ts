@@ -16,6 +16,7 @@ import type { ProcessFault } from './quality'
 import type { ControlAuthority, LoopState } from './authority'
 import { authorityOf } from './authority'
 import type { MinFlowDemand } from './minflow'
+import type { SetpointLimit } from './authority'
 import { BOUNDS, DEFAULTS, SECONDS_PER_HOUR, clamp, volumeMoved } from './units'
 import { pipeTemperatures, tankPressureBar, tankTempRate } from './process'
 
@@ -86,6 +87,20 @@ export interface ControllerSpec {
    * line K14 through K20 already executed.
    */
   outputRatePctPerS?: number
+  /**
+   * ENGINEERING SETPOINT LIMITS — K23, in this loop's own setpoint unit, from
+   * its own record (`signal.spLow` / `signal.spHigh`). Static for a run.
+   *
+   * An AUTHORITY constraint on what the loop may be ASKED for, applied where
+   * the setpoint is READ so that every path reaching it — an operator, a
+   * scenario, a direct write, a cascade master — meets the same limit once.
+   * That single point is the whole of K23: before it, the operator's path was
+   * bounded by a widget and every other path by nothing.
+   *
+   * Either side may be absent, and absent means no limit on that side.
+   */
+  spLow?: number
+  spHigh?: number
   /**
    * OUTPUT RANGE, per cent. Defaults 0 and 100, which is every loop that
    * existed before K14 and is what a valve's travel is.
@@ -392,9 +407,9 @@ export function buildSimModel(screens: HmiScreen | HmiScreen[], registry?: Regis
    * the pass that reads the records runs after the pass that decides who is
    * actually driving.
    */
-  const controllers = wireOutputRate(wireMinFlow(resolveContention(wireCascade(
+  const controllers = wireOutputRate(wireMinFlow(wireSpLimits(resolveContention(wireCascade(
     wireFlowPumps(wirePumps(wireHeaters(wireControllers(defs), defs, net), defs, hydraulic),
-      defs, hydraulic), defs)), defs), defs)
+      defs, hydraulic), defs)), defs), defs), defs)
     .map((c) => {
       const pvDef = defs.find((d) => d.name === c.pvTag)
       const driver = pvDef
@@ -992,6 +1007,28 @@ function wireMinFlow(controllers: ControllerSpec[], defs: TagDef[]): ControllerS
       return { ...c, minFlowProblem: `the limit is stated in m³/h and ${c.tag} is ranged in `
         + `${cd.unit}, which this model converts nothing between.` }
     }
+    /**
+     * A MINIMUM THE LOOP IS FORBIDDEN TO CARRY — K23, §8.
+     *
+     * `duty.minFlow` is a requirement of the MACHINE; `signal.spHigh` is a
+     * limit on what the LOOP may be asked for. A record stating a minimum
+     * above that maximum is asking for two incompatible things, and there is
+     * no defensible way to pick one: letting the protection through makes a
+     * configured maximum not a maximum, and capping the protection silently
+     * weakens a machine-protection function to satisfy an operating limit.
+     *
+     * So NEITHER wins and the contradiction is reported, which is exactly what
+     * this function already does with a limit stated in units it cannot
+     * convert. The protection is not in service on this loop, nothing is
+     * assumed in its place, and K13 goes on detecting the machine's envelope
+     * independently — the record is not wrong about the machine, it is wrong
+     * about this pair.
+     */
+    if (c.spHigh !== undefined && limit > c.spHigh) {
+      return { ...c, minFlowProblem: `${c.outTag}'s minimum flow of ${limit} m³/h is above `
+        + `${c.tag}'s configured setpoint maximum of ${c.spHigh}, so the loop cannot be asked `
+        + `for it.` }
+    }
     return { ...c, minFlow: limit }
   })
 
@@ -1035,6 +1072,38 @@ function wireOutputRate(controllers: ControllerSpec[], defs: TagDef[]): Controll
     const rate = byTag.get(c.tag)?.outputRateLimitPctPerS
     if (rate === undefined || !Number.isFinite(rate) || rate <= 0) return c
     return { ...c, outputRatePctPerS: rate }
+  })
+}
+
+/**
+ * ENGINEERING SETPOINT LIMITS — K23: which loops carry one, and how wide.
+ *
+ * Read from the LOOP'S OWN record and applied to the LOOP'S OWN setpoint. A
+ * master's limits bound what the master may be asked for; a slave's bound what
+ * the slave may be given, including by its master. Neither is inferred from
+ * the other and neither is inferred from a calibrated range.
+ *
+ * A PAIR THAT CROSSES IS NOT A RANGE. A record stating a low above its own
+ * high describes no operable band at all, and picking one of them would be
+ * inventing the engineer's intent. Both are refused and the loop runs
+ * unlimited, which is what it did before anybody typed them.
+ *
+ * Runs before `wireMinFlow`, because the minimum-flow protection has to know
+ * whether the limit it is about to impose is one this loop may carry.
+ */
+function wireSpLimits(controllers: ControllerSpec[], defs: TagDef[]): ControllerSpec[] {
+  const byTag = new Map(defs.map((d) => [d.name, d]))
+  return controllers.map((c) => {
+    const d = byTag.get(c.tag)
+    const low = Number.isFinite(d?.spLow) ? d!.spLow : undefined
+    const high = Number.isFinite(d?.spHigh) ? d!.spHigh : undefined
+    if (low === undefined && high === undefined) return c
+    if (low !== undefined && high !== undefined && low > high) return c
+    return {
+      ...c,
+      ...(low !== undefined ? { spLow: low } : {}),
+      ...(high !== undefined ? { spHigh: high } : {}),
+    }
   })
 }
 
@@ -1505,6 +1574,14 @@ function step(
    * was actually in force this tick.
    */
   const demands = new Map<string, MinFlowDemand>()
+  /**
+   * K23: and what the ENGINEERING SETPOINT LIMITS did, recorded here for the
+   * same reason and published at the same moment. Carried rather than
+   * recomputed at the end: the snapshot must report the value the algorithm
+   * ACTUALLY used this tick, not one derived a second time from state that has
+   * since moved on.
+   */
+  const spLimits = new Map<string, SetpointLimit>()
   for (const c of model.controllers) {
     const t = tags[c.tag]
     if (!t) continue
@@ -1656,16 +1733,61 @@ function step(
      * record declares a minimum, so with none declared `effSp` IS `t.SP` and
      * every path below is the path K14, K15 and K17 already took.
      */
-    const effSp = c.minFlow !== undefined && t.SP !== undefined
-      ? Math.max(t.SP, c.minFlow) : t.SP
+    /**
+     * ENGINEERING SETPOINT LIMITS — K23, and this is the ONE place they act.
+     *
+     *     whoever wrote SP ──► [spLow..spHigh] ──► limited ──► [minFlow] ──► effective
+     *
+     * Applied where the setpoint is READ rather than where it is written, so
+     * an operator, a scenario, a direct write and a cascade master all meet
+     * the same limit exactly once. K22 found the opposite: the operator's path
+     * was bounded by the faceplate widget and every other path by nothing, so
+     * the same loop could be driven to different setpoints depending on who
+     * asked. That widget clamp is now cosmetic; this is the constraint.
+     *
+     * `SP` ITSELF IS NOT REWRITTEN. The operator's entry survives exactly as
+     * K15 requires and exactly as K18 leaves it alone — what is limited is the
+     * value the ALGORITHM uses, and both numbers are published so the plate
+     * can show what was asked beside what is being held.
+     *
+     * With neither limit configured this is `t.SP` and every line below is
+     * byte-for-byte what K14 through K22 executed.
+     */
+    const limitedSp = t.SP === undefined ? undefined
+      : clamp(t.SP, c.spLow ?? -Infinity, c.spHigh ?? Infinity)
+    /**
+     * ...AND THEN THE MINIMUM-FLOW PROTECTION, on the LIMITED value.
+     *
+     * The order is forced rather than chosen: a setpoint limit says what the
+     * loop may be ASKED for, and the protection then raises what it is asked
+     * for to what the machine requires. Running them the other way would let
+     * the limit cut the protection back down, which is the silent weakening
+     * §8 refuses. It cannot arise anyway — `wireMinFlow` refuses a minimum
+     * above `spHigh` outright — and this ordering is why that refusal is
+     * sufficient.
+     */
+    if (c.spLow !== undefined || c.spHigh !== undefined) {
+      spLimits.set(c.tag, {
+        ...(c.spLow !== undefined ? { low: c.spLow } : {}),
+        ...(c.spHigh !== undefined ? { high: c.spHigh } : {}),
+        ...(t.SP !== undefined ? { requested: t.SP } : {}),
+        ...(limitedSp !== undefined ? { limited: limitedSp } : {}),
+        limiting: t.SP !== undefined && limitedSp !== undefined
+          && Math.abs(t.SP - limitedSp) > 1e-9,
+      })
+    }
+    const effSp = c.minFlow !== undefined && limitedSp !== undefined
+      ? Math.max(limitedSp, c.minFlow) : limitedSp
     if (c.minFlow !== undefined || c.minFlowProblem !== undefined) {
       demands.set(c.tag, {
         pump: c.outTag,
         ...(c.minFlow !== undefined ? { limitM3h: c.minFlow } : {}),
         ...(c.minFlowProblem !== undefined ? { problem: c.minFlowProblem } : {}),
-        ...(t.SP !== undefined ? { requestedSp: t.SP } : {}),
+        // the setpoint the PROTECTION was handed, which is the limited one —
+        // the raw entry is published separately as the SP-limit's own pair
+        ...(limitedSp !== undefined ? { requestedSp: limitedSp } : {}),
         ...(effSp !== undefined ? { effectiveSp: effSp } : {}),
-        overriding: t.SP !== undefined && effSp !== undefined && effSp > t.SP,
+        overriding: limitedSp !== undefined && effSp !== undefined && effSp > limitedSp,
         /**
          * K19: AND WHETHER THAT RAISE REACHES ANYTHING.
          *
@@ -2148,6 +2270,7 @@ function step(
           })()
         : {}),
       ...(demands.get(c.tag) !== undefined ? { minFlow: demands.get(c.tag)! } : {}),
+      ...(spLimits.get(c.tag) !== undefined ? { spLimit: spLimits.get(c.tag)! } : {}),
     }
   }
   return { tags, branchFlows, pipePressures, hydraulic: hyd, loops }

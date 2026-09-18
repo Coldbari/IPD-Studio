@@ -1607,3 +1607,96 @@ tsc -b clean · production build clean
 | P2 | **No engineering field for the physical rates.** `RAMP_S`, `COAST_S` and `STROKE_RATE` are code constants; no record carries a ramp, deceleration or stroke time. |
 | P2 | **No `duty.maxSpeed`.** The 100 % ceiling is the pump curve's domain, not a declared maximum, and must never be reported as one. |
 | P2 | Carried: no setpoint rate limiting (K21/§3 — a separate engineering function); no off-delay, start-up bypass or latching (K20); no recirculation or trip (K18); one cascade topology (K17), PI not PID, no manufacturer data, no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |
+
+---
+
+## 37. Step K23 — engineering setpoint limits
+
+K22 closed on one finding: six paths can produce a controller setpoint and they
+disagreed. The faceplate clamped an operator's entry to the CALIBRATED RANGE at
+the widget, K17 mapped a master's output onto that same range, and a scenario
+or a direct write was bounded by nothing. The same loop could be driven to
+different setpoints depending on who asked.
+
+### What was actually wrong
+
+Not the clamping — the CONFLATION. Four different things were being made to
+stand in for one another:
+
+| | What it says | Owner |
+|---|---|---|
+| `signal.range` | what the instrument can **measure** (capability) | the instrument |
+| `signal.spLow` / `spHigh` | what the loop may be **asked for** (authority) | **new in K23** |
+| `signal.setpoint` | where the loop **starts** | K15 |
+| `duty.minFlow` | what the **machine** requires | K18 |
+
+A transmitter ranged 0–60 m³/h may sit on a loop nobody is permitted to run
+below 10, and until K23 there was nowhere to say so.
+
+### One limit, one place
+
+The limit acts where the setpoint is **read**, not where it is written, so an
+operator, a scenario, a direct write and a cascade master all meet it exactly
+once. The faceplate's own clamp is now cosmetic; the engine is the constraint.
+
+```text
+whoever wrote SP ──► [spLow..spHigh] ──► limited ──► [minFlow] ──► effective
+```
+
+`SP` is never rewritten — the operator's entry survives exactly as K15 requires
+and K18 already does — and both numbers are published so the plate shows what
+was asked beside what is being held.
+
+**With no limits stated nothing changed.** K22's case — SP = 200 on a 0–60 loop,
+honoured, output to 100 %, `SAT +1` — is byte-for-byte preserved, because that
+loop configures no limit. Only a configured limit constrains anything.
+
+### The contradiction, refused rather than resolved
+
+`duty.minFlow` is a requirement of the **machine**; `spHigh` is a limit on the
+**loop**. A record stating a minimum above that maximum asks for two
+incompatible things. Neither wins: letting the protection through makes a
+configured maximum not a maximum, and capping the protection silently weakens a
+machine-protection function. So the protection is refused with a reason, exactly
+as K18 already refuses a minimum stated in units it cannot convert, and K13 goes
+on describing the machine independently. Because of that refusal, the effective
+setpoint can never exceed the configured maximum — which is why the ordering
+above is sufficient.
+
+### A gap measured and deliberately not closed
+
+A cascade master whose slave has a configured `spHigh` keeps integrating while
+the slave caps the setpoint it is being sent — word for word the condition K18
+introduced `minFlowFloorPct` for, on the floor side. **Measured**: the master's
+integrator runs 3.5 → 71.1 and then STOPS, caught by its own output ceiling with
+`SAT +1` published. Bounded and visible; what it costs is recovery time.
+
+Closing it means expressing the slave's `spHigh` on the master's output scale as
+a stop — a fourth use of the same mechanism, not a new one. §18 lists "requires
+new anti-windup" as a hard stop, so it is measured, pinned by test, and reported
+for K24.
+
+### One K22 fact corrected
+
+`NO_ENGINEERING_SP_LIMITS` was true when K22 wrote it and is false now. The
+constraint inventory's `sp-domain` row became `sp-limits` (sourced) and
+`calibrated-range`. The K22 test that asserted the old fact caught the drift —
+which is what it was built to do — and carries OLD/NEW/REASON.
+
+### State after K23
+
+```text
+3945 tests passing · 7 skipped · 0 failing  (+40)
+tsc -b clean · production build clean
+209 Playwright passing · 16 skipped · 0 failing
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P1 | **Cascade setpoint-ceiling windup.** A master winds ~50 points of travel against a slave whose `spHigh` caps the setpoint. Bounded and reported; the fix is the mirror of `minFlowFloorPct`. |
+| P2 | No setpoint RATE limiting, still — an output rate limit and a setpoint rate limit are different engineering functions (K21/K22). |
+| P2 | The faceplate's entry clamp to the calibrated range is now cosmetic and is documented as such; it is not the constraint. |
+| P2 | A starting value outside the limits starts where the record says and is then held, rather than being normalised — so a configuration mistake stays visible. |
+| P2 | Carried: no off-delay, start-up bypass or latching (K20); no recirculation or trip (K18); one cascade topology (K17), PI not PID, no manufacturer data, no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |

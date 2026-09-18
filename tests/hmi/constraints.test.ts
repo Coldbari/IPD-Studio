@@ -38,8 +38,9 @@ import '../../src/symbols/lib/index'
 import { useSimStore } from '../../src/hmi/simStore'
 import { buildSimModel } from '../../src/hmi/sim/engine'
 import {
-  CONSTRAINTS, ENGINEERING_SOURCED, NO_ENGINEERING_SP_LIMITS,
-  PHYSICAL_LAG_IS_NOT_WINDUP, SATURATION_IS_CONTROLLER_TRAVEL, WINDUP_OBSERVED,
+  CASCADE_SP_CEILING_GAP, CONSTRAINTS, ENGINEERING_SOURCED,
+  PHYSICAL_LAG_IS_NOT_WINDUP, SATURATION_IS_CONTROLLER_TRAVEL,
+  SETPOINT_CONCEPTS_ARE_DISTINCT, WINDUP_OBSERVED,
 } from '../../src/hmi/sim/constraints'
 import { FIELD_CATALOG } from '../../src/model/fields'
 import { processFor } from '../../src/model/processData'
@@ -155,14 +156,25 @@ describe('the inventory is an index of the runtime, not a description of it', ()
   it('the model-domain bounds are declared as such, and are the only ones', () => {
     /**
      * §21: a normalised software bound must never be reported as an
-     * engineering limit. There are exactly five, and each says in its own row
-     * why it belongs to the model rather than to a record. `op-travel` is
-     * deliberately NOT among them — its floor is `duty.minSpeed`, a real
-     * engineering value, and only its ceiling is the curve's domain.
+     * engineering limit. Each says in its own row why it belongs to the model
+     * rather than to a record. `op-travel` is deliberately NOT among them —
+     * its floor is `duty.minSpeed`, a real engineering value, and only its
+     * ceiling is the curve's domain.
+     *
+     * K23 CORRECTED THIS LIST.
+     *   OLD expectation: `sp-domain` was a model bound, because no engineering
+     *        setpoint limit existed anywhere in the product.
+     *   NEW expectation: it is gone, replaced by `sp-limits` (sourced from
+     *        `signal.spLow`/`signal.spHigh`) and `calibrated-range` (sourced
+     *        from `signal.range`).
+     *   REASON: K22 AUDITED and reported the absence; K23 was the phase that
+     *        filled it. The row was a true statement about the product at K22
+     *        and is a false one now, which is exactly the kind of drift this
+     *        test exists to catch — it caught it.
      */
     const modelDomain = CONSTRAINTS.filter((c) => c.source === null).map((c) => c.id)
     expect(modelDomain).toEqual([
-      'sp-domain', 'vsd-ceiling', 'valve-travel', 'vsd-ramp', 'valve-stroke',
+      'vsd-ceiling', 'valve-travel', 'vsd-ramp', 'valve-stroke',
     ])
     // ...and NONE of them is a duty.maxSpeed, because no such field exists
     const keys = new Set(
@@ -186,8 +198,17 @@ describe('the inventory is an index of the runtime, not a description of it', ()
 // ── A, B, C, AH. Setpoint limits: there are none ────────────────────────────
 
 describe('A, B, C, AH, NO_SP — the audit for setpoint limits, and its result', () => {
-  it('A: the engine enforces NO setpoint limit, and the loop says so honestly', () => {
-    expect(NO_ENGINEERING_SP_LIMITS).toBe(true)
+  it('A: with NO limit configured the engine enforces none, and says so honestly', () => {
+    /**
+     * K23 CORRECTED THE CONSTANT, not the behaviour.
+     *   OLD: `NO_ENGINEERING_SP_LIMITS` — there were none anywhere.
+     *   NEW: `SETPOINT_CONCEPTS_ARE_DISTINCT` — there are now four separate
+     *        setpoint concepts and this test pins the UNCONFIGURED one.
+     *   REASON: K23 introduced `signal.spLow`/`signal.spHigh`. The behaviour
+     *        asserted below is unchanged because this loop configures neither,
+     *        which is what §5 of the K23 brief required.
+     */
+    expect(SETPOINT_CONCEPTS_ARE_DISTINCT).toBe(true)
     start(vsd())
     lineUp(200); advance(300)                   // far beyond the 0-60 range
     // the entry is HONOURED, not silently rewritten
@@ -203,11 +224,13 @@ describe('A, B, C, AH, NO_SP — the audit for setpoint limits, and its result',
       { 'FIC-1': { key: 'FIC-1', kind: 'instrument', fields: { 'signal.setpoint': '30' } } },
       'FIC-1')
     expect(e.setpoint).toBe(30)
-    // there is no spMin/spMax anywhere in the parsed record
-    const raw = e as unknown as Record<string, unknown>
-    for (const k of ['spMin', 'spMax', 'setpointMin', 'setpointMax']) {
-      expect(raw[k]).toBeUndefined()
-    }
+    // ...and stating one configures NO limits — K23 kept the two apart
+    expect(e.spLow).toBeUndefined()
+    expect(e.spHigh).toBeUndefined()
+  })
+
+  it('K23: the cascade setpoint-ceiling windup gap is recorded, not silently carried', () => {
+    expect(CASCADE_SP_CEILING_GAP).toBe(true)
   })
 
   it('AH: and K22 introduced NO hidden setpoint rate limiting', () => {

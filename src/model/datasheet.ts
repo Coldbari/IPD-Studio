@@ -54,6 +54,29 @@ export const DATASHEET_SECTIONS: Record<'general' | 'process' | 'element' | 'sig
     { key: 'signal.type', label: 'I/O type (AI/AO/DI/DO)' },
     { key: 'signal.units', label: 'Engineering unit' },
     { key: 'signal.setpoint', label: 'Setpoint' },
+    /**
+     * K23 — THE SETPOINT RANGE THIS LOOP MAY BE OPERATED OVER.
+     *
+     * An AUTHORITY statement: what this controller may be ASKED for. Distinct
+     * from `signal.range` directly above, which is a CAPABILITY statement
+     * about the instrument — what it can MEASURE. A transmitter calibrated
+     * 0-60 m³/h may sit on a loop an operator is only permitted to run between
+     * 10 and 45, and the two facts have different owners and different
+     * consequences.
+     *
+     * Distinct from `signal.setpoint` too, which is where the loop STARTS.
+     *
+     * Bare numbers, in this tag's own engineering unit — the same convention
+     * `signal.setpoint` and the `alarm.*` thresholds already use, because the
+     * unit is declared once on the tag and a second unit system would be a
+     * second answer to what this loop measures.
+     *
+     * Either may be stated without the other. Absent means NO engineering
+     * limit on that side, never zero and never the end of the calibrated
+     * range.
+     */
+    { key: 'signal.spLow', label: 'Setpoint low limit' },
+    { key: 'signal.spHigh', label: 'Setpoint high limit' },
     { key: 'signal.systemTag', label: 'Control system tag' },
     /**
      * CASCADE — the loop whose SETPOINT this controller's output sets.

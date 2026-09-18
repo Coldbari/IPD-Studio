@@ -212,6 +212,39 @@ export interface LoopState {
    * `sim/minflow.ts`, which joins it to what the machine actually passed.
    */
   minFlow?: MinFlowDemand
+  /**
+   * K23: what this loop's configured setpoint limits did to its setpoint.
+   * Present only where the record states one; absent everywhere else, so a
+   * loop with no limits publishes nothing new at all.
+   */
+  spLimit?: SetpointLimit
+}
+
+/**
+ * K23 — WHAT THE ENGINEERING SETPOINT LIMITS DID TO THIS LOOP'S SETPOINT.
+ *
+ * Published only on a loop whose record configures one, and shaped like
+ * `MinFlowDemand` beside it for the same reason: a constraint that rewrites a
+ * value must publish both numbers, or the screen stops being able to explain
+ * itself.
+ *
+ * THE THREE RANGES THIS IS NOT. It is not the CALIBRATED RANGE, which says
+ * what the instrument can measure; it is not the cascade MAP, which expresses
+ * a master's per cent in its slave's units; and it is not `signal.setpoint`,
+ * which is where the loop starts. K23 exists because those three were being
+ * treated as one.
+ */
+export interface SetpointLimit {
+  /** The configured bounds, in the loop's own unit. Either may be absent, and
+   *  absent means no engineering limit on that side. */
+  low?: number
+  high?: number
+  /** The setpoint as WRITTEN — an operator's, a scenario's, or a master's. */
+  requested?: number
+  /** The setpoint the ALGORITHM was given, after the limits. */
+  limited?: number
+  /** True while the two differ: the limit is actually holding the loop. */
+  limiting: boolean
 }
 
 /** A runtime finding, in the one shape this product publishes. See

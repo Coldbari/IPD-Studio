@@ -579,6 +579,33 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
               <button className="fp-btn" style={{ flex: '0 0 auto', width: 30 }} aria-label="Increase setpoint"
                 onClick={() => write(tag, 'SP', clamp((t.SP ?? t.PV ?? min) + 1, min, max))}>+</button>
             </div>
+            {/* ENGINEERING SETPOINT LIMITS — K23, §10.
+                THE BAND THIS LOOP MAY BE OPERATED OVER, which is not the range
+                its transmitter can measure and not where it started. Shown
+                only when a record states one, so a loop with none is the plate
+                K22 shipped. When the limit is actually holding the setpoint,
+                the value the ALGORITHM is using appears beside the entry —
+                because the entry is deliberately left reading what was typed,
+                and without this line the two would silently disagree.
+                An operating limit is not a fault: plain tone, never the alarm
+                palette. */}
+            {loop?.spLimit && (
+              <>
+                <div className="fp-kv" data-testid="fp-sp-limits"
+                  data-limiting={loop.spLimit.limiting ? 'yes' : 'no'}>
+                  <span className="k">SP limits</span>
+                  <span className="v" style={{ color: theme.textMuted }}>
+                    {loop.spLimit.low !== undefined ? loop.spLimit.low.toFixed(1) : '—'}
+                    {' … '}
+                    {loop.spLimit.high !== undefined ? loop.spLimit.high.toFixed(1) : '—'}
+                    {unit ? <span className="u">{unit}</span> : null}
+                  </span>
+                </div>
+                {loop.spLimit.limiting && loop.spLimit.limited !== undefined && (
+                  <Value label="Limited SP" value={loop.spLimit.limited} unit={unit} />
+                )}
+              </>
+            )}
             {/* MINIMUM-FLOW PROTECTION — K18, §5 and §17.
                 FOUR NUMBERS THAT MUST NOT BE COLLAPSED INTO FEWER. What the
                 record requires, what the loop was asked for, what it is

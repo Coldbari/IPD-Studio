@@ -85,6 +85,17 @@ export interface TagDef {
    * asks, exactly as it did before K21.
    */
   outputRateLimitPctPerS?: number
+  /**
+   * K23: the SETPOINT range this loop may be operated over, in this tag's own
+   * unit (`signal.spLow` / `signal.spHigh`).
+   *
+   * NOT `min`/`max` above, which are the CALIBRATED RANGE — what the
+   * instrument can measure. These are what the controller may be ASKED for,
+   * and nothing in this model infers either from the other. Absent on a side
+   * means no engineering limit there.
+   */
+  spLow?: number
+  spHigh?: number
   /** The physical quantity this tag carries. Undefined for equipment states
    *  (a motor's RUN) and for instruments whose letters name nothing this
    *  simulation models. */
@@ -294,6 +305,12 @@ function defFor(w: HmiWidget, registry: Registry | undefined): TagDef | null {
         // living in HMI props.
         ...(eng.outputRateLimitPctPerS !== undefined
           ? { outputRateLimitPctPerS: eng.outputRateLimitPctPerS } : {}),
+        // K23: read from the RECORD only, like the rate limit beside it. There
+        // is deliberately no widget prop — an operating range is engineering
+        // data, and `model/signalData.ts` exists because such data stopped
+        // living in HMI props.
+        ...(eng.spLow !== undefined ? { spLow: eng.spLow } : {}),
+        ...(eng.spHigh !== undefined ? { spHigh: eng.spHigh } : {}),
         bindTank: typeof p.bindTank === 'string' ? p.bindTank : undefined,
         bindPipe: typeof p.bindPipe === 'string' ? p.bindPipe : undefined,
         base: num(p.base),

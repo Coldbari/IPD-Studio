@@ -56,6 +56,22 @@ export interface SignalEngineering {
    * the K21 brief exists because they are so easy to confuse.
    */
   outputRateLimitPctPerS?: number
+  /**
+   * K23 — the SETPOINT range this loop may be operated over
+   * (`signal.spLow` / `signal.spHigh`), in the tag's own engineering unit.
+   *
+   * AN AUTHORITY STATEMENT, and the distinction from `min`/`max` above is the
+   * whole point of K23: those are the CALIBRATED RANGE, which says what the
+   * instrument can MEASURE. These say what the controller may be ASKED for.
+   * A transmitter ranged 0-60 may sit on a loop nobody is permitted to run
+   * below 10, and no part of this model may infer one from the other.
+   *
+   * ABSENT MEANS NO LIMIT ON THAT SIDE. Not zero, not the end of the
+   * calibrated range, and not the other limit mirrored. Either may be stated
+   * alone.
+   */
+  spLow?: number
+  spHigh?: number
 }
 
 const EMPTY: SignalEngineering = { limits: {} }
@@ -127,6 +143,13 @@ export function engineeringFor(registry: Registry | undefined, tag: string | und
     units: fields['signal.units']?.trim() || range?.unit,
     systemTag: fields['signal.systemTag']?.trim() || undefined,
     setpoint: numericField(fields, 'signal.setpoint'),
+    // K23. `numericField` and not a quantity parser, deliberately: a setpoint
+    // limit is in the tag's own unit, exactly as `signal.setpoint` and the
+    // `alarm.*` thresholds are, and the tag declares that unit once.
+    ...(numericField(fields, 'signal.spLow') !== undefined
+      ? { spLow: numericField(fields, 'signal.spLow')! } : {}),
+    ...(numericField(fields, 'signal.spHigh') !== undefined
+      ? { spHigh: numericField(fields, 'signal.spHigh')! } : {}),
     min: range?.min,
     max: range?.max,
     limits: {
@@ -184,5 +207,6 @@ export const isEmptySignal = (e: SignalEngineering): boolean =>
   e.type === undefined && e.units === undefined && e.systemTag === undefined &&
   e.setpoint === undefined && e.min === undefined && e.max === undefined &&
   e.priority === undefined && e.outputRateLimitPctPerS === undefined &&
+  e.spLow === undefined && e.spHigh === undefined &&
   e.limits.LL === undefined && e.limits.L === undefined &&
   e.limits.H === undefined && e.limits.HH === undefined

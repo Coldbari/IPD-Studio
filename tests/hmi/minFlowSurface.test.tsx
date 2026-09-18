@@ -390,6 +390,62 @@ describe('K21 — the controller plate shows requested, commanded and actual', (
   })
 })
 
+/**
+ * K23 — THE BAND THIS LOOP MAY BE OPERATED OVER.
+ *
+ * Not the range its transmitter can measure, and not where it started. Shown
+ * only when a record states one, and the value the ALGORITHM is using appears
+ * beside the entry only while the limit is actually holding it — because the
+ * entry is deliberately left reading what was typed.
+ */
+describe('K23 — the controller plate shows its engineering setpoint limits', () => {
+  const limited = (low?: string, high?: string): Registry => ({
+    ...reg(),
+    'FIC-1': { key: 'FIC-1', kind: 'instrument', fields: {
+      ...(low !== undefined ? { 'signal.spLow': low } : {}),
+      ...(high !== undefined ? { 'signal.spHigh': high } : {}) } },
+  })
+
+  it('a loop with no stated limits shows no extra rows at all', async () => {
+    start(reg())
+    lineUp(30); advance(100)
+    const host = await mount(<Faceplate widget={w('fic')} onClose={() => {}} />)
+    expect(q(host, 'fp-sp-limits')).toBeNull()
+    expect(q(host, 'fp-v-limited-sp')).toBeNull()
+  })
+
+  it('a stated band is shown, and is plain while the loop is inside it', async () => {
+    start(limited('10', '45'))
+    lineUp(30); advance(100)
+    const host = await mount(<Faceplate widget={w('fic')} onClose={() => {}} />)
+    const el = q(host, 'fp-sp-limits')!
+    expect(el.getAttribute('data-limiting')).toBe('no')
+    expect(el.textContent).toContain('10.0')
+    expect(el.textContent).toContain('45.0')
+    // inside the band, there is no second number to show
+    expect(q(host, 'fp-v-limited-sp')).toBeNull()
+  })
+
+  it('...and outside it, the entry and the held value are BOTH visible', async () => {
+    start(limited('10', '45'))
+    lineUp(58); advance(20)
+    const host = await mount(<Faceplate widget={w('fic')} onClose={() => {}} />)
+    expect(q(host, 'fp-sp-limits')!.getAttribute('data-limiting')).toBe('yes')
+    // the operator's own entry survives in the setpoint field…
+    expect((q(host, 'fp-sp') as HTMLInputElement).value).toBe('58')
+    // …beside the value the loop is actually controlling to
+    expect(q(host, 'fp-v-limited-sp')!.textContent).toContain('45.0')
+  })
+
+  it('one side stated alone reads as open on the other', async () => {
+    start(limited(undefined, '45'))
+    lineUp(30); advance(100)
+    const el = q(await mount(<Faceplate widget={w('fic')} onClose={() => {}} />), 'fp-sp-limits')!
+    expect(el.textContent).toContain('—')       // no low limit
+    expect(el.textContent).toContain('45.0')
+  })
+})
+
 // ── The Diagnostics page ────────────────────────────────────────────────────
 
 describe('the Diagnostics page carries it on LIVE, among the control loops', () => {
