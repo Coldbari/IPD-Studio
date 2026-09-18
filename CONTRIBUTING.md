@@ -75,6 +75,11 @@ You keep the copyright to your contribution — this is a license grant, not an
 assignment. It exists purely so commercial licenses can be sold without having
 to track down every contributor.
 
+**This is a merge requirement, not a formality.** A pull request containing code
+cannot be merged until that line appears in it. Review starts before then, so no
+work is wasted — it is the merge that is blocked. Every outside pull request is
+routed to the maintainer for review by [`.github/CODEOWNERS`](.github/CODEOWNERS).
+
 **Nothing is required for** issues, bug reports, symbol requests, convention
 corrections, or discussion. Those are the most valuable contributions anyway,
 and they carry no paperwork.
@@ -155,3 +160,13 @@ source file:
 Never paste in code from a source whose license you haven't checked, and never
 paste in code under a copyleft license (GPL/AGPL) — it cannot be commercially
 relicensed and would have to be reverted.
+
+The same rule applies to dependencies, and CI enforces it:
+
+```bash
+npm run license:check   # fails on GPL/AGPL/LGPL/SSPL/BUSL anywhere in the tree
+```
+
+It runs on every pull request. If your change adds a dependency, run it locally
+first — a denied license has to be reverted, however good the feature is. The
+full dependency inventory is in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
