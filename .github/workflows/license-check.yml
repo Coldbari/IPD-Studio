@@ -1,0 +1,20 @@
+name: Licenses
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  dependency-licenses:
+    name: Dependency licence gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # No install needed, and no cache worth restoring: the gate reads
+      # package-lock.json directly and has no dependencies of its own.
+      - name: Check dependency licences
+        run: node scripts/check-licenses.mjs

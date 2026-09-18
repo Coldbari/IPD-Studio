@@ -9,7 +9,9 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "license:check": "node scripts/check-licenses.mjs",
+    "license:inventory": "node scripts/check-licenses.mjs --inventory"
   },
   "dependencies": {
     "@joint/core": "^4.3.1",
