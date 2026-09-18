@@ -1779,3 +1779,82 @@ tsc -b clean · production build clean
 | P2 | **A slave in MANUAL is `downstream` unavailability, not a downstream stop.** Correct today because the master's integrator is held outright, but the two mechanisms now sit side by side and a future phase should confirm they stay distinct. |
 | P2 | Rate limiting is deliberately excluded from upstream awareness, and documented as such. |
 | P2 | Carried: no setpoint rate limiting (K21–K23); no off-delay, start-up bypass or latching (K20); no recirculation or trip (K18); PI not PID, no manufacturer data, no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |
+
+---
+
+## 39. Step K25 — cascade state separation
+
+An audit. **No runtime behaviour changed**: everything the brief asked about was
+already correct and cleanly separated. What was missing was a test that would
+notice if it stopped being.
+
+### The taxonomy
+
+| | Condition | Produced by | Master does | Reported as |
+|---|---|---|---|---|
+| **A** | UNAVAILABLE — slave in MANUAL, or its own authority lost | K16/K17, in the **authority stage** | **HOLDS** output and integrator outright | `authority: 'downstream'` |
+| **B** | SETPOINT LIMITED — slave works and **refuses** part of the setpoint (`spLow`/`spHigh`/`minFlow`) | K18/K24, projected at **wiring time** | stops integrating at the projection | `downstreamLimited`, `cascade-downstream-limited` |
+| **C** | PHYSICALLY LIMITED — slave **accepted** the setpoint and cannot realise it | nothing upstream, deliberately | integrates on to its own ceiling | the slave's own `SAT` |
+
+### Precedence is structural, not a rule
+
+```text
+A > B > C
+```
+
+The authority branch `continue`s before the algorithm runs, so a master whose
+slave is unavailable never computes `dsLimited` at all. Measured: a slave both
+de-energised **and** setpoint-limited reports `authority: downstream` with no
+`downstreamLimited`, and the operator gets one row naming the real problem
+rather than two competing explanations.
+
+**B and C compose rather than compete.** A slave can refuse part of a setpoint
+*and* be saturated at what it accepted — measured with `spHigh` 55 on a plant
+that cannot make 55: the master is `downstreamLimited` with `SAT` 0, the slave
+is `SAT` 1. Two facts, both published, neither confused.
+
+### The distinction that matters most
+
+B and C look identical from the plant and are opposite in the control room:
+
+```text
+refused setpoint    requested != effective    (read on the SETPOINT)
+lagging actuator    requested != actual       (read on the OUTPUT)
+```
+
+An actuator that has not reached its command is **never** evidence that a
+setpoint was refused. Measured across a full cascade transient: the shaft
+lagged its command on many ticks and `downstreamLimited` was never set once.
+
+### The composition boundary
+
+`dsFloorPct`/`dsCeilPct` are derived at **wiring time** from the slave's
+**statically configured** record fields. That is exactly right for one level
+and does not compose to two: in a chain A → B → C, A would need B's *effective
+accepted interval*, which is narrower than B's configured one whenever C
+constrains B, and which moves as C moves. A wiring-time projection of static
+fields cannot express a runtime quantity.
+
+**None of this is reachable today, and not by accident.** `cascadeProblem`
+refuses any slave whose `outKind` is not `pump`; a middle controller would
+drive another controller's setpoint and so be `cascade`, and is rejected at
+wiring time with a stated reason. K17 ships one topology and says so. A
+three-level cascade is therefore a new mechanism, not a wider version of this
+one — and K25 deliberately did not generalise it.
+
+### State after K25
+
+```text
+4018 tests passing · 7 skipped · 0 failing  (+40)
+tsc -b clean · production build clean
+209 Playwright passing · 16 skipped · 0 failing
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P2 | **Three-level cascade needs a runtime-derived accepted interval**, propagated each tick, not the wiring-time projection that exists. Recorded as the composition boundary rather than built. |
+| P2 | `downstreamLimited` is **absent** rather than `false` when the authority branch short-circuits. Correct — a consumer asking "is the master downstream-limited" while its slave is unavailable is asking the wrong question — but consumers must test `=== true`. |
+| P2 | Rate limiting remains deliberately outside upstream awareness, now pinned by test rather than only documented. |
+| P2 | Carried: no setpoint rate limiting (K21–K24); no off-delay, start-up bypass or latching (K20); no recirculation or trip (K18); PI not PID, no manufacturer data, no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |

@@ -354,6 +354,109 @@ export const DOWNSTREAM_SETPOINT_STOPS_ARE_PROJECTED = true
  */
 export const SATURATION_IS_CONTROLLER_TRAVEL = true
 
+/**
+ * THE THREE WAYS A CASCADE'S DOWNSTREAM CAN FAIL TO DELIVER — K25.
+ *
+ * They arrive from three different phases, mean three different things, and a
+ * master must respond to each differently. K25 audited them for accidental
+ * coupling and found none; this records the taxonomy so a fourth condition
+ * cannot quietly be folded into one of them.
+ *
+ * ── A. DOWNSTREAM UNAVAILABLE ─────────────────────────────────────────────
+ *
+ *   The slave cannot act at all: it is in MANUAL, or it has lost its own
+ *   authority (de-energised, stuck, unsolved).
+ *
+ *   PRODUCED BY  K16/K17, in the AUTHORITY stage, before the algorithm runs.
+ *                `authorityOf` returns `downstream` when `downstreamFollowing`
+ *                is false.
+ *   MASTER DOES  takes the `authority !== 'available'` branch: output and
+ *                integrator are HELD outright, `SAT` cleared.
+ *   REPORTED AS  `authority: 'downstream'` and K16's info row.
+ *
+ * ── B. DOWNSTREAM SETPOINT LIMITED ────────────────────────────────────────
+ *
+ *   The slave is working, and REFUSES part of the setpoint: `signal.spLow`,
+ *   `signal.spHigh` (K23) or `duty.minFlow` (K18).
+ *
+ *   PRODUCED BY  K18/K24, projected onto the master's own output scale at
+ *                wiring time as `dsFloorPct`/`dsCeilPct`.
+ *   MASTER DOES  stops integrating at the projection — the existing predicate,
+ *                with those as its stops.
+ *   REPORTED AS  `downstreamLimited` and `cascade-downstream-limited`.
+ *
+ * ── C. DOWNSTREAM PHYSICALLY LIMITED ──────────────────────────────────────
+ *
+ *   The slave ACCEPTED the setpoint in full and cannot realise it: its own
+ *   output is saturated, its actuator is lagging, or the process simply will
+ *   not reach the value.
+ *
+ *   PRODUCED BY  nothing upstream, deliberately.
+ *   MASTER DOES  goes on integrating to its own ceiling, because its demand is
+ *                genuine — this is the case where winding up is CORRECT.
+ *   REPORTED AS  the slave's own `SAT`, and the master's own `SAT` when it
+ *                reaches its travel.
+ *
+ * ── PRECEDENCE, ENFORCED BY CONTROL FLOW RATHER THAN BY A RULE ────────────
+ *
+ *     A  >  B  >  C
+ *
+ * and it is structural: the authority branch `continue`s before the algorithm
+ * runs, so a master whose slave is unavailable never computes `dsLimited` at
+ * all — `downstreamLimited` is simply absent that tick rather than competing
+ * with the authority verdict. MEASURED: a slave both de-energised AND
+ * setpoint-limited reports `authority: downstream` with no `downstreamLimited`,
+ * and the operator gets one row naming the real problem.
+ *
+ * B and C COMPOSE rather than compete: a slave can refuse part of a setpoint
+ * AND be saturated at what it accepted, and both are published — the master's
+ * `downstreamLimited` and the slave's own `SAT`. Measured together and kept
+ * apart.
+ *
+ * ── THE DISTINCTION THAT MATTERS MOST ─────────────────────────────────────
+ *
+ * B and C look identical from the plant and are opposite in the control room:
+ *
+ *     setpoint limited   slave `spLimit.limiting` true, requested != effective
+ *                        master `downstreamLimited` true, `SAT` 0
+ *     physically limited slave `spLimit` absent, requested == effective
+ *                        master `downstreamLimited` absent, `SAT` 1
+ *
+ * An actuator that has not reached its command is NEVER evidence that a
+ * setpoint was refused. A lagging actuator has `requested == effective` and
+ * `actual != requested`; a refused setpoint has `requested != effective`. The
+ * two are read from different fields and must never be inferred from one
+ * another.
+ */
+export const DOWNSTREAM_CONDITIONS_ARE_THREE = true
+
+/**
+ * WHERE THE ONE-LEVEL PROJECTION STOPS — K25's architectural boundary.
+ *
+ * `dsFloorPct` and `dsCeilPct` are computed at WIRING TIME from the slave's
+ * STATICALLY CONFIGURED record fields. That is exactly right for one level and
+ * does not compose to two, for a reason worth writing down before anybody
+ * tries.
+ *
+ * In a chain A → B → C, A would need B's EFFECTIVE ACCEPTED INTERVAL — which
+ * is narrower than B's configured one whenever C is constraining B, and which
+ * changes as C's state changes. A wiring-time projection of static record
+ * fields cannot express a runtime quantity; composing would need the interval
+ * derived each tick and propagated up the chain, which is a different
+ * mechanism rather than a wider version of this one.
+ *
+ * NONE OF THIS IS REACHABLE TODAY, and not by accident: `cascadeProblem`
+ * refuses any slave whose `outKind` is not `pump`, so a middle controller —
+ * which would drive another controller's setpoint and therefore be `cascade` —
+ * is rejected at wiring time with a stated reason. K17 ships one topology and
+ * says so.
+ *
+ * So the boundary is clean: the representation is correct and complete for the
+ * architecture that exists, and a three-level cascade is a new mechanism and
+ * not an extension of this one. K25 deliberately did not generalise it.
+ */
+export const PROJECTION_IS_ONE_LEVEL = true
+
 /** The constraints the PI anti-windup predicate must observe, by id. Pinned by
  *  test against the predicate's actual behaviour rather than its source. */
 export const WINDUP_OBSERVED: readonly string[] =
