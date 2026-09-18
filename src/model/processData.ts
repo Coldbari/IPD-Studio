@@ -239,7 +239,7 @@ export function processFor(registry: Registry | undefined, tag: string | undefin
     operatingTempC: convert(q('design.operatingTemperature') ?? q('design.temperature'), TEMPERATURE, 1),
     operatingPressureBarA: operatingPressure(f['design.operatingPressure']),
     vsd: truthy(f['duty.vsd']),
-    minSpeedPct: percent(f['duty.minSpeed']),
+    minSpeedPct: turndown(f['duty.minSpeed']),
     minFlowM3h: convert(q('duty.minFlow'), FLOW, 1),
     ...(minFlowAlarmPolicy(f) !== undefined ? { minFlowAlarm: minFlowAlarmPolicy(f)! } : {}),
   }
@@ -296,6 +296,44 @@ function percent(raw: string | undefined): number | undefined {
   const u = q.unit.trim().toLowerCase()
   if (u !== '' && u !== '%' && u !== 'pct' && u !== 'percent') return undefined
   return Number.isFinite(q.value) ? q.value : undefined
+}
+
+/**
+ * A DRIVE'S TURNDOWN — K26, and the band a percentage of rated speed can
+ * actually describe.
+ *
+ * `percent` will read any number an engineer types. A turndown is narrower
+ * than that: it is the LOWEST FRACTION OF RATED SPEED the drive will run at,
+ * so it lives in 0..100 and a value outside that describes no operable band at
+ * all.
+ *
+ *   NEGATIVE      not a fraction of anything. Refused.
+ *   ABOVE 100     a floor above the only ceiling the model has — the pump
+ *                 curve is defined AT rated speed, so there is no speed above
+ *                 it to turn down from. Refused.
+ *   ZERO          a real statement, and kept: a drive with no turndown will
+ *                 follow a command to a standstill. Identical in effect to
+ *                 stating nothing, which is correct — both mean no floor.
+ *   ABSENT        the record states no turndown, and none is imposed.
+ *
+ * REFUSED MEANS ABSENT, deliberately, and that is the same discipline K20
+ * applies to a negative alarm deadband, K21 to a zero or negative output rate
+ * and K23 to a setpoint pair that crosses: a value this model cannot act on is
+ * not a value, and the machine behaves exactly as it would have with the field
+ * left blank. Nothing is clamped into range, because silently turning -5 into
+ * 0 or 150 into 100 would publish a limit nobody wrote.
+ *
+ * WHY HERE. Before K26 the raw number reached `TagDef.minSpeedPct` and every
+ * consumer clamped it separately — `outputRange` to the controller's travel,
+ * `speedTarget` to the shaft — so the PHYSICS was always safe and the
+ * PUBLISHED value was not. A record stating -5 % put "minimum speed -5 %" on
+ * the machine's faceplate, and one stating 150 % made K13 report that the
+ * drive was holding a shaft at 150 %.
+ */
+function turndown(raw: string | undefined): number | undefined {
+  const pct = percent(raw)
+  if (pct === undefined) return undefined
+  return pct >= 0 && pct <= 100 ? pct : undefined
 }
 
 /**

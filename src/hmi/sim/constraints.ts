@@ -457,6 +457,65 @@ export const DOWNSTREAM_CONDITIONS_ARE_THREE = true
  */
 export const PROJECTION_IS_ONE_LEVEL = true
 
+/**
+ * ENGINEERING DATA, SIMULATOR ASSUMPTION, OR MODEL DOMAIN — K26.
+ *
+ * Every physical quantity in this runtime is one of three things, and the
+ * operator surface must never present the second or third as the first. K26
+ * audited the whole equipment side and this is the result.
+ *
+ * ── WHAT THE RECORD ACTUALLY OWNS ─────────────────────────────────────────
+ *
+ *   duty.minSpeed   ENGINEERING. The drive's turndown, % of rated. The ONE
+ *                   equipment rate/limit in this product with a real owner,
+ *                   and K22 recorded its deliberate dual enforcement: the
+ *                   actuator clamps the shaft to it so a direct write cannot
+ *                   slip past, AND the controller's travel floor is set to the
+ *                   same number so the algorithm can see the stop it is
+ *                   winding against. One value, two enforcers, no duplication.
+ *
+ * ── WHAT NO RECORD OWNS, AND WHAT K26 DECLINED TO INVENT ──────────────────
+ *
+ *   MAXIMUM SPEED   There is no `duty.maxSpeed` field and K26 did not add one.
+ *                   The 100 % ceiling is where the PUMP CURVE IS DEFINED —
+ *                   `H₀` is the shutoff head AT RATED SPEED — so it is the
+ *                   model's domain, not a manufacturer's figure. `duty.speed`
+ *                   exists on the datasheet but is a RATED SPEED in rpm and is
+ *                   not consumed; reading it as a percentage ceiling would be
+ *                   the same category error as reading `duty.minFlow` as a
+ *                   minimum speed.
+ *
+ *   RAMP_S = 2 s    SIMULATOR ASSUMPTION. How long the drive takes to cover
+ *                   full travel, and it governs any COMMANDED change while the
+ *                   machine is energised — measured 50 points of speed per
+ *                   second, up and down alike. Using the drive's own rate for
+ *                   a commanded slow-down is a stated assumption: no record in
+ *                   this model carries a deceleration time.
+ *
+ *   COAST_S = 3 s   SIMULATOR ASSUMPTION, and deliberately ASYMMETRIC with
+ *                   `RAMP_S` — measured 33 points per second. It is a
+ *                   de-energised shaft freewheeling down, which is a different
+ *                   physical event from a drive decelerating one.
+ *
+ *   STROKE_RATE     SIMULATOR ASSUMPTION, 25 %/s, and SYMMETRIC — measured
+ *                   identical opening and closing. The valve datasheet carries
+ *                   actuator type, fail position, signal, positioner and air
+ *                   supply, and no stroke time at all.
+ *
+ *   VALVE TRAVEL    MODEL DOMAIN. 0 % shut and 100 % open is what a valve
+ *                   POSITION MEANS, not a limit anybody declared — see
+ *                   `valve-travel` above.
+ *
+ * ── WHY NONE OF THESE BECAME FIELDS ───────────────────────────────────────
+ *
+ * Because no record states them. Adding `duty.rampTime` would create a field
+ * every existing drawing leaves blank, which then has to fall back to the
+ * constant it was supposed to replace — and a constant reached through an
+ * empty engineering field looks exactly like data somebody entered. The
+ * constants stay constants, and they say so here.
+ */
+export const PHYSICAL_RATES_ARE_SIMULATOR_ASSUMPTIONS = true
+
 /** The constraints the PI anti-windup predicate must observe, by id. Pinned by
  *  test against the predicate's actual behaviour rather than its source. */
 export const WINDUP_OBSERVED: readonly string[] =

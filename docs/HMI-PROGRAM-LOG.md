@@ -1858,3 +1858,80 @@ tsc -b clean · production build clean
 | P2 | `downstreamLimited` is **absent** rather than `false` when the authority branch short-circuits. Correct — a consumer asking "is the master downstream-limited" while its slave is unavailable is asking the wrong question — but consumers must test `=== true`. |
 | P2 | Rate limiting remains deliberately outside upstream awareness, now pinned by test rather than only documented. |
 | P2 | Carried: no setpoint rate limiting (K21–K24); no off-delay, start-up bypass or latching (K20); no recirculation or trip (K18); PI not PID, no manufacturer data, no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |
+
+---
+
+## 40. Step K26 — equipment limits and physical-rate ownership
+
+An audit that added **no engineering fields** and fixed three untruths it found
+on the way. All three were the same mistake: a model constant wearing a
+datasheet's clothes.
+
+### What the audit did
+
+Cross-checked every field the datasheets declare against what the simulator
+actually consumes:
+
+| | Owner |
+|---|---|
+| `duty.minSpeed` | **ENGINEERING** — consumed; the one equipment limit with a real owner |
+| `duty.speed` | declared, **not consumed** — a rated speed in rpm |
+| `actuation.*` | five fields, **none** a stroke time |
+| maximum speed | **no field anywhere** |
+| ramp / coast | **no field anywhere** |
+| valve travel | **no field anywhere** |
+
+So `RAMP_S` (2 s), `COAST_S` (3 s) and `STROKE_RATE` (25 %/s) stay **simulator
+assumptions**, and K26 added no field for any of them. Adding `duty.rampTime`
+would create a field every existing drawing leaves blank, which then falls back
+to the constant it was meant to replace — and a constant reached through an
+empty engineering field looks exactly like data somebody entered.
+
+Measured while classifying them: the drive covers 50 points of speed per second
+and governs commanded changes **both ways**; a de-energised shaft coasts at 33
+points per second, deliberately asymmetric; a fault takes the shaft out at once,
+because a breaker is not a ramp; the valve strokes symmetrically at 25 %/s.
+
+### The three untruths
+
+**1. A command above rated blamed the record.** `SPD = 120` on a machine whose
+record declares only `minSpeed 20 %` reported *"outside the drive envelope its
+record declares (minimum 20 %)"*. 120 does not violate 20 — what it violates is
+the pump curve's own domain, and **no record declares a maximum**. The two
+branches now name the limit each one actually crossed.
+
+**2. A negative turndown was published.** `duty.minSpeed: -5 %` reached
+`TagDef.minSpeedPct` as −5 and would have shown "minimum speed −5 %" on a
+faceplate. The controller and the actuator each clamped it away, so the physics
+was always safe and the *published* value was not.
+
+**3. A turndown above the ceiling was read back as a shaft position.**
+`duty.minSpeed: 150 %` made the envelope report the drive *"holding the shaft at
+150 %"* while the shaft was at 100 %.
+
+`turndown()` now refuses anything outside 0–100, and **refused means absent** —
+never clamped into range, because silently turning −5 into 0 would publish a
+limit nobody wrote. That is the same discipline K20 applies to a negative alarm
+deadband, K21 to a zero or negative output rate, and K23 to a setpoint pair that
+crosses. Zero is kept, because a drive with no turndown is a real statement.
+
+The shaft is now reported from the shaft rather than from the limit it is
+heading for — mid-ramp the two differ, and the old wording claimed the drive was
+already holding a speed it had not reached.
+
+### State after K26
+
+```text
+4057 tests passing · 7 skipped · 0 failing  (+39)
+tsc -b clean · production build clean
+209 Playwright passing · 16 skipped · 0 failing
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P2 | **No engineering owner for any physical rate.** A real drive datasheet carries acceleration and deceleration times and a real valve datasheet carries a stroke time; this product's catalogue carries none, so three constants remain simulator assumptions. Adding them is a datasheet decision, not a control one. |
+| P2 | **No `duty.maxSpeed`.** A machine that genuinely cannot run to rated still cannot say so, and the 100 % ceiling remains the curve's domain. |
+| P2 | `duty.speed` is declared and unconsumed. It is a rated speed in rpm and must never be read as a percentage ceiling. |
+| P2 | Carried: no setpoint rate limiting (K21–K25); no off-delay, start-up bypass or latching (K20); no recirculation or trip (K18); one cascade topology (K17), PI not PID, no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |

@@ -304,11 +304,32 @@ export function envelopeFindings(
       out.push({ id: `envelope:${e.tag}:${id}`, tag: e.tag, severity, message })
 
     if (e.speedOutOfEnvelope && e.speedCommandPct !== undefined) {
-      const held = e.speedCommandPct > 100 ? 100 : e.minSpeedPct
+      /**
+       * K26 — WHICH LIMIT WAS ACTUALLY CROSSED, and who declared it.
+       *
+       * TWO DIFFERENT VIOLATIONS reached this one sentence, and only one of
+       * them was a record's. A command BELOW the turndown breaks a figure the
+       * record states. A command ABOVE 100 % breaks the pump curve's own
+       * domain — `H₀` is the shutoff head AT RATED SPEED, so there is nothing
+       * above it to command — and NO RECORD DECLARES THAT. Telling an operator
+       * that a machine whose record says only "minimum 20 %" has been driven
+       * "outside the drive envelope its record declares" is a model constant
+       * wearing a datasheet's clothes.
+       *
+       * And the shaft is reported from `shaft`, which is where it IS, rather
+       * than from the limit it was clamped to — a record stating a turndown
+       * this model refuses used to have its own refused number read back as
+       * the position the drive was holding.
+       */
+      const over = e.speedCommandPct > 100
       add('pump-speed-out-of-envelope', 'warning',
-        `is commanded to ${e.speedCommandPct.toFixed(0)} % speed, outside the drive envelope its record declares`
-        + `${e.minSpeedPct !== undefined ? ` (minimum ${e.minSpeedPct.toFixed(0)} %)` : ''}. `
-        + `The drive is holding the shaft at ${held !== undefined ? `${held.toFixed(0)} %` : 'the nearest end of it'}.`)
+        `is commanded to ${e.speedCommandPct.toFixed(0)} % speed, `
+        + (over
+          ? 'above rated. The pump curve this model solves is defined at rated speed and '
+            + 'nothing above it, so the command cannot be followed — no maximum is stated on '
+            + 'the record, and none is assumed.'
+          : `below the minimum of ${(e.minSpeedPct ?? 0).toFixed(0)} % its record declares.`)
+        + ` The shaft is at ${(e.shaft * 100).toFixed(0)} %.`)
     }
 
     const sev = ENVELOPE_SEVERITY[e.state]

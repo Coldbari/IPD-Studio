@@ -301,8 +301,29 @@ describe('D — speed command → shaft → curve → operating point → diagno
     const f = findings().find((x) => x.id.endsWith('pump-speed-out-of-envelope'))!
     expect(f.severity).toBe('warning')
     expect(f.message).toContain('commanded to 10 %')
-    expect(f.message).toContain('minimum 20 %')
-    expect(f.message).toContain('holding the shaft at 20 %')
+    /**
+     * K26 REWORDED THIS MESSAGE. Every fact it asserts is unchanged; the
+     * sentence saying them is not.
+     *
+     *   OLD: "outside the drive envelope its record declares (minimum 20 %).
+     *        The drive is holding the shaft at 20 %."
+     *   NEW: "below the minimum of 20 % its record declares. The shaft is at
+     *        20 %."
+     *   REASON: two different violations shared one sentence and only one of
+     *        them was a record's. A command ABOVE 100 % breaks the pump
+     *        CURVE'S DOMAIN — no record declares a maximum, and there is no
+     *        `duty.maxSpeed` field in this product — so telling an operator it
+     *        was "outside the drive envelope its record declares" presented a
+     *        model constant as datasheet data. The two branches now name the
+     *        limit each one actually crossed.
+     *   AND THE SHAFT is now read from `shaft`, where it IS, rather than from
+     *        the limit it is heading for: mid-ramp the two differ, and the old
+     *        wording claimed the drive was already holding a speed it had not
+     *        reached.
+     */
+    expect(f.message).toContain('below the minimum of 20 %')
+    expect(f.message).toContain('its record declares')
+    expect(f.message).toContain('The shaft is at 20 %')
   })
 
   it('a fixed-speed machine has no speed envelope to be outside of', () => {
