@@ -38,7 +38,7 @@ import '../../src/symbols/lib/index'
 import { useSimStore } from '../../src/hmi/simStore'
 import { buildSimModel } from '../../src/hmi/sim/engine'
 import {
-  CASCADE_SP_CEILING_GAP, CONSTRAINTS, ENGINEERING_SOURCED,
+  CONSTRAINTS, DOWNSTREAM_SETPOINT_STOPS_ARE_PROJECTED, ENGINEERING_SOURCED,
   PHYSICAL_LAG_IS_NOT_WINDUP, SATURATION_IS_CONTROLLER_TRAVEL,
   SETPOINT_CONCEPTS_ARE_DISTINCT, WINDUP_OBSERVED,
 } from '../../src/hmi/sim/constraints'
@@ -229,8 +229,19 @@ describe('A, B, C, AH, NO_SP — the audit for setpoint limits, and its result',
     expect(e.spHigh).toBeUndefined()
   })
 
-  it('K23: the cascade setpoint-ceiling windup gap is recorded, not silently carried', () => {
-    expect(CASCADE_SP_CEILING_GAP).toBe(true)
+  /**
+   * K24 CORRECTED THIS, by closing what it asserted.
+   *   OLD: `CASCADE_SP_CEILING_GAP` — a measured gap, recorded for a later
+   *        phase because §18 of the K23 brief forbade choosing a new
+   *        anti-windup.
+   *   NEW: `DOWNSTREAM_SETPOINT_STOPS_ARE_PROJECTED` — K24's investigation
+   *        showed no new anti-windup was needed: K18's projection already
+   *        existed and only had to be widened to the constraints K23 added.
+   *   REASON: the gap is closed, so a constant asserting it exists would be
+   *        a false statement about the runtime.
+   */
+  it('K24: every slave setpoint constraint is projected onto its master', () => {
+    expect(DOWNSTREAM_SETPOINT_STOPS_ARE_PROJECTED).toBe(true)
   })
 
   it('AH: and K22 introduced NO hidden setpoint rate limiting', () => {

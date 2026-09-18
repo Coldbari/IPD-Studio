@@ -153,8 +153,9 @@ export const CONSTRAINTS: readonly ConstraintFact[] = [
     source: 'duty.minFlow',
     unit: 'the loop’s own setpoint unit (m³/h; other units are refused, not converted)',
     absent: 'no protection at all — nothing is assumed in its place, and K13 reports LIMIT UNKNOWN',
-    // On a MASTER only, as `minFlowFloorPct`: its output is the slave's
-    // setpoint, so a floor under that setpoint is a stop under its output.
+    // On a MASTER only, as `dsFloorPct`: its output is the slave's setpoint,
+    // so a floor under that setpoint is a stop under its output (K18, widened
+    // by K24 to carry the slave's `spLow` and `spHigh` as well).
     antiWindup: 'observes',
   },
   {
@@ -288,27 +289,46 @@ export const CONSTRAINTS: readonly ConstraintFact[] = [
 export const SETPOINT_CONCEPTS_ARE_DISTINCT = true
 
 /**
- * A GAP K23 MEASURED AND DELIBERATELY DID NOT CLOSE.
+ * THE GAP K23 MEASURED AND K24 CLOSED — and the rule that came out of it.
  *
- * A cascade master whose SLAVE has a configured `spHigh` keeps integrating
- * while the slave caps the setpoint it is being sent — the master is asking
- * for a setpoint nobody is applying, which is word for word the condition K18
- * introduced `minFlowFloorPct` to handle on the FLOOR side.
+ * A cascade master's output IS its slave's setpoint, so anything that stops
+ * the slave ACCEPTING that setpoint is a stop on the master's output. K18
+ * built that projection for one such constraint, `duty.minFlow`; K23 added two
+ * more, `signal.spLow` and `signal.spHigh`, and did not project them.
  *
- * MEASURED on the K15 cascade fixture with the slave limited to 30 of its 0-60
- * range: the master's integrator runs from 3.5 to 71.1 and then STOPS. It is
- * BOUNDED — the existing predicate catches it at the master's own output
- * ceiling and `SAT +1` is published — so nothing runs away and nothing is
- * unreported. What it costs is recovery: the master must unwind ~50 points of
- * travel before the slave's setpoint moves again.
+ * MEASURED on the K15 cascade, identical plant and identical demand, with only
+ * the slave's constraint differing:
  *
- * Closing it means expressing the slave's `spHigh` on the master's output
- * scale as a stop, the exact mirror of `minFlowFloorPct`. That is a fourth use
- * of the same mechanism rather than a new one — but §18 of the K23 brief lists
- * "implementation requires new anti-windup" as a hard stop, and the behaviour
- * is bounded and visible, so it is reported here for K24 rather than taken on.
+ *     slave floored at 30 by…      master came to rest at
+ *     nothing                       OP  0.00   I  8.35   SAT -1
+ *     duty.minFlow  (projected)     OP 48.99   I 62.37   SAT  0
+ *     signal.spLow  (NOT)           OP  0.00   I 12.06   SAT -1
+ *
+ * The same fact about the slave produced opposite master behaviour, and on
+ * release the unprojected case cost 50 s of dead time before the setpoint
+ * moved at all. `dsFloorPct` and `dsCeilPct` now carry all three.
+ *
+ * ── AND THE RULE ──────────────────────────────────────────────────────────
+ *
+ * ONLY CONSTRAINTS THAT STOP THE SETPOINT BEING ACCEPTED COUNT. Three others
+ * were measured and are deliberately excluded:
+ *
+ *   - A SATURATED SLAVE ACTUATOR. The setpoint was accepted in full and the
+ *     plant cannot reach it, so the master's demand is genuine and it should
+ *     wind to its own ceiling.
+ *   - A RATE-LIMITED SLAVE OUTPUT. The setpoint was accepted in full and the
+ *     slave is moving toward it; stopping the master through every ordinary
+ *     transient would be the windup cure causing the disease.
+ *   - A SLAVE WITH NO AUTHORITY. K16 and K17 already make the master's own
+ *     authority `downstream` and HOLD its integrator, which is stronger than
+ *     a stop and must not be duplicated.
+ *
+ * It is NOT saturation, and `SAT` does not report it — a master resting at
+ * 50 % because its slave will not take more has half its travel left. The
+ * condition is published as `downstreamLimited` and explained by the
+ * `cascade-downstream-limited` finding.
  */
-export const CASCADE_SP_CEILING_GAP = true
+export const DOWNSTREAM_SETPOINT_STOPS_ARE_PROJECTED = true
 
 /**
  * WHAT `SAT` MEANS, stated once so it cannot drift into "something limited me".

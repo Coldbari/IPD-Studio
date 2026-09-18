@@ -302,34 +302,42 @@ describe('L, M, N — a master’s output limit is not a slave’s setpoint limi
     expect(loop('FIC-1').spLimit).toBeUndefined()
   })
 
-  it('L: the master winds against a capped setpoint — BOUNDED, and measured', () => {
-    /**
-     * A GAP K23 MEASURED AND DELIBERATELY DID NOT CLOSE.
-     *
-     * A master whose slave caps the setpoint it is being sent is asking for
-     * something nobody is applying — word for word the condition K18
-     * introduced `minFlowFloorPct` for, on the floor side. Closing it means
-     * expressing the slave's `spHigh` on the master's output scale as a stop:
-     * a fourth use of the same mechanism, not a new one. §18 of the K23 brief
-     * lists "requires new anti-windup" as a hard stop, so it is measured here
-     * and reported for K24 rather than taken on.
-     *
-     * WHAT MATTERS IS THAT IT IS BOUNDED. The master's own output ceiling
-     * catches it and `SAT +1` is published, so nothing runs away and nothing
-     * is hidden from the operator. What it costs is recovery time.
-     */
+  /**
+   * K24 CORRECTED THIS TEST, by closing the gap it was written to document.
+   *
+   *   OLD expectation: the master ran to its OWN output ceiling and reported
+   *        `SAT +1`, having wound across the whole unusable half of its range
+   *        against a setpoint the slave never accepted. K23 measured that,
+   *        pinned it here as a baseline, and left it — §18 of the K23 brief
+   *        listed "requires new anti-windup" as a hard stop.
+   *   NEW expectation: the master is held at the slave's `spHigh` projected
+   *        onto its own output scale, and reports `downstreamLimited` with
+   *        `SAT` at 0.
+   *   REASON: K24's investigation showed no new anti-windup was needed. K18
+   *        had already built this exact projection for `duty.minFlow`, and the
+   *        measurement proved the two cases were the same fact treated
+   *        differently only because one predated the mechanism — a slave
+   *        floored at 30 by `minFlow` left the master at OP 49, and the same
+   *        slave floored at 30 by `spLow` ran it to OP 0.
+   *   AND `SAT` IS THE POINT: the master has half its travel left. Reporting
+   *        saturation would tell an operator it has run out of RANGE when it
+   *        has run out of SLAVE.
+   */
+  it('L: the master is held by its SLAVE’s limit, and is not saturated', () => {
     start(reg({ cascade: true, spHigh: '30' }), cascaded)
     sim().writeTag('HV-9', 'OP', 100); sim().writeTag('P-1', 'RUN', 1)
     sim().writeTag('PIC-1', 'SP', 9); advance(100)
+    // the slave's 30 of its 0-60 range is 50 % on the master's output scale
+    expect(spec('PIC-1', reg({ cascade: true, spHigh: '30' }), cascaded).dsCeilPct)
+      .toBeCloseTo(50, 9)
     const settled = sim().tags['PIC-1']!.I
-    expect(sim().tags['PIC-1']!.SAT).toBe(1)         // its OWN ceiling caught it
+    expect(sim().loops['PIC-1']!.downstreamLimited).toBe(true)
+    expect(sim().loops['PIC-1']!.saturated).toBe(0)   // NOT its own travel
     advance(300)
-    expect(sim().tags['PIC-1']!.I).toBe(settled)     // and it stopped there
-    // the slave is held at its configured maximum throughout
+    expect(sim().tags['PIC-1']!.I).toBe(settled)      // and it stopped there
     expect(limited()).toBe(30)
-    // ...and K17 already tells the operator the master is asking for more than
-    // the link can carry
-    expect(sim().loops['PIC-1']!.saturated).toBe(1)
+    // the master's output rests around the projection rather than at 100
+    expect(sim().tags['PIC-1']!.OP!).toBeLessThan(60)
   })
 
   it('N: and the master’s OUTPUT limit is a different constraint entirely', () => {

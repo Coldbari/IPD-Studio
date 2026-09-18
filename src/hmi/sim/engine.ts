@@ -62,17 +62,44 @@ export interface ControllerSpec {
    * the setpoint is raised to and nothing else: no controller, no gain, no
    * hysteresis. See `sim/minflow.ts`.
    *
-   * `minFlowFloorPct` is that same floor expressed on a CASCADE MASTER's
-   * output scale — the inverse of the map `drive()` applies — so the master
-   * can stop integrating against a request that is not being applied.
+   * The floor expressed on a CASCADE MASTER's output scale is `dsFloorPct`;
+   * see it below, where K24 widened it past minimum flow.
    *
    * `minFlowProblem` is a DECLARED minimum that could not be applied to this
    * loop. Like `cascadeProblem`, a refusal is carried rather than silently
    * turned into an approximation.
    */
   minFlow?: number
-  minFlowFloorPct?: number
   minFlowProblem?: string
+  /**
+   * THE SLAVE'S SETPOINT CONSTRAINTS, ON THIS MASTER'S OUTPUT SCALE — K24.
+   *
+   * A cascade master's output IS its slave's setpoint, so anything that stops
+   * the slave accepting that setpoint is a stop on the master's output. The
+   * inverse of the map `drive()` applies, and the same number in the master's
+   * own units.
+   *
+   * K18 built this for ONE such constraint, `duty.minFlow`, and called it
+   * `minFlowFloorPct`. K23 then added two more — `signal.spLow` and
+   * `signal.spHigh` on the slave — and did not project them, so a master
+   * wound across the whole unusable part of its range against them. MEASURED
+   * on the K15 cascade, same plant and same demand: with the slave floored by
+   * `minFlow` the master came to rest at OP 49 with its integrator at 62;
+   * with the slave floored identically by `spLow` it ran to OP 0 and 12, and
+   * took 50 s of dead time to recover. Two constraints that are the same fact
+   * from the master's point of view behaved oppositely, purely because one
+   * predated the mechanism.
+   *
+   * `dsFloorPct` is the HIGHEST floor any of them imposes and `dsCeilPct` the
+   * LOWEST ceiling, because a master must respect all of them at once.
+   *
+   * They are used for ONE thing — deciding whether the integrator may keep
+   * winding — and NEVER to clamp the output, exactly as K18 established: `op`
+   * stays the master's genuine request so `commandedSp` keeps saying what the
+   * master wanted while `effectiveSp` says what the slave is carrying.
+   */
+  dsFloorPct?: number
+  dsCeilPct?: number
   /**
    * OUTPUT RATE LIMIT — K21, %/s, from THIS controller's own record
    * (`signal.outputRateLimit`). Static for a run, like everything above.
@@ -407,9 +434,9 @@ export function buildSimModel(screens: HmiScreen | HmiScreen[], registry?: Regis
    * the pass that reads the records runs after the pass that decides who is
    * actually driving.
    */
-  const controllers = wireOutputRate(wireMinFlow(wireSpLimits(resolveContention(wireCascade(
+  const controllers = wireOutputRate(wireDownstreamStops(wireMinFlow(wireSpLimits(resolveContention(wireCascade(
     wireFlowPumps(wirePumps(wireHeaters(wireControllers(defs), defs, net), defs, hydraulic),
-      defs, hydraulic), defs)), defs), defs), defs)
+      defs, hydraulic), defs)), defs), defs), defs), defs)
     .map((c) => {
       const pvDef = defs.find((d) => d.name === c.pvTag)
       const driver = pvDef
@@ -1032,16 +1059,77 @@ function wireMinFlow(controllers: ControllerSpec[], defs: TagDef[]): ControllerS
     return { ...c, minFlow: limit }
   })
 
-  if (!protectedLoops.some((c) => c.minFlow !== undefined)) return protectedLoops
-  const byCtl = new Map(protectedLoops.map((c) => [c.tag, c]))
-  return protectedLoops.map((c) => {
+  return protectedLoops
+}
+
+/**
+ * THE SLAVE'S SETPOINT CONSTRAINTS, PROJECTED ONTO ITS MASTER'S OUTPUT — K24.
+ *
+ * `drive()` maps a master's per cent onto its slave's configured range; this
+ * runs that map BACKWARDS, so a bound on the slave's setpoint becomes a bound
+ * on the master's output in the master's own units.
+ *
+ * ── WHY A MASTER NEEDS TO KNOW ────────────────────────────────────────────
+ *
+ * A cascade master's output IS the slave's setpoint. When the slave refuses
+ * part of it the master is asking for something nobody is applying, and left
+ * alone it winds across the whole unusable part of its range and then needs
+ * every point of that back before the plant responds again.
+ *
+ * MEASURED on the K15 cascade, identical plant and identical demand: a slave
+ * floored at 30 of its 0-60 range by `duty.minFlow` — which K18 DID project —
+ * left the master at rest at OP 49 with its integrator at 62. The same slave
+ * floored at 30 by `signal.spLow`, which K23 did not project, ran the master
+ * to OP 0 and an integrator of 12, and cost 50 s of dead time on release.
+ *
+ * ── AND WHICH CONSTRAINTS COUNT ───────────────────────────────────────────
+ *
+ * Only the ones that stop the SETPOINT BEING ACCEPTED. Deliberately NOT:
+ *
+ *   - a SATURATED SLAVE ACTUATOR. The setpoint was accepted in full and the
+ *     plant simply cannot reach it, so the master's demand is genuine and it
+ *     SHOULD wind to its own ceiling. Measured: identical master behaviour
+ *     with and without a reachable setpoint, which is correct.
+ *   - a RATE-LIMITED SLAVE OUTPUT. The setpoint was accepted in full and the
+ *     slave is actively moving toward it; freezing the master through every
+ *     ordinary transient would be the windup cure causing the disease.
+ *   - a SLAVE WITH NO AUTHORITY. K16 and K17 already handle that: the master's
+ *     own authority becomes `downstream` and its integrator is HELD, which is
+ *     a stronger response than a stop and is not duplicated here.
+ *
+ * Nothing new is invented: the projection is K18's formula, the composition is
+ * K18's `Math.max`, and the predicate it feeds is unchanged.
+ */
+function wireDownstreamStops(controllers: ControllerSpec[], defs: TagDef[]): ControllerSpec[] {
+  const byTag = new Map(defs.map((d) => [d.name, d]))
+  const byCtl = new Map(controllers.map((c) => [c.tag, c]))
+  return controllers.map((c) => {
     if (c.outKind !== 'cascade' || c.outTag === undefined) return c
     const slave = byCtl.get(c.outTag)
     const sd = byTag.get(c.outTag)
-    if (slave?.minFlow === undefined || sd === undefined || !(sd.max > sd.min)) return c
-    const pct = ((slave.minFlow - sd.min) / (sd.max - sd.min)) * 100
-    if (!(pct > (c.outMin ?? 0))) return c
-    return { ...c, minFlowFloorPct: clamp(pct, 0, 100) }
+    if (slave === undefined || sd === undefined || !(sd.max > sd.min)) return c
+    /** The slave's own setpoint units, run back through `drive()`'s map. */
+    const pctOf = (sp: number) => clamp(((sp - sd.min) / (sd.max - sd.min)) * 100, 0, 100)
+    /**
+     * EVERY floor the slave imposes, and the highest of them wins: a master
+     * must respect all of its slave's constraints at once, and the binding one
+     * is whichever sits highest. `spHigh` can never be below `minFlow` —
+     * `wireMinFlow` refuses that pair outright — so the two can never cross.
+     */
+    const floors = [slave.minFlow, slave.spLow]
+      .filter((v): v is number => v !== undefined && Number.isFinite(v))
+      .map(pctOf)
+      .filter((pct) => pct > (c.outMin ?? 0))
+    const ceils = [slave.spHigh]
+      .filter((v): v is number => v !== undefined && Number.isFinite(v))
+      .map(pctOf)
+      .filter((pct) => pct < (c.outMax ?? 100))
+    if (floors.length === 0 && ceils.length === 0) return c
+    return {
+      ...c,
+      ...(floors.length > 0 ? { dsFloorPct: Math.max(...floors) } : {}),
+      ...(ceils.length > 0 ? { dsCeilPct: Math.min(...ceils) } : {}),
+    }
   })
 }
 
@@ -1582,6 +1670,8 @@ function step(
    * since moved on.
    */
   const spLimits = new Map<string, SetpointLimit>()
+  /** K24: masters currently held by a constraint of their slave's. */
+  const dsLimited = new Map<string, boolean>()
   for (const c of model.controllers) {
     const t = tags[c.tag]
     if (!t) continue
@@ -1926,7 +2016,21 @@ function step(
      * while `effectiveSp` says what the slave is carrying — and an operator can
      * see the override rather than infer it. With no floor, `stop` IS `lo`.
      */
-    const stop = c.minFlowFloorPct !== undefined ? Math.max(lo, c.minFlowFloorPct) : lo
+    const stop = c.dsFloorPct !== undefined ? Math.max(lo, c.dsFloorPct) : lo
+    /**
+     * ...AND THE SAME THING ON THE WAY UP — K24.
+     *
+     * K18 wrote the floor and its rationale; the ceiling is that rationale
+     * read in the other direction. A master whose slave caps the setpoint it
+     * is being sent is asking for something nobody is applying, and the fact
+     * that the master would EVENTUALLY be caught by its own travel stop is not
+     * a defence: it has to cross everything in between first, and cross back.
+     *
+     * Not a new mechanism and not a new direction for the predicate, which has
+     * always had two stops. Only WHICH ceiling changed, from `hi` to
+     * `min(hi, dsCeilPct)` — exactly the move K18 made for `lo`.
+     */
+    const cap = c.dsCeilPct !== undefined ? Math.min(hi, c.dsCeilPct) : hi
     /**
      * ...AND NEITHER MAY IT INTEGRATE AGAINST A MOVE THE RATE LIMIT IS NOT
      * LETTING IT MAKE — K21, §15.
@@ -1950,7 +2054,7 @@ function step(
      * NOTHING WAS RETUNED. `kp`, `ti` and `ki` are untouched, and so is the
      * integrator's own clamp.
      */
-    const reachHi = Math.min(hi, prevCmd + maxDelta)
+    const reachHi = Math.min(cap, prevCmd + maxDelta)
     const reachLo = Math.max(stop, prevCmd - maxDelta)
     if (!((op >= reachHi && e > 0) || (op <= reachLo && e < 0))) {
       I = clamp(I + ki * e * dt, -100, 100)
@@ -1980,6 +2084,18 @@ function step(
      * RATE LIMITED, SATURATED and NO AUTHORITY are three states, and a loop
      * can be in any combination of them.
      */
+    /**
+     * K24: THE MASTER IS BEING HELD BY ITS SLAVE, which is NOT saturation.
+     *
+     * Recorded separately and never folded into `SAT`, which keeps its K22
+     * meaning — the controller's own configured travel. A master resting at 50
+     * % because its slave will not take more has half its travel left and is
+     * not saturated by any reading of the word; saying so would tell an
+     * operator the master has run out of range when it has run out of SLAVE.
+     */
+    if ((c.dsFloorPct !== undefined || c.dsCeilPct !== undefined)) {
+      dsLimited.set(c.tag, (op >= cap && e > 0) || (op <= stop && e < 0))
+    }
     t.SAT = op >= hi && e > 0 ? 1 : op <= lo && e < 0 ? -1 : 0
     send(op)
   }
@@ -2262,15 +2378,27 @@ function step(
        * claimed to be, and what lets a master's plate show 12 asked for beside
        * 20 being held without either number being invented. The slave ran
        * earlier in this same tick, so its entry is this tick's.
+       *
+       * K24 ADDED THE MIDDLE CASE. K23 gave the slave its own engineering
+       * setpoint limits, and a slave whose setpoint was limited went on
+       * reporting the RAW value the master wrote — which is the one thing this
+       * field has always promised not to do. The min-flow demand already
+       * accounts for the limit (K23 hands it the limited setpoint), so only
+       * the fallback needed widening: a slave with limits and no minimum flow
+       * now reports what it is carrying rather than what it was sent.
        */
       ...(c.outKind === 'cascade' && c.outTag !== undefined
         ? (() => {
-            const sp = demands.get(c.outTag)?.effectiveSp ?? tags[c.outTag]?.SP
+            const sp = demands.get(c.outTag)?.effectiveSp
+              ?? spLimits.get(c.outTag)?.limited
+              ?? tags[c.outTag]?.SP
             return sp !== undefined ? { effectiveSp: sp } : {}
           })()
         : {}),
       ...(demands.get(c.tag) !== undefined ? { minFlow: demands.get(c.tag)! } : {}),
       ...(spLimits.get(c.tag) !== undefined ? { spLimit: spLimits.get(c.tag)! } : {}),
+      ...(dsLimited.get(c.tag) !== undefined
+        ? { downstreamLimited: dsLimited.get(c.tag)! } : {}),
     }
   }
   return { tags, branchFlows, pipePressures, hydraulic: hyd, loops }

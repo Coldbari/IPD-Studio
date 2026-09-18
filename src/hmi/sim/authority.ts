@@ -218,6 +218,18 @@ export interface LoopState {
    * loop with no limits publishes nothing new at all.
    */
   spLimit?: SetpointLimit
+  /**
+   * K24, a CASCADE MASTER only: its output is currently being held by a
+   * constraint of its SLAVE'S, not by one of its own.
+   *
+   * Present only on a master whose slave actually carries such a constraint,
+   * and DISTINCT from `saturated` — which keeps its K22 meaning, the
+   * controller's own configured travel. A master resting at 50 % because its
+   * slave will not take more has half its travel left; reporting that as
+   * saturation would tell an operator the master has run out of range when it
+   * has run out of slave.
+   */
+  downstreamLimited?: boolean
 }
 
 /**
@@ -337,6 +349,30 @@ export function loopFindings(loops: Record<string, LoopState>): LoopFinding[] {
      * which is `SAT`, already computed, said in cascade terms. Distinct from
      * unavailability: the link is working, and the range is the limit.
      */
+    /**
+     * K24: A MASTER HELD BY ITS SLAVE'S OWN SETPOINT LIMIT.
+     *
+     * Before K24 this condition reached the operator by accident: the master
+     * wound all the way to its own travel stop, so the row below fired and
+     * said "saturated". Now the master stops where the slave's limit projects
+     * onto its output, `SAT` is correctly 0, and that row no longer fires —
+     * which would have left an operator watching a master sit at 50 % with
+     * nothing on the screen explaining why.
+     *
+     * INFORMATION, not a fault. A cascade respecting a configured limit is the
+     * system working; it carries the same severity K16 gives a de-energised
+     * machine and K17 gives a setpoint at the end of its range.
+     */
+    if (l.downstreamLimited === true && l.cascadeTo !== undefined) {
+      out.push({
+        id: `cascade-downstream-limited:${l.tag}`,
+        tag: l.tag,
+        severity: 'info',
+        message: `is being held by ${l.cascadeTo}'s own setpoint limit, not by its own output `
+          + `range — it has travel left and cannot usefully use it. Its integrator is held `
+          + `where the limit stops it, so it responds as soon as ${l.cascadeTo} can take more.`,
+      })
+    }
     if (l.cascadeTo !== undefined && l.saturated !== 0 && l.commandedSp !== undefined) {
       out.push({
         id: `cascade-setpoint-limited:${l.tag}`,

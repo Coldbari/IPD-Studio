@@ -1700,3 +1700,82 @@ tsc -b clean · production build clean
 | P2 | The faceplate's entry clamp to the calibrated range is now cosmetic and is documented as such; it is not the constraint. |
 | P2 | A starting value outside the limits starts where the record says and is then held, rather than being normalised — so a configuration mistake stays visible. |
 | P2 | Carried: no off-delay, start-up bypass or latching (K20); no recirculation or trip (K18); one cascade topology (K17), PI not PID, no manufacturer data, no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |
+
+---
+
+## 38. Step K24 — cascade downstream constraints
+
+An investigation that concluded implementation was warranted, and that no new
+control algorithm was needed to do it.
+
+### The measurement that decided it
+
+K23 closed reporting that a master winds against a slave whose `spHigh` caps
+the setpoint, and left it because §18 forbade choosing a new anti-windup. Three
+runs on the K15 cascade — identical plant, identical demand, only the slave's
+constraint differing:
+
+| Slave floored at 30 by… | Projected? | Master OP | Master `I` | SAT |
+|---|---|---|---|---|
+| nothing | n/a | 0.00 | 8.35 | −1 |
+| `duty.minFlow` | **yes** | **48.99** | **62.37** | **0** |
+| `signal.spLow` | **no** | 0.00 | 12.06 | −1 |
+
+The same fact about the slave produced opposite master behaviour, purely
+because `duty.minFlow` predated the projection and `signal.spLow` did not. On
+release the unprojected case cost **50 ticks of dead time** before the setpoint
+moved at all.
+
+K18 had already built the mechanism and written in its own comment that a new
+constraint changes *which stop* rather than adding one. K24 is that sentence
+applied to the two constraints K23 added: `minFlowFloorPct` became `dsFloorPct`
+(the highest floor any slave constraint imposes) and gained `dsCeilPct` as its
+mirror.
+
+### The rule that came out of it
+
+**Only constraints that stop the setpoint being ACCEPTED count.** Three others
+were measured and are deliberately excluded:
+
+- **a saturated slave actuator** — the setpoint was accepted in full and the
+  plant cannot reach it, so the master's demand is genuine and it should wind
+  to its own ceiling;
+- **a rate-limited slave output** — the setpoint was accepted in full and the
+  slave is moving toward it; stopping the master through every ordinary
+  transient would be the windup cure causing the disease;
+- **a slave with no authority** — K16/K17 already make the master's authority
+  `downstream` and HOLD its integrator, which is stronger than a stop.
+
+### It is not saturation
+
+A master resting at 50 % because its slave will not take more has half its
+travel left. `SAT` keeps its K22 meaning — the controller's own configured
+travel — and the condition is published as `downstreamLimited` with a new
+`cascade-downstream-limited` info row. Without that row the operator would
+watch a master sit at 50 % with nothing on screen explaining why, because
+K17's saturation row correctly no longer fires.
+
+### A second finding, fixed on the way
+
+K17's `effectiveSp` claims to be "the setpoint the slave is actually carrying".
+Since K23 gave the slave its own limits, a limited slave went on reporting the
+**raw** value the master wrote — the one thing that field has always promised
+not to do. The min-flow demand already accounted for the limit, so only the
+fallback needed widening.
+
+### State after K24
+
+```text
+3978 tests passing · 7 skipped · 0 failing  (+33)
+tsc -b clean · production build clean
+209 Playwright passing · 16 skipped · 0 failing
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P2 | **One cascade level only.** The projection runs slave → master. A three-level cascade would need it to compose, and K17 still ships one topology. |
+| P2 | **A slave in MANUAL is `downstream` unavailability, not a downstream stop.** Correct today because the master's integrator is held outright, but the two mechanisms now sit side by side and a future phase should confirm they stay distinct. |
+| P2 | Rate limiting is deliberately excluded from upstream awareness, and documented as such. |
+| P2 | Carried: no setpoint rate limiting (K21–K23); no off-delay, start-up bypass or latching (K20); no recirculation or trip (K18); PI not PID, no manufacturer data, no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |

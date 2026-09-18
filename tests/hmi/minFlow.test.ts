@@ -427,12 +427,31 @@ describe('N-T — master, override, slave, drive', () => {
     expect(prot()!.overriding).toBe(false)
   })
 
+  /**
+   * K24 RENAMED THE FIELD THIS ASSERTS. The number is unchanged.
+   *
+   *   OLD name: `minFlowFloorPct` — the minimum-flow floor on the master's
+   *        output scale, which was the only such projection that existed.
+   *   NEW name: `dsFloorPct` — the highest floor ANY of the slave's setpoint
+   *        constraints imposes, of which minimum flow is now one of two.
+   *   REASON: K23 added `signal.spLow` and `signal.spHigh` on the slave and
+   *        did not project them, so a master wound across the unusable part
+   *        of its range against them while behaving correctly against an
+   *        identical floor from `duty.minFlow`. K24 widened the projection to
+   *        cover all three rather than adding a second field beside this one,
+   *        which would have been two answers to one question.
+   *
+   * The assertion below is the SAME projection of the SAME 20 m³/h onto the
+   * SAME slave range, and still `(20 / SLAVE_MAX) * 100`.
+   */
   it('§8: the floor is the slave\'s range run backwards, and nothing when there is none', () => {
-    expect(ctl('PIC-1', cascadeReg(), cascaded)!.minFlowFloorPct)
+    expect(ctl('PIC-1', cascadeReg(), cascaded)!.dsFloorPct)
       .toBeCloseTo((20 / SLAVE_MAX) * 100, 9)
     // AA: with no minimum declared there is no floor, so the master's
     // anti-windup is the one K17 shipped, unchanged
-    expect(ctl('PIC-1', reg({ cascade: true }), cascaded)!.minFlowFloorPct).toBeUndefined()
+    expect(ctl('PIC-1', reg({ cascade: true }), cascaded)!.dsFloorPct).toBeUndefined()
+    // ...and no ceiling either: this slave states no setpoint limits at all
+    expect(ctl('PIC-1', cascadeReg(), cascaded)!.dsCeilPct).toBeUndefined()
   })
 })
 
@@ -551,7 +570,9 @@ describe('X, Y, Z, AA — nothing else changed', () => {
     const before = buildSimModel(plant, reg()).controllers
     for (const c of before) {
       expect(c.minFlow).toBeUndefined()
-      expect(c.minFlowFloorPct).toBeUndefined()
+      // K24: `minFlowFloorPct` is now `dsFloorPct` — see the §8 test above for
+      // OLD/NEW/REASON. With no minimum declared it is still absent.
+      expect(c.dsFloorPct).toBeUndefined()
       expect(c.minFlowProblem).toBeUndefined()
     }
     start(reg())
