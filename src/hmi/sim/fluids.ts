@@ -10,14 +10,20 @@
  * the part that matters — says MIXED where two services meet instead of
  * quietly picking one.
  *
- * WHAT IT IS NOT. It is not physics. The hydraulic solver does not know a fluid
- * exists, and the thermal model still runs on the single liquid stated in
- * `sim/units.ts`. Densities and viscosities are carried as ENGINEERING DATA for
- * the operator and for whatever later reads them; nothing here changes a
- * pressure drop, a pump head or a temperature. Wiring density into the solver
- * is a physics change and has to be validated as one — a half-applied
- * correction would be worse than none, because the numbers would still look
- * right.
+ * WHAT IT IS AND IS NOT — amended by K31. This file still only says WHAT each
+ * stream carries; it computes no physics itself. But it is no longer true that
+ * nothing reads it: `hydraulic/fluidhead.ts` resolves a DENSITY per pump from
+ * what this returns, and a pump head stated in metres becomes ρ·g·H against it.
+ * A service painted on a drawing now moves a pressure.
+ *
+ * ONLY DENSITY, AND ONLY THE PUMP HEAD. Viscosity and heat capacity are still
+ * carried as ENGINEERING DATA that nothing consumes, the thermal model still
+ * runs on the single liquid in `sim/units.ts`, and every RESISTANCE is still a
+ * calibrated constant that no fluid touches. That split is deliberate and it is
+ * declared in `model/capability.ts`: the warning this header used to carry —
+ * that a half-applied correction is worse than none, because the numbers still
+ * look right — was about an UNDISCLOSED one. This one is disclosed, reported
+ * per pump as `fluid` or `unresolved`, and asserted by tests.
  *
  * STATIC. Derived once when a run is compiled, from the drawing. It does not
  * depend on flow, and must not: an operator watching a line reverse should see

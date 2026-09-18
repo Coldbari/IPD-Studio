@@ -350,7 +350,10 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
   tags: {}, defs: {}, quality: {}, pipeFlows: {}, pipePressures: {}, branchFlows: {}, routes: [], processView: null, equipFlows: {}, pumpEnvelopes: {}, loops: {}, minFlow: {}, controllers: [], hydraulic: NO_SOLVE, alarms: [], journal: [], history: new History(), historyVersion: 0, shelved: {}, oos: {}, plugged: [], scenario: null, terminals: {}, scenarioProblems: [], terminalSpec: {},
 
   enterRun: (screens, registry, fluids) => {
-    model = buildSimModel(screens, registry)
+    // K31: the service list reaches the MODEL now, not only the picture. A
+    // pump's head is stated in metres and metres are not a pressure until
+    // something says what is in the casing — see `hydraulic/fluidhead.ts`.
+    model = buildSimModel(screens, registry, fluids)
     rng = makeRng(SEED)
     warm = undefined // a different plant's pressure field is not a guess
     lastSolve = undefined

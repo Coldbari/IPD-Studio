@@ -12,6 +12,9 @@ import type { ProcessEdge, ProcessModel } from './hydraulic/model'
 import { buildProcessModel } from './hydraulic/model'
 import type { SolveResult } from './hydraulic/solver'
 import { solveHydraulics } from './hydraulic/solver'
+import type { Fluid } from '../../model/types'
+import type { PumpFluid } from './hydraulic/fluidhead'
+import { pumpFluids, resolvePumpHeadBar } from './hydraulic/fluidhead'
 import type { ProcessFault } from './quality'
 import type { ControlAuthority, LoopState } from './authority'
 import { authorityOf } from './authority'
@@ -173,6 +176,29 @@ export interface SimModel {
    *  Compiled ONCE with the model; never rebuilt per tick. */
   hydraulic: ProcessModel
   controllers: ControllerSpec[]
+  /**
+   * K31 — which liquid each pump is passing, by tag, and therefore which
+   * density converts its head.
+   *
+   * Compiled once with the model, exactly like the topology, because a service
+   * comes from the DRAWING and not from the flow: an operator watching a line
+   * reverse should see the arrows turn, not the pressure change. Empty when the
+   * caller passed no service list, which is every path that has not been given
+   * one — and that is why `resolvePumpHeadBar` treats a missing entry and an
+   * unresolvable one identically.
+   */
+  pumpFluid: Map<string, PumpFluid>
+}
+
+/**
+ * The head a pump's record actually promises, bar — K31.
+ *
+ * One helper because there are two solves (the calm start and the tick) and
+ * they must agree to the last digit: a seeded plant that disagreed with its own
+ * first tick would drift on frame one for reasons no test could read back.
+ */
+export function pumpHeadBar(def: TagDef | undefined, fluid: PumpFluid | undefined): number {
+  return resolvePumpHeadBar(def?.head ?? DEFAULTS.pumpHeadBar, def?.headM, fluid).bar
 }
 export type Tags = Record<string, Record<string, number>>
 
@@ -397,7 +423,18 @@ const MAX_STEP_S = 1
  *  simulating while the operator navigates between pages. Tag defs merge
  *  globally; flow networks stay per-screen (pipe coordinates are page-local),
  *  branch ids are re-namespaced so concatenation cannot collide. */
-export function buildSimModel(screens: HmiScreen | HmiScreen[], registry?: Registry): SimModel {
+export function buildSimModel(
+  screens: HmiScreen | HmiScreen[],
+  registry?: Registry,
+  /**
+   * K31 — the project's service list. OPTIONAL, and absent is the honest
+   * default rather than a gap: most callers here are validators and diagnostic
+   * passes that ask topological questions, and a plant with no stated service
+   * converts its heads on the declared legacy basis exactly as it always has.
+   * Only a RUN needs this, and `simStore.enterRun` passes it.
+   */
+  fluids?: readonly Fluid[],
+): SimModel {
   const list = Array.isArray(screens) ? screens : [screens]
   const defs = buildTagDefs(list, registry)
   const branches = list.flatMap((sc, i) =>
@@ -456,7 +493,11 @@ export function buildSimModel(screens: HmiScreen | HmiScreen[], registry?: Regis
         ...(driver ? { pvDriver: driver.pump } : {}),
       }
     })
-  return { defs, net, hydraulic, controllers: inCascadeOrder(controllers) }
+  return {
+    defs, net, hydraulic,
+    controllers: inCascadeOrder(controllers),
+    pumpFluid: pumpFluids(hydraulic, fluids ?? []),
+  }
 }
 
 /**
@@ -1346,7 +1387,7 @@ export function initTags(model: SimModel): Tags {
     },
     pumpSpeed: () => 0, // calm start: nothing is turning yet
     pumpRated: (p) => model.defs.find((d) => d.name === p)?.ratedFlow ?? DEFAULTS.pumpFlowM3h,
-    pumpHead: (p) => model.defs.find((d) => d.name === p)?.head ?? DEFAULTS.pumpHeadBar,
+    pumpHead: (p) => pumpHeadBar(model.defs.find((d) => d.name === p), model.pumpFluid.get(p)),
     vesselLevel: (tag) => tags[tag]?.PV ?? 0,
     vesselPressure: (t) =>
       model.defs.find((d) => d.name === t)?.vesselPressureBarA ?? DEFAULTS.atmosphericPressureBar,
@@ -2199,7 +2240,7 @@ function step(
     return clamp(t.RAMP ?? ((t.RUN ?? 0) >= 0.5 ? 1 : 0), 0, 1)
   }
   const ratedOf = (p: string) => defByName.get(p)?.ratedFlow ?? DEFAULTS.pumpFlowM3h
-  const headOf = (p: string) => defByName.get(p)?.head ?? DEFAULTS.pumpHeadBar
+  const headOf = (p: string) => pumpHeadBar(defByName.get(p), model.pumpFluid.get(p))
   /** A vessel is CLOSED at the operating pressure its record states, and VENTED
    *  when it states none. Silence means vented; it never means unknown. */
   const vapourOf = (t: string) =>

@@ -125,6 +125,18 @@ export interface TagDef {
   ratedFlow?: number
   head?: number
   /**
+   * K31 — the rated head in METRES, present only when the record stated a
+   * length rather than a pressure.
+   *
+   * `head` above is this figure already converted, on the declared legacy
+   * basis; this one is the figure BEFORE a density was chosen, and it is what
+   * lets the hydraulic solve finish the conversion against the liquid the pump
+   * is actually passing. Absent means there is nothing to finish — either the
+   * record gave a pressure, or it gave nothing and a default in bar stood in.
+   * See `hydraulic/fluidhead.ts` for the contract.
+   */
+  headM?: number
+  /**
    * The driver runs on a VARIABLE SPEED DRIVE, from `duty.vsd`.
    *
    * Absent means fixed-speed, which is every machine drawn before K12: told to
@@ -262,6 +274,11 @@ function defFor(w: HmiWidget, registry: Registry | undefined): TagDef | null {
         name: w.tag, kind: 'motor', min: 0, max: 1,
         ratedFlow: proc.ratedFlowM3h ?? DEFAULTS.pumpFlowM3h,
         head: proc.headBar ?? DEFAULTS.pumpHeadBar,
+        // K31: carried only when the record actually stated a length. A
+        // defaulted head is `DEFAULTS.pumpHeadBar`, which is declared in BAR —
+        // nobody stated a head, so there is no head in metres to make
+        // fluid-dependent and none is invented.
+        ...(proc.headM !== undefined ? { headM: proc.headM } : {}),
         // a DECLARED capability, never a default: a machine whose record says
         // nothing is fixed-speed and behaves exactly as it always has
         ...(proc.vsd === true ? { vsd: true } : {}),

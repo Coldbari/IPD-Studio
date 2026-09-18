@@ -97,8 +97,27 @@ export interface ProcessEngineering {
   volumeM3?: number
   /** Rated flow, m³/h (`duty.capacity`). */
   ratedFlowM3h?: number
-  /** Rated head, bar (`duty.head` — metres of liquid unless it says otherwise). */
+  /** Rated head, bar (`duty.head` — metres of liquid unless it says otherwise).
+   *
+   *  CONVERTED ON THE LEGACY BASIS, ρ = 1000.016 kg/m³ — see
+   *  `hydraulic/fluidhead.ts`. Kept exactly as it was: it is what a stream with
+   *  no named service still runs on, and what every display has always shown. */
   headBar?: number
+  /**
+   * K31 — the rated head AS THE RECORD STATED IT, metres of liquid.
+   *
+   * Present ONLY when `duty.head` was given as a length: "35 m", "35 mlc",
+   * "35 mwc", or a bare "35". Absent when it was given as a pressure — "3.5
+   * bar", "350 kPa", "50 psi" — because that is not a head and must not be
+   * scaled by a density a second time.
+   *
+   * This is the entire reason the distinction survives the unit table: a head
+   * in metres is energy per unit weight and becomes a different pressure in
+   * every liquid, so the conversion cannot be finished until the solve knows
+   * what the pump is passing. `headBar` above is the same figure converted on
+   * the legacy basis, for everything that is not the hydraulic source term.
+   */
+  headM?: number
   /** Shaft or element power, kW (`duty.power`). */
   powerKw?: number
   /**
@@ -207,6 +226,10 @@ const FLOW: Factors = { 'm3/h': 1, m3h: 1, cmh: 1, 'm3/hr': 1, 'l/s': 3.6, lps: 
 /** Head -> bar. Bare numbers are METRES of liquid, which is how a pump curve
  *  is written; 1 bar ≈ 10.197 m of water. */
 const HEAD: Factors = { m: 1 / 10.197, mlc: 1 / 10.197, bar: 1, kpa: 1 / 100, pa: 1e-5, psi: 1 / 14.5038, mwc: 1 / 10.197 }
+/** K31 — the same field read as a LENGTH. Only the spellings that actually are
+ *  one: a pressure unit is left out on purpose, so `convert` returns undefined
+ *  for it and `headM` stays absent. A bare number is metres, matching `HEAD`. */
+const HEAD_M: Factors = { m: 1, mlc: 1, mwc: 1 }
 /** Power -> kW. */
 const POWER: Factors = { kw: 1, w: 1e-3, mw: 1e3, hp: 0.7457, ps: 0.7355 }
 /** Pressure -> bar (gauge; this model does not distinguish gauge from absolute). */
@@ -234,6 +257,8 @@ export function processFor(registry: Registry | undefined, tag: string | undefin
     volumeM3: convert(q('construction.volume'), VOLUME, 1),
     ratedFlowM3h: convert(q('duty.capacity'), FLOW, 1),
     headBar: convert(q('duty.head'), HEAD, 1 / 10.197),
+    // K31: and the same figure unconverted, when it was stated as a length
+    headM: convert(q('duty.head'), HEAD_M, 1),
     powerKw: convert(q('duty.power'), POWER, 1),
     designPressureBar: convert(q('design.pressure') ?? q('duty.designPressure'), PRESSURE, 1),
     operatingTempC: convert(q('design.operatingTemperature') ?? q('design.temperature'), TEMPERATURE, 1),

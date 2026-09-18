@@ -7,10 +7,14 @@
  *
  * ── THE DECISION ──────────────────────────────────────────────────────────
  *
- * THE HYDRAULIC MODEL IS FLUID-INDEPENDENT. It does not consume
- * `Fluid.densityKgM3` and is not intended to. Every resistance is a CALIBRATED
- * SIMULATOR COEFFICIENT with any fluid effect already baked in — not an
- * engineering pipe or valve coefficient, and never to be described as one.
+ * THE HYDRAULIC RESISTANCES ARE FLUID-INDEPENDENT. Every one of them is a
+ * CALIBRATED SIMULATOR COEFFICIENT with any fluid effect already baked in —
+ * not an engineering pipe or valve coefficient, and never to be described as
+ * one. That half of K30's decision stands, and this file still proves it.
+ *
+ * THE OTHER HALF WAS REVERSED BY K31: a pump head stated in metres is now
+ * converted as ρ·g·H against the service on that pump's stream. The amendment
+ * block in §4/§2 below records why.
  *
  * The product therefore claims TRAINING AND DEMONSTRATION PROCESS SIMULATION:
  * a plant that responds causally, in the right direction, with the right
@@ -24,15 +28,15 @@
  * delivers 3.432 bar for every fluid, against 6.315 bar on sulphuric acid
  * (+84 %) and 2.540 bar on petrol (−26 %).
  *
- * It is RECORDED as an assumption rather than corrected. Correcting only that
- * would make the model partly fluid-aware, which is the state `sim/fluids.ts`
- * warns about by name: a half-applied correction is worse than none, because
- * the numbers still look right.
+ * K30 RECORDED that rather than correcting it, on the grounds that a partial
+ * coupling is worse than none. K31 corrected it, disclosed the split, and
+ * proved it — the danger was always the UNDISCLOSED half-correction.
  *
- * ── SO NOTHING CHANGED, AND THIS FILE PROVES IT ───────────────────────────
+ * ── AND NO RESISTANCE EQUATION CHANGED, WHICH THIS FILE STILL PROVES ──────
  *
- * A decision phase that alters no equation still has to demonstrate that it
- * altered no equation.
+ * K30 altered no equation and had to demonstrate it. After K31 the same
+ * demonstration matters more, not less: it is what makes the coupling provably
+ * partial rather than accidentally total.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -45,8 +49,8 @@ import {
   RUNOUT_FACTOR, pumpHead, shutoffFromDuty, vesselHeadBar,
 } from '../../src/hmi/sim/hydraulic/solver'
 import {
-  EQUIPMENT_CAPABILITY, HYDRAULICS_ARE_FLUID_INDEPENDENT,
-  HYDRAULIC_BOUNDARY_IS_DECLARED,
+  EQUIPMENT_CAPABILITY, HYDRAULIC_BOUNDARY_IS_DECLARED,
+  HYDRAULIC_HEAD_IS_FLUID_COUPLED, HYDRAULIC_RESISTANCE_IS_FLUID_INDEPENDENT,
 } from '../../src/model/capability'
 import { ATMOSPHERIC_BAR, operatingPressure, processFor } from '../../src/model/processData'
 import type { HmiScreen } from '../../src/hmi/model'
@@ -94,22 +98,63 @@ beforeEach(() => { start() })
 // ── The decision itself ─────────────────────────────────────────────────────
 
 describe('§4, §2 — the decision, and the claim it supports', () => {
-  it('the boundary is declared, not merely implied', () => {
-    expect(HYDRAULICS_ARE_FLUID_INDEPENDENT).toBe(true)
+  /**
+   * ── AMENDED BY K31 ──────────────────────────────────────────────────────
+   *
+   * OLD EXPECTATION:  `HYDRAULICS_ARE_FLUID_INDEPENDENT === true`, and the
+   *                   `HEAD metres → bar` row classified ASSUMPTION with no
+   *                   absent state.
+   * NEW EXPECTATION:  the boundary splits. The HEAD is fluid-coupled; the
+   *                   RESISTANCES are not. The row stays ASSUMPTION but now
+   *                   covers only the UNRESOLVED case, and names the density
+   *                   it assumes; the physics moved onto `duty.head`, which is
+   *                   a real catalogue field and already ENGINEERING.
+   * PHYSICAL REASON:  a head in metres is energy per unit weight and is the
+   *                   same length in every liquid; the pressure it becomes is
+   *                   ρ·g·H and is not. K30 recorded that rather than fixing
+   *                   it, on the grounds that a partial coupling is worse than
+   *                   none. K31 applied it anyway, because the two halves have
+   *                   different evidence behind them: `duty.head` and
+   *                   `Fluid.densityKgM3` are both stated engineering data,
+   *                   while a real friction term would need length, bore and
+   *                   roughness, which K29 proved this repository does not
+   *                   store. The danger K30 named was a partial coupling that
+   *                   LOOKS total; the split is now declared in
+   *                   `capability.ts`, reported per pump as `fluid` or
+   *                   `unresolved`, and asserted in `tests/hmi/fluidHead.test.ts`.
+   *
+   * Everything below this block is K30's and still holds: no resistance
+   * equation moved.
+   */
+  it('the boundary is declared, not merely implied — and now it is SPLIT', () => {
     expect(HYDRAULIC_BOUNDARY_IS_DECLARED).toBe(true)
+    expect(HYDRAULIC_HEAD_IS_FLUID_COUPLED).toBe(true)
+    expect(HYDRAULIC_RESISTANCE_IS_FLUID_INDEPENDENT).toBe(true)
   })
 
-  it('§16: the metres→bar water basis is now recorded as an ASSUMPTION', () => {
+  it('§16: the water basis SHRANK to the unresolved case, and is named there', () => {
     const f = EQUIPMENT_CAPABILITY.find((x) => x.id === 'HEAD metres → bar')!
+    // still an ASSUMPTION — nobody stated it — but no longer applied to a
+    // stream whose density is known, and no longer anonymous
     expect(f.cls).toBe('ASSUMPTION')
-    expect(f.meaning).toContain('WATER')
-    expect(f.absent).toBeNull()                    // an assumption has no absent state
+    expect(f.meaning).toContain('1000.016')
+    expect(f.meaning).toContain('NO SERVICE RESOLVES')
+    expect(f.absent).toBeNull()
   })
 
-  it('§4: and the assumption it records is real, and this is its size', () => {
+  it('§16: and the physics sits on the FIELD, which is where engineering lives', () => {
+    const d = EQUIPMENT_CAPABILITY.find((x) => x.id === 'duty.head')!
+    expect(d.cls).toBe('ENGINEERING')               // a real catalogue field
+    expect(d.meaning).toContain('ρ·g·H')
+    expect(d.unit).toContain('metres')
+  })
+
+  it('§4: and the effect it records is real, and this is its size', () => {
     /**
-     * `duty.head` in metres is a pump datasheet's own unit. Converting at
-     * 10.197 m per bar is water; the real pressure scales with density.
+     * `duty.head` in metres is a pump datasheet's own unit. `headBar` still
+     * converts at 10.197 m per bar — it is the DECLARED LEGACY BASIS, kept
+     * exactly for streams nobody named — and K31 measures the real pressure
+     * beside it. See `tests/hmi/fluidHead.test.ts` for the coupling itself.
      */
     const headBar = processFor(reg(), 'P-1').headBar!
     expect(headBar).toBeCloseTo(35 / 10.197, 9)    // ~3.432 bar, for every fluid
@@ -263,6 +308,12 @@ describe('M-Q — K25 through K29, unchanged by a decision', () => {
     for (const id of ['element.cv', 'element.characteristic', 'duty.speed']) {
       expect(EQUIPMENT_CAPABILITY.find((f) => f.id === id)!.cls).toBe('DECLARED')
     }
+    // AMENDED BY K31: `HEAD metres → bar` left this list. OLD: ASSUMPTION,
+    // alongside the calibrated K's. NEW: ENGINEERING, asserted in the §16 test
+    // above. PHYSICAL REASON: it is the one entry here that was never a fitted
+    // simulator constant — it is a unit conversion, and K31 gave it the density
+    // the conversion always required. The three that remain are calibration and
+    // stay calibration; nothing moved class because a default became available.
     for (const id of ['VALVE_K', 'PIPE_K', 'RAMP_S', 'HEAD metres → bar']) {
       expect(EQUIPMENT_CAPABILITY.find((f) => f.id === id)!.cls).toBe('ASSUMPTION')
     }
