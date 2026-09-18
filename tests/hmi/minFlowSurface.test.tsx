@@ -171,6 +171,67 @@ describe('the flow controller\'s plate carries the whole protection', () => {
   })
 })
 
+/**
+ * K19 — THE STATE AN OPERATOR READS WHEN THE MACHINE IS OFF, OR IN HAND.
+ *
+ * K18 painted both of these UNABLE, in the warning colour. A plate that shows
+ * a failed protection on a pump nobody has started yet teaches an operator to
+ * stop reading the line.
+ */
+describe('K19 — a protection that is not acting says so, and does not alarm', () => {
+  it('a STOPPED machine reads STANDING BY, in the plain tone, with no warning', async () => {
+    lineUp(12); advance(300)
+    await act(() => { sim().writeTag('P-1', 'RUN', 0) })
+    advance(30)
+    const host = await mount(<Faceplate widget={w('fic')} onClose={() => {}} />)
+    const el = q(host, 'fp-minflow')!
+    expect(el.getAttribute('data-state')).toBe('STANDING_BY')
+    expect(el.getAttribute('data-severity')).toBe('none')
+    // the OPERATOR'S word has a space in it; the data attribute keeps the enum
+    expect(el.textContent).toContain('STANDING BY')
+    // ...and the four numbers are all still there to be read
+    expect(q(host, 'fp-v-min-flow')!.textContent).toContain('20.0')
+    expect(q(host, 'fp-v-requested-sp')!.textContent).toContain('12.0')
+    expect(q(host, 'fp-v-effective-sp')!.textContent).toContain('20.0')
+  })
+
+  it('MANUAL reads the same, because the setpoint is not what drives the machine', async () => {
+    lineUp(12); advance(300)
+    await act(() => { sim().writeTag('FIC-1', 'MODE', 0) })
+    advance(5)
+    const el = q(await mount(<Faceplate widget={w('fic')} onClose={() => {}} />), 'fp-minflow')!
+    expect(el.getAttribute('data-state')).toBe('STANDING_BY')
+    expect(el.getAttribute('data-severity')).toBe('none')
+  })
+
+  it('the machine\'s own plate agrees with the loop\'s', async () => {
+    lineUp(12); advance(300)
+    await act(() => { sim().writeTag('P-1', 'RUN', 0) })
+    advance(30)
+    const host = await mount(<Faceplate widget={w('p')} onClose={() => {}} />)
+    expect(q(host, 'fp-envelope')!.getAttribute('data-state')).toBe('STOPPED')
+    const el = q(host, 'fp-minflow-pump')!
+    expect(el.getAttribute('data-state')).toBe('STANDING_BY')
+    expect(el.textContent).toContain('STANDING BY')
+  })
+
+  it('§13: the machine\'s BELOW MINIMUM FLOW row names the loop defending it', async () => {
+    start(reg('55 m³/h'))
+    lineUp(12); advance(400)
+    const host = await mount(<DiagnosticsPage onJumpTag={() => {}} />)
+    // the MACHINE's row is in the equipment-envelope section — K13's own —
+    // and the LOOP's is among the control loops. Two sections, two subjects.
+    const machine = [...host.querySelectorAll('[data-testid="diag-env-row"]')]
+      .find((r) => r.getAttribute('data-tag') === 'P-1'
+        && r.textContent?.includes('below minimum flow'))!
+    expect(machine.textContent).toContain('FIC-1 carries this machine')
+    const loopRow = [...host.querySelectorAll('[data-testid="diag-loop-row"]')]
+      .find((r) => r.getAttribute('data-tag') === 'FIC-1'
+        && r.textContent?.includes('is asking for'))!
+    expect(loopRow.textContent).toContain('the LOOP\'s report')
+  })
+})
+
 // ── The machine's plate ─────────────────────────────────────────────────────
 
 describe('the pump\'s plate says whether anything is being done about it', () => {

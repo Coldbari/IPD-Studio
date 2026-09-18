@@ -3502,3 +3502,132 @@ tsc -b clean · production build clean
 - Carried: PI not PID, no output rate limit, one cascade topology (K17), no
   manufacturer data, no scenario library (K9), pressure-only boundary dynamics
   (K10), mixing unsupported (K5).
+
+---
+
+## K19 — minimum-flow protection state and alarm semantics
+
+K18 shipped the override and five words to describe it. K19 changes no physics
+at all — the same solver, the same curve, the same
+`effective = max(requested, duty.minFlow)`, the same signed pump-edge flow —
+and makes the words correct.
+
+### Three questions, three answers, never one
+
+The brief's §4 refuses to let these collapse, and the audit of K18 found two
+places where they had:
+
+| | Question | Answered by | Reads |
+|---|---|---|---|
+| A | PROTECTION DEMAND | `overriding` | the setpoint and the record. No measurement. |
+| B | PROTECTION ACHIEVEMENT | `MinFlowState` | K13's signed flow, the solve's trustworthiness, K16's authority. |
+| C | PUMP ENVELOPE | K13's `EnvelopeState` | the solved operating point against the record. |
+
+C is not replaced, not wrapped and not re-derived. A is deliberately
+independent of B: a demand exists whether or not the plant answers it, which is
+the whole reason `Effective SP 20` and `Actual flow 7` sit side by side on the
+plate.
+
+### What was measured
+
+Instrumenting the K15 fixture at a declared minimum of 20 m³/h, 200 s after the
+loop settled: `overriding` 0 crossings, effective setpoint 0, `SAT` 0, K18's
+diagnostic rows 0, authority 0 — and the protection STATE 154, K13's envelope
+STATE 154 in exact lockstep, and **K13's `pump-below-min-flow` ROW 154**.
+
+The override is therefore proven not to chatter, and so is K18's warning. The
+one operator-visible row that flaps is K13's. It cannot borrow K18's `SAT` gate
+because `SAT` is loop-scoped and the envelope is machine-scoped — a pump with
+no controller on it still has an operating envelope and still needs the row.
+
+### `STANDING_BY` — a subtraction from `UNABLE`
+
+Walking the lifecycle found six of thirteen points where a machine that was
+simply switched off — simulation start, commanded shutdown, coast-down, trip —
+reported `UNABLE` **in the warning colour**. `UNABLE` had collapsed *asked and
+refused* together with *nobody there to ask*.
+
+`STANDING_BY` is the second of those. It covers a de-energised machine and a
+loop in MANUAL, and it is **not a finding**: K16 already publishes the lost
+authority as INFO and K13 already publishes `STOPPED`, so a third row would be
+a duplicate. The word appears on the faceplate in the plain tone, because that
+is where an operator asks what the protection is doing rather than what is
+wrong.
+
+The transition table, worst evidence first:
+
+```text
+limitM3h === undefined        -> NOT_CONFIGURED
+!overriding                   -> INACTIVE
+!inForce                      -> STANDING_BY   (MANUAL: no setpoint path)
+solve unreadable              -> ACTIVE        (demand in force, outcome unknown)
+authority !== 'available'     -> STANDING_BY   (no actuator path)
+flowM3h >= limitM3h           -> EFFECTIVE
+otherwise                     -> UNABLE
+```
+
+`!overriding` is tested before anything about the plant, so a stopped machine
+whose setpoint already respects the limit reads `INACTIVE` and not
+`STANDING_BY`: there was never a demand to stand by.
+
+### `inForce` — a branch the engine already had
+
+In MANUAL this runtime does not use the setpoint; the operator's `OP` goes to
+the element and the algorithm does not run. K18 implemented exactly that and
+then published `overriding: true` beside it, so the plate told an operator in
+hand control that the protection was holding their setpoint at 20 while their
+own output drove the machine. Nothing about the engine changed; the field
+reports the branch it was already taking. The bumpless-transfer tracking still
+uses the effective setpoint, because it must track what AUTO will resume on.
+
+### The hysteresis that exists, and does not apply
+
+`TagDef.deadband` and `TagDef.alarmDelay` are a real ISA-18.2 hysteresis and
+on-delay in this product, used by `evalAlarms`. They are **not applicable** to
+this limit:
+
+1. **A different limit.** They are the hysteresis on a TAG's own configured
+   LL/L/H/HH thresholds. `duty.minFlow` is a field on the MACHINE's record.
+2. **A different signal.** The comparison is against the SIGNED pump-edge flow
+   from the solve. The FT beside it reads a magnitude — which is precisely why
+   the protection is not judged on it.
+3. **A code default, not an engineering value.** Absent a stated value they
+   fall back to 1 % of span and 0 s. Reaching for a number nobody chose for
+   this purpose is invention dressed as reuse.
+
+A test writes a 6 m³/h deadband and a 10 s on-delay onto the flow tag — both
+far wider than the ±0.5 m³/h the loop rides — and measures that the crossing
+count does not move.
+
+### Alarm versus diagnostic
+
+This product has two lifecycles and they are not the same thing:
+
+- the **ALARM** path (`sim/alarms.ts`) is ISA-18.2 — `pending → active → acked`,
+  `cleared` on return-to-normal, with an on-delay, a priority, shelving,
+  out-of-service and a journal;
+- the **DIAGNOSTIC** path (`ScenarioFinding`) is instantaneous, unlatched,
+  unacknowledged and recomputed from the snapshot every render.
+
+Minimum-flow protection lives entirely on the second. That is deliberate and it
+is a gap, not a design: no engineering record here states an alarm priority for
+minimum flow, and none was invented. Moving the condition onto the alarm path
+would require a priority and a latching decision from somebody who can make it.
+
+### Limitations carried
+
+- **The STATE still chatters**, by design. 154 crossings / 200 s when a loop
+  controls exactly at its minimum. A non-chattering state needs a deadband
+  width or an on-delay, and choosing one is a control-design decision.
+- **K13's `pump-below-min-flow` row flaps with it**, and cannot be gated the
+  way K18's is. Same missing value.
+- **A normal pump start raises a transient `min-flow-unable` warning.** The
+  statement is true — the shaft is ramping, the loop is at maximum and the
+  plant genuinely is not making the minimum — and real plants suppress it with
+  a start-up bypass timer whose duration is not on any record here.
+- **No alarm priority, no latching, no acknowledgement** for this condition.
+- Carried from K18: one limit and one direction, no recirculation, no trip,
+  flow loops in m³/h only, and the protection is not a mode.
+- Carried: PI not PID, no output rate limit, one cascade topology (K17), no
+  manufacturer data, no scenario library (K9), pressure-only boundary dynamics
+  (K10), mixing unsupported (K5).

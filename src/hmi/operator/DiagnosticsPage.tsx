@@ -85,7 +85,21 @@ export default function DiagnosticsPage({ onJumpTag }: { onJumpTag(tag: string):
    * somewhere the record cannot vouch for. Mixing the two would make a
    * configuration list blink as the plant ran.
    */
-  const envelope = envelopeFindings(useSimStore((st) => st.pumpEnvelopes))
+  /**
+   * K19, §13: the machine's row names the loop defending it.
+   *
+   * Built from the published protection rather than from the controller list,
+   * because the question is "is this machine's minimum actually being carried
+   * by a loop", and `minFlow` is what answers it.
+   *
+   * Plain, not memoised: the tick republishes `minFlow` as a new object every
+   * time, so a `useMemo` keyed on it would recompute every time anyway while
+   * looking like it did not. This page already re-renders on the clock, and
+   * the map is one entry per protected pump.
+   */
+  const protection = useSimStore((st) => st.minFlow)
+  const protectedBy = new Map(Object.values(protection).map((p) => [p.pump, p.tag]))
+  const envelope = envelopeFindings(useSimStore((st) => st.pumpEnvelopes), protectedBy)
   /**
    * K16: which loops can actually reach their process.
    *
@@ -103,7 +117,7 @@ export default function DiagnosticsPage({ onJumpTag }: { onJumpTag(tag: string):
    */
   const loops = [
     ...loopFindings(useSimStore((st) => st.loops)),
-    ...minFlowFindings(useSimStore((st) => st.minFlow)),
+    ...minFlowFindings(protection),
   ].sort((a, b) => a.tag.localeCompare(b.tag, undefined, { numeric: true })
     || a.id.localeCompare(b.id))
   const tags = useSimStore((s) => s.tags)

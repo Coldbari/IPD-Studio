@@ -1564,6 +1564,18 @@ function step(
         ...(t.SP !== undefined ? { requestedSp: t.SP } : {}),
         ...(effSp !== undefined ? { effectiveSp: effSp } : {}),
         overriding: t.SP !== undefined && effSp !== undefined && effSp > t.SP,
+        /**
+         * K19: AND WHETHER THAT RAISE REACHES ANYTHING.
+         *
+         * The `continue` a dozen lines below is the whole answer — in MANUAL
+         * the algorithm does not run and `effSp` reaches nothing but the
+         * bumpless-transfer tracking. K18 already behaved exactly this way and
+         * published `overriding: true` beside it, so the faceplate told an
+         * operator in hand control that their setpoint was being held up while
+         * their own output drove the machine. This reports the branch that was
+         * always there; it does not add one.
+         */
+        inForce: (t.MODE ?? 0) >= 0.5,
       })
     }
 

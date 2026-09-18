@@ -282,6 +282,19 @@ const q = (v: number): string => `${v.toFixed(1)} m³/h`
  */
 export function envelopeFindings(
   envelopes: Record<string, PumpEnvelope>,
+  /**
+   * K19, §13: WHICH LOOP IS DEFENDING THIS MACHINE, when one is.
+   *
+   * OPTIONAL, and the reason it is optional is the reason this row cannot be
+   * gated the way K18's can: a pump with no controller on it still has an
+   * operating envelope and still needs this finding. The protection is extra
+   * information about the machine, never a precondition for describing it.
+   *
+   * Keyed by PUMP tag. Nothing here reads the protection's STATE — only that a
+   * loop is carrying the limit — so K13 still forms its own verdict from its
+   * own signed flow and the two modules cannot drift into disagreeing.
+   */
+  protectedBy?: ReadonlyMap<string, string>,
 ): EnvelopeFinding[] {
   const out: EnvelopeFinding[] = []
   // sorted so the list is stable whatever order the tags were built in
@@ -312,11 +325,24 @@ export function envelopeFindings(
           + `while it turns at ${(e.shaft * 100).toFixed(0)} % speed: the discharge is being held `
           + `above the head the pump can make. Source: solved hydraulic operating point.`)
         break
-      case 'BELOW MINIMUM FLOW':
+      case 'BELOW MINIMUM FLOW': {
+        /**
+         * K19, §13. THE MACHINE'S OWN ROW, AND ONLY THE MACHINE'S.
+         *
+         * This says where the MACHINE is being run. `min-flow-unable` on the
+         * loop says what the PROTECTION asked for and did not get. They fire
+         * together and are not duplicates — see `minFlowFindings` — so the
+         * wording keeps them plainly apart: this one never mentions a setpoint
+         * or a demand, and names the defending loop only so the operator knows
+         * where to go next.
+         */
+        const loop = protectedBy?.get(e.tag)
         add('pump-below-min-flow', sev ?? 'warning',
           `is below minimum flow. Actual ${q(e.flowM3h ?? 0)}, minimum ${q(e.minFlowM3h ?? 0)}. `
-          + `Source: engineering record.`)
+          + `Source: engineering record.`
+          + (loop !== undefined ? ` ${loop} carries this machine's minimum-flow protection.` : ''))
         break
+      }
       case 'LIMIT UNKNOWN':
         add('pump-min-flow-unknown', sev ?? 'info',
           `minimum-flow limit unavailable. The simulator cannot determine whether `

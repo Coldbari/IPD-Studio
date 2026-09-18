@@ -15,7 +15,7 @@ import type { Quality } from './sim/quality'
 import { EQUIP_LABEL, equipmentState } from './sim/state'
 import { ENVELOPE_SEVERITY } from './sim/envelope'
 import { AUTHORITY_LABEL, AUTHORITY_SEVERITY } from './sim/authority'
-import { MIN_FLOW_SEVERITY } from './sim/minflow'
+import { MIN_FLOW_LABEL, MIN_FLOW_SEVERITY } from './sim/minflow'
 import type { ThemeTokens } from './theme'
 import { SCALE, THEMES } from './theme'
 
@@ -347,7 +347,7 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
                 data-state={pumpProtection.state} data-loop={pumpProtection.tag}>
                 <span className="k">Min-flow protection</span>
                 <span className="v" style={{ color: protectionTone(pumpProtection.state) }}>
-                  {pumpProtection.state} · {pumpProtection.tag}
+                  {MIN_FLOW_LABEL[pumpProtection.state]} · {pumpProtection.tag}
                 </span>
               </div>
             )}
@@ -576,7 +576,7 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
                   data-severity={MIN_FLOW_SEVERITY[protection.state] ?? 'none'}>
                   <span className="k">Min-flow protection</span>
                   <span className="v" style={{ color: protectionTone(protection.state) }}>
-                    {protection.state}
+                    {MIN_FLOW_LABEL[protection.state]}
                   </span>
                 </div>
               </>

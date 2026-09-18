@@ -224,13 +224,34 @@ describe('F-M — what the plant did about the demand', () => {
     expect(f.message).toContain('the plant is not making it')
   })
 
+  /**
+   * K19 CORRECTED H, I AND U. All three asserted the same physically wrong
+   * thing, and the thing each was actually WRITTEN to prove still holds.
+   *
+   *   OLD expectation: a stopped or tripped machine reads UNABLE.
+   *   NEW expectation: it reads STANDING_BY.
+   *   REASON: UNABLE is a verdict on a demand the plant COULD have answered,
+   *        and a machine whose breaker is open could not. K18 collapsed "asked
+   *        and refused" together with "nobody is there to ask", so a plant
+   *        that had simply not been started yet reported a failed protection
+   *        in the WARNING colour from the first tick of the simulation. §12
+   *        forbids exactly that, and K16 had already settled the principle:
+   *        de-energised is INFORMATION, because a stopped pump is a normal
+   *        plant state and not a fault.
+   *
+   * What H and I exist to prove is in their own titles — a machine at rest
+   * MAY NOT READ EFFECTIVE — and STANDING_BY is not EFFECTIVE. Both keep that
+   * assertion, explicitly, below.
+   */
   it('H: a STOPPED machine can never read EFFECTIVE', () => {
     lineUp(12); advance(200)
     sim().writeTag('P-1', 'RUN', 0)
     advance(30)
     expect(prot()!.overriding).toBe(true)      // the demand is still computed
-    expect(prot()!.state).toBe('UNABLE')
     expect(prot()!.state).not.toBe('EFFECTIVE')
+    // ...and it is not a FAILURE either: the machine is switched off
+    expect(prot()!.state).toBe('STANDING_BY')
+    expect(MIN_FLOW_SEVERITY.STANDING_BY).toBeUndefined()
     expect(prot()!.actualM3h!).toBeLessThan(20)
   })
 
@@ -238,7 +259,8 @@ describe('F-M — what the plant did about the demand', () => {
     lineUp(12); advance(200)
     sim().writeTag('P-1', 'FAULT', 1)
     advance(30)
-    expect(prot()!.state).toBe('UNABLE')
+    expect(prot()!.state).not.toBe('EFFECTIVE')
+    expect(prot()!.state).toBe('STANDING_BY')
     expect(env().state).toBe('STOPPED')
     // ...and the protection did not reset the trip, restart the machine or
     // touch the controller's mode
@@ -267,7 +289,8 @@ describe('F-M — what the plant did about the demand', () => {
       broken, pumpEdgeMap(m.hydraulic))
     const p = minFlowProtection({
       'FIC-1': { tag: 'FIC-1', saturated: 0,
-        minFlow: { pump: 'P-1', limitM3h: 20, requestedSp: 12, effectiveSp: 20, overriding: true } },
+        minFlow: { pump: 'P-1', limitM3h: 20, requestedSp: 12, effectiveSp: 20, overriding: true,
+          inForce: true } },
     }, envs)
     expect(envs['P-1']!.state).toBe('UNKNOWN')
     expect(p['FIC-1']!.state).toBe('ACTIVE')
@@ -422,8 +445,11 @@ describe('U, V — authority and MANUAL', () => {
     sim().writeTag('P-1', 'RUN', 0)
     advance(5)
     expect(sim().loops['FIC-1']!.authority).toBe('de-energised')
-    // the protection did not invent an authority of its own for this
-    expect(prot()!.state).toBe('UNABLE')
+    /**
+     * K19: the protection did not invent an authority of its own for this — it
+     * READS K16's. See H and I above for why the word changed from UNABLE.
+     */
+    expect(prot()!.state).toBe('STANDING_BY')
     // and K16's HOLD still holds: no output, no integrator movement
     const held = { OP: fic().OP, I: fic().I }
     advance(60)

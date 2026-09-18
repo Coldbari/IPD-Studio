@@ -58,6 +58,11 @@
  */
 
 import type { DiagnosticSeverity } from '../../model/diagnostics'
+/** Type-only, and therefore erased: `authority.ts` imports `MinFlowDemand`
+ *  from here, and a cycle that exists only in the type graph never reaches the
+ *  emitted module. K16's verdict is REUSED rather than re-derived — see
+ *  `stateOf` for why a second opinion about `RUN` and `FAULT` was refused. */
+import type { ControlAuthority } from './authority'
 import type { PumpEnvelope } from './envelope'
 import type { ScenarioFinding } from './scenario'
 
@@ -74,13 +79,40 @@ export type MinFlowState =
   | 'NOT_CONFIGURED'
   /** A minimum exists and the setpoint asked for already respects it. */
   | 'INACTIVE'
+  /**
+   * K19. THE DEMAND STANDS AND IS NOT REACHING THE PLANT — so there is no
+   * outcome to judge, and judging one anyway is what K18 got wrong.
+   *
+   * Two causes, both of them facts the runtime already publishes and neither
+   * of them a fault:
+   *
+   *   MANUAL — this runtime does not use the setpoint in MANUAL, so a
+   *            constraint on the setpoint has no path. K18 established that
+   *            policy in the engine and then published `overriding: true`
+   *            anyway; K19 says out loud what the engine was already doing.
+   *   DE-ENERGISED — the machine is stopped, tripped, or coasting down after a
+   *            stop. K16 already calls this `de-energised` and grades it
+   *            INFORMATION, and K13 already calls the machine STOPPED. A
+   *            minimum nobody can meet because the plant is switched off is
+   *            not a protection failure, and §12 exists to stop it being
+   *            reported as one.
+   *
+   * MEASURED, on the K15 fixture with a 20 m³/h minimum: K18 read UNABLE — in
+   * the WARNING colour — at simulation start with the pump never started, for
+   * the whole of a commanded shutdown, and throughout a trip. Six of the
+   * thirteen lifecycle points probed were a machine at rest being reported as
+   * a protection that had failed.
+   */
+  | 'STANDING_BY'
   /** The setpoint has been raised to the minimum, and whether the machine is
    *  passing it cannot be determined — the solve behind the flow is not one
    *  anything should be read off. */
   | 'ACTIVE'
   /** The setpoint has been raised, and the machine IS passing the minimum. */
   | 'EFFECTIVE'
-  /** The setpoint has been raised, and the machine is NOT passing the minimum. */
+  /** The setpoint has been raised, the plant COULD have answered it, and the
+   *  machine is NOT passing the minimum. Running, reversed or dead-headed —
+   *  never merely switched off, which is `STANDING_BY`. */
   | 'UNABLE'
 
 /**
@@ -102,10 +134,42 @@ export type MinFlowState =
 export const MIN_FLOW_SEVERITY: Record<MinFlowState, DiagnosticSeverity | undefined> = {
   NOT_CONFIGURED: undefined,
   INACTIVE: undefined,
+  /**
+   * K19. NOT A FINDING, and deliberately not even INFORMATION.
+   *
+   * Both things that produce it are already reported by the module that owns
+   * them: K16 publishes `de-energised` as info on the loop, and K13 publishes
+   * STOPPED on the machine. A third row would be the duplicate §14 forbids,
+   * and a MANUAL loop is an operator holding an output — K16 decided that is
+   * not a finding either. The word still appears on the faceplate, in the
+   * PLAIN tone, because that is where the operator asks what the protection is
+   * doing rather than what is wrong.
+   */
+  STANDING_BY: undefined,
   /** A demand whose outcome the solve cannot report. Information, not a fault. */
   ACTIVE: 'info',
   EFFECTIVE: undefined,
   UNABLE: 'warning',
+}
+
+/**
+ * OPERATOR LANGUAGE for each state — the vocabulary §17 writes them in.
+ *
+ * The identifiers carry underscores because they are identifiers; a plate does
+ * not. `AUTHORITY_LABEL` already established that an operator surface renders
+ * a label rather than an enum, and this is the same idea for the same reason.
+ *
+ * The `data-state` attribute on the faceplate deliberately keeps the RAW enum,
+ * so tests and any automation reading the DOM see the state itself rather than
+ * a string chosen for how it looks.
+ */
+export const MIN_FLOW_LABEL: Record<MinFlowState, string> = {
+  NOT_CONFIGURED: 'NOT CONFIGURED',
+  INACTIVE: 'INACTIVE',
+  STANDING_BY: 'STANDING BY',
+  ACTIVE: 'ACTIVE',
+  EFFECTIVE: 'EFFECTIVE',
+  UNABLE: 'UNABLE',
 }
 
 /**
@@ -133,8 +197,31 @@ export interface MinFlowDemand {
   requestedSp?: number
   /** The setpoint the ALGORITHM controlled to. `max` of the two above. */
   effectiveSp?: number
-  /** True while the two differ: the protection raised the setpoint. */
+  /**
+   * True while the two differ: the requested setpoint is below the limit, so
+   * the algorithm's setpoint has been raised.
+   *
+   * A statement about THE SETPOINT AND THE RECORD, and about nothing else. It
+   * is deliberately independent of mode and of the plant: whether the raise
+   * REACHES anything is `inForce`, and what the machine did about it is the
+   * state. Collapsing the three is what K19 exists to undo.
+   */
   overriding: boolean
+  /**
+   * K19. Whether the raise above has a PATH to the plant.
+   *
+   * False in MANUAL, where this runtime does not use the setpoint at all — the
+   * operator's `OP` goes to the element and the algorithm does not run. K18
+   * implemented exactly that and then published `overriding: true` beside it,
+   * which told an operator in hand control that the protection was holding
+   * their setpoint while their own output drove the machine.
+   *
+   * It is NOT a bypass and not a policy. Nothing here decides the protection
+   * should stop acting; this reports that in MANUAL there is nothing for it to
+   * act on. The bumpless-transfer tracking still uses `effectiveSp`, because
+   * it must track the setpoint AUTO will resume on.
+   */
+  inForce: boolean
 }
 
 /** The demand joined to what the plant actually did about it. */
@@ -178,7 +265,12 @@ export const minFlowStateOf = (p: MinFlowProtection | undefined): MinFlowState =
  * look-ahead and no second clock.
  */
 export function minFlowProtection(
-  loops: Record<string, { tag: string; saturated?: -1 | 0 | 1; minFlow?: MinFlowDemand }>,
+  loops: Record<string, {
+    tag: string
+    authority?: ControlAuthority
+    saturated?: -1 | 0 | 1
+    minFlow?: MinFlowDemand
+  }>,
   envelopes: Record<string, PumpEnvelope>,
 ): Record<string, MinFlowProtection> {
   const out: Record<string, MinFlowProtection> = {}
@@ -191,25 +283,76 @@ export function minFlowProtection(
       tag: l.tag,
       ...(env?.flowM3h !== undefined ? { actualM3h: env.flowM3h } : {}),
       saturated: l.saturated ?? 0,
-      state: stateOf(d, env),
+      state: stateOf(d, env, l.authority ?? 'available'),
     }
   }
   return out
 }
 
-function stateOf(d: MinFlowDemand, env: PumpEnvelope | undefined): MinFlowState {
+/**
+ * THE TRANSITION TABLE, in one place and in one order.
+ *
+ * Ordered WORST EVIDENCE FIRST, the way `EnvelopeState` orders itself: a
+ * demand that is not reaching the plant outranks every verdict below it,
+ * because all of them are claims about what the plant did with a demand it
+ * never received.
+ *
+ *   1. NOT_CONFIGURED  no limit in force — none stated, or one this loop
+ *                      cannot carry. Nothing is assumed in its place.
+ *   2. INACTIVE        a limit, and a requested setpoint that already respects
+ *                      it. Nothing has been raised.
+ *   3. STANDING_BY     the raise is called for and has NO PATH: the loop is in
+ *                      MANUAL, or the machine is de-energised. §12.
+ *   4. ACTIVE          the raise is in force and the SOLVE cannot say what
+ *                      came of it.
+ *   5. EFFECTIVE       the raise is in force and the machine IS passing the
+ *                      minimum.
+ *   6. UNABLE          the raise is in force, the plant could have answered
+ *                      it, and the machine is NOT passing the minimum.
+ *
+ * Every input is a fact some other module already published — `overriding` and
+ * `inForce` from the controller stage, the flow and the solve's trustworthiness
+ * from K13's envelope, the authority from K16. Nothing is derived a second
+ * time and no threshold, width or delay appears anywhere in it.
+ */
+function stateOf(
+  d: MinFlowDemand,
+  env: PumpEnvelope | undefined,
+  authority: ControlAuthority,
+): MinFlowState {
   // a declared limit this loop cannot be protected to is not a limit in force
   if (d.limitM3h === undefined) return 'NOT_CONFIGURED'
   if (!d.overriding) return 'INACTIVE'
   /**
-   * THE DEMAND EXISTS. Did the plant meet it?
+   * K19. THE DEMAND EXISTS AND IS NOT REACHING THE PLANT.
+   *
+   * MANUAL first, because it is a statement about the CONTROL PATH and holds
+   * whatever the machine is doing — a loop in hand on a healthy running pump
+   * is still not being protected by a setpoint nothing is using.
+   */
+  if (!d.inForce) return 'STANDING_BY'
+  /**
+   * THE DEMAND IS IN FORCE. Did the plant meet it?
    *
    * With no solve worth reading there is no answer, and ACTIVE is the honest
    * word for "the protection is holding the setpoint up and this model cannot
    * tell you what came of it". Guessing EFFECTIVE there would be the exact
-   * fabrication §5 forbids.
+   * fabrication §5 forbids. Asked BEFORE authority because an unreadable solve
+   * is also what makes K16 say `unsolved`, and "we cannot tell" is the more
+   * useful of the two answers.
    */
   if (env === undefined || env.flowM3h === undefined || env.state === 'UNKNOWN') return 'ACTIVE'
+  /**
+   * K19, §11 and §12. A MACHINE THAT IS SWITCHED OFF IS NOT A FAILED
+   * PROTECTION.
+   *
+   * K16's own verdict, reused rather than re-derived from `RUN` and `FAULT`
+   * here — which would be a second opinion about the same fact. It covers the
+   * stopped machine, the tripped one, and the whole of a coast-down, because
+   * authority goes the instant the stop is commanded while the shaft is still
+   * turning and still passing something less than the minimum.
+   */
+  if (authority !== 'available') return 'STANDING_BY'
   /**
    * SIGNED. A negative flow is fluid coming BACK through the machine and
    * cannot satisfy a positive minimum; taking the magnitude here would report
@@ -230,12 +373,27 @@ const q = (v: number): string => `${v.toFixed(1)} m³/h`
  *   `info`    — ACTIVE with no readable solve, and a declared limit that could
  *               not be applied to this loop. Neither is a fault; both are
  *               things the operator would otherwise have no way to know.
- *   nothing   — EFFECTIVE and INACTIVE. A protection doing its job, and a
- *               protection with nothing to do, are not findings.
+ *   nothing   — EFFECTIVE, INACTIVE and STANDING_BY. A protection doing its
+ *               job, a protection with nothing to do, and a protection whose
+ *               machine is switched off or whose loop is in hand, are not
+ *               findings. The last of those is K19's: see `MIN_FLOW_SEVERITY`.
  *
  * NOT_CONFIGURED produces nothing HERE because K13 already produces it:
  * `pump-min-flow-unknown` says, on the machine, that no minimum is stated. A
  * second row for one gap is how two lists that must agree start to drift.
+ *
+ * ── AND WHY `pump-below-min-flow` IS NOT THE SAME ROW — K19, §13 ───────────
+ *
+ * K13's row and this one fire together whenever a running machine is short of
+ * its minimum, and they are NOT duplicates: they are the two halves §4 insists
+ * on keeping apart. K13 reports the MACHINE'S OPERATING POINT against the
+ * record — it fires for a pump with no controller on it at all, which is
+ * exactly why it cannot be gated on a loop's `SAT` the way this one is. This
+ * row reports what the LOOP IS DOING ABOUT IT. One says the plant is outside
+ * its envelope; the other says the protection has asked and been refused.
+ *
+ * They are worded so neither reads as a restatement of the other, and K13's
+ * names the defending loop when there is one — see `envelopeFindings`.
  *
  * ── WHY UNABLE ALONE DOES NOT RAISE THE WARNING ───────────────────────────
  *
@@ -293,7 +451,9 @@ export function minFlowFindings(
         add('min-flow-unable', 'warning',
           `is asking for ${p.pump}'s minimum flow of ${q(p.limitM3h ?? 0)} and the plant is not `
           + `making it. Actual ${q(p.actualM3h ?? 0)}, from the solved hydraulic operating point. `
-          + `The setpoint has been raised; the flow has not followed it.`)
+          + `The setpoint has been raised and the flow has not followed it, with the output at `
+          + `maximum — this is the LOOP's report; ${p.pump}'s own row says where the machine is `
+          + `being run.`)
         break
       default:
         break
