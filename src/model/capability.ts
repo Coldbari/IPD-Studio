@@ -263,3 +263,67 @@ export const DECLARED_ONLY: readonly string[] =
  * and that is recorded as a gap rather than filled with a number.
  */
 export const NO_ENGINEERING_MAX_SPEED = true
+
+/**
+ * WHY `element.cv` STAYS DECLARED — K28, and the three definitions that are
+ * missing before it could be anything else.
+ *
+ * ── WHAT THE SOLVER DOES TODAY ────────────────────────────────────────────
+ *
+ *     ΔP = R · Q²        R in bar / (m³/h)²
+ *     valve             R = VALVE_K / f⁴     f = ACTUAL opening, 0..1
+ *     pipe              R = PIPE_K
+ *     fitting           R = PIPE_K / 10
+ *     pump              R = 0, the curve carries it
+ *
+ * `VALVE_K` is one constant for every valve in the plant. MEASURED: a branch
+ * whose two legs state Cv 40 and Cv 200 splits the flow exactly 50/50, to nine
+ * decimal places. A record can describe two very different valves and the
+ * model will not distinguish them.
+ *
+ * ── WHAT A Cv WOULD REPLACE IT WITH ───────────────────────────────────────
+ *
+ * The coefficient form is `ΔP = SG · (Q / Kv)²`, so `R = SG / Kv²`. Setting
+ * that against the model's own `R` is the whole conversion, and it needs three
+ * things this product does not have:
+ *
+ *   1. WHICH COEFFICIENT THE NUMBER IS. The field is labelled `Cv / Kv` and
+ *      stores a free-form string. Cv is US gpm per √psi and Kv is m³/h per
+ *      √bar; they differ by about 1.156, and nothing recorded says which one a
+ *      given number is. A field that cannot distinguish two definitions cannot
+ *      supply either.
+ *   2. THE REFERENCE CONDITION. A coefficient is quoted against a stated fluid
+ *      at a stated temperature — conventionally water, but conventionally is
+ *      not the same as recorded. Nothing states it.
+ *   3. THE SPECIFIC GRAVITY OF WHAT IS FLOWING. `SG` is in the equation, and
+ *      `sim/hydraulic/solver.ts` says in its own header that it solves one
+ *      incompressible fluid at one density, while `sim/fluids.ts` says the
+ *      solver does not know a fluid exists and that wiring density in is a
+ *      physics change to be validated as one. `hasProperties` reports that
+ *      most services do not state a density at all.
+ *
+ * ── AND THE CHARACTERISTIC IS NOT A CHARACTERISTIC ────────────────────────
+ *
+ * `element.characteristic` is a free-form string with no enumeration, no
+ * parser and no validation. There is no set of supported characteristics to
+ * choose from — the product stores whatever is typed. Meanwhile `R = K/f⁴`
+ * makes every valve equal-percentage-ish, so a record saying LINEAR is not
+ * contradicted by the model; it is simply not read by it.
+ *
+ * ── THE CONCLUSION ────────────────────────────────────────────────────────
+ *
+ * Three independent blockers, any one of which is sufficient: the unit is
+ * ambiguous, the reference condition is absent, and the density the equation
+ * needs is deliberately outside the solver. So Cv cannot enter the runtime
+ * truthfully, and K28 did not make it. Assuming water at 15 °C to close the
+ * gap would produce numbers that look right and are not attributable to
+ * anything anybody recorded — which is the failure mode this programme exists
+ * to avoid.
+ *
+ * WHAT WOULD UNBLOCK IT, precisely: a coefficient field that states its own
+ * kind and unit, a stated reference condition, and a decision about whether
+ * the hydraulic solve carries fluid density. The first two are datasheet
+ * schema decisions; the third is a physics decision that reaches far beyond
+ * valves.
+ */
+export const CV_CANNOT_ENTER_THE_SOLVE = true

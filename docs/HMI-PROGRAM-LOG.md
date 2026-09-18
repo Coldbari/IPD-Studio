@@ -2015,3 +2015,85 @@ tsc -b clean · production build clean
 | P2 | **No maximum speed, and no engineering owner for any physical rate.** Both need a datasheet decision before a schema one. |
 | P2 | **33 fields are consumed nowhere**, and the product does not distinguish, on the form, which fields reach the simulation. That is a UI question this phase deliberately did not open. |
 | P2 | Carried: no setpoint rate limiting (K21–K25); no off-delay, start-up bypass or latching (K20); no recirculation or trip (K18); one cascade topology (K17), PI not PID, no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |
+
+---
+
+## 42. Step K28 — valve characterization, and why Cv cannot enter the solve
+
+An audit that reached §16's hard stop. **No physics changed**, `element.cv` and
+`element.characteristic` stay DECLARED, and nothing was invented to close the
+gap.
+
+### The current element model, stated exactly
+
+```text
+ΔP = R · Q²          R in bar / (m³/h)²
+valve               R = VALVE_K / f⁴     f = ACTUAL opening, 0..1
+pipe                R = PIPE_K
+fitting             R = PIPE_K / 10
+pump                R = 0, the curve carries it
+```
+
+`VALVE_K` is **one constant for every valve in the plant**, and it is a
+simulator ASSUMPTION — the code already says it is "a calibration, not a
+calculation from diameter and length".
+
+**The most telling measurement in this phase**: a branch whose two legs state
+Cv 40 and Cv 200 — a five-to-one valve — splits the flow **exactly evenly**, to
+nine decimal places. That is not a defect; it is the model saying precisely
+what it models.
+
+### Three blockers, any one sufficient
+
+The coefficient form is `ΔP = SG·(Q/Kv)²`, so `R = SG/Kv²`. That conversion
+needs three things this product does not have:
+
+1. **Which coefficient the number is.** The field is labelled `Cv / Kv` and
+   stores a free-form string. Cv is US gpm/√psi, Kv is m³/h/√bar; they differ by
+   ~1.156 and **nothing recorded says which a number is**. A field that cannot
+   distinguish two definitions cannot supply either.
+2. **The reference condition.** None is recorded.
+3. **The specific gravity of what is flowing.** `SG` is in the equation. The
+   solver's own header says it solves one incompressible fluid at one density,
+   and `sim/fluids.ts` says the solver *does not know a fluid exists* and that
+   wiring density in is a physics change to be validated as one. `hasProperties`
+   reports most services state no density at all.
+
+Assuming water at 15 °C to close the gap would produce numbers that look right
+and are attributable to nothing anybody recorded.
+
+### And the characteristic is not a characteristic
+
+`element.characteristic` is a free-form string with **no enumeration, no parser,
+no validation**. There is no set of supported characteristics — the product
+stores whatever is typed. Meanwhile `R = K/f⁴` makes every valve
+equal-percentage-ish, so a record saying LINEAR is not contradicted by the
+model; it is simply not read by it.
+
+### What the audit confirmed is already right
+
+**The hydraulics read the ACTUAL position, never the command** — §8 calls this
+critical and it holds. Measured: slamming a command to 0 leaves `OP` at 0
+immediately while the flow falls with `POS` through 75 → 50 → 25 → 0. A solver
+reading the command would make a plant respond to something that had not
+happened yet.
+
+**A shut valve is not zero flow.** `SHUT_FRACTION = 1e-3` passes ~5e-5 m³/h for
+Jacobian conditioning, documented, and measurably shut to any observer.
+
+### State after K28
+
+```text
+4117 tests passing · 7 skipped · 0 failing  (+31)
+tsc -b clean · production build clean
+209 Playwright passing · 16 skipped · 0 failing
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P2 | **What would unblock Cv, precisely**: a coefficient field that states its own kind and unit, a stated reference condition, and a decision about whether the hydraulic solve carries fluid density. The first two are datasheet schema decisions; the third is a physics decision reaching far beyond valves. |
+| P2 | **`element.characteristic` has no vocabulary.** Before it could mean anything, the product needs a set of characteristics it supports and a parser for them. |
+| P2 | **`VALVE_K` and `PIPE_K` remain one constant each**, so no drawing can express a big valve and a small one, or a long line and a short one. Diameter and length are not on an HMI pipe. |
+| P2 | Carried: no maximum speed or physical-rate owner (K26/K27); no setpoint rate limiting (K21–K25); no off-delay, start-up bypass or latching (K20); one cascade topology (K17), PI not PID, pressure-only boundary dynamics (K10), mixing unsupported (K5). |
