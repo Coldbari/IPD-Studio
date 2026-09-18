@@ -43,7 +43,8 @@
  */
 
 import type { ProjectIndex } from './projectIndex'
-import type { ProcessModel } from '../hmi/sim/hydraulic/model'
+import type { ProcessModel, ProcessNode } from '../hmi/sim/hydraulic/model'
+import type { TagDef } from '../hmi/sim/tags'
 import { buildSimModel } from '../hmi/sim/engine'
 import { processFor } from './processData'
 import { vesselHeadBar } from '../hmi/sim/hydraulic/solver'
@@ -77,7 +78,15 @@ export interface SuctionCheck {
   state: 'ok' | 'insufficient' | 'unsupplied'
   /** What feeds the suction, when anything does. */
   source?: { kind: 'boundary' | 'vessel'; tag?: string; levelPct?: number }
-  /** Pressure available at that source, bar absolute. */
+  /**
+   * Pressure available at that source, bar absolute.
+   *
+   * THE SAME VALUE THE SOLVER FIXES THAT NODE AT — a vessel's stated operating
+   * pressure or a terminal's stated boundary pressure, plus a bottom nozzle's
+   * static head. Before K33 this read atmosphere plus the head for every
+   * source, so a closed vessel or a pressurised battery limit was checked as
+   * if it were vented.
+   */
   sourcePressure?: number
   /** Total resistance of the suction path, bar/(m³/h)². */
   resistance?: number
@@ -131,6 +140,40 @@ function routeToSource(
   }
 }
 
+/**
+ * THE PRESSURE THIS SOURCE IS HELD AT, bar absolute — K33.
+ *
+ * The same question `hydraulic/solver.ts` answers when it fixes a boundary
+ * node, answered the same way, because a static check that disagreed with the
+ * solver about the pressure at the same node would be checking a different
+ * plant from the one that will run.
+ *
+ *   - A VESSEL sits at the operating pressure its record states. Silence means
+ *     VENTED, which is atmospheric — the K6 reading of an unspecified vessel,
+ *     unchanged here.
+ *   - A BOUNDARY sits at `pressureBar`, compiled onto the node from the
+ *     terminal's own record in bar absolute. Silence means atmospheric.
+ *
+ * WHAT IS DELIBERATELY NOT ASKED. The solver also consults `boundaryPressure`,
+ * a SCENARIO holding a tagged terminal somewhere else for a run in progress.
+ * There is no run here and no scenario: this is the as-drawn question, and a
+ * temporary override is not part of the drawing. That is the one respect in
+ * which the two differ, and it is a difference in the question rather than in
+ * the answer.
+ *
+ * NO CONVERSION HAPPENS HERE. Both values arrive already absolute —
+ * `processData.operatingPressure` did the gauge→absolute step once, on the
+ * engineering side — so this only chooses between them and adds the static
+ * head the caller computed.
+ */
+function sourceBaseBar(node: ProcessNode, byName: Map<string, TagDef>): number {
+  if (node.kind === 'vessel') {
+    return (node.tag ? byName.get(node.tag)?.vesselPressureBarA : undefined)
+      ?? DEFAULTS.atmosphericPressureBar
+  }
+  return node.pressureBar ?? DEFAULTS.atmosphericPressureBar
+}
+
 /** Every machine on the drawing, checked. Empty when there are no screens to
  *  compile a process model from. */
 export function suctionChecks(ix: ProjectIndex): SuctionCheck[] {
@@ -156,7 +199,7 @@ export function suctionChecks(ix: ProjectIndex): SuctionCheck[] {
     // A vessel's bottom nozzle adds the static head of its contents; a top
     // nozzle and a boundary sit at the boundary pressure and nothing more.
     const head = node.kind === 'vessel' && node.liquid ? vesselHeadBar(levelPct ?? 0) : 0
-    const sourcePressure = DEFAULTS.atmosphericPressureBar + head
+    const sourcePressure = sourceBaseBar(node, byName) + head
     const source = node.kind === 'vessel'
       ? { kind: 'vessel' as const, ...(node.tag ? { tag: node.tag } : {}), ...(levelPct !== undefined ? { levelPct } : {}) }
       : { kind: 'boundary' as const }

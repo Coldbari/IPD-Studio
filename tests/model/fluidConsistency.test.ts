@@ -29,12 +29,11 @@
  *   a vessel head and a pump head stated in the same metres now behave
  *   differently. See the §3 block below.
  *
- *   FINDING 2 — THE SUCTION CHECK IGNORES A VESSEL'S OPERATING PRESSURE.
- *   `model/suction.ts` sources at `atmosphere + static head`; the runtime
- *   solver sources at `vesselPressure + static head`. A closed vessel is
- *   therefore checked as if it were vented. This is fluid-INDEPENDENT and so
- *   outside K31's subject, but it is a real divergence between the static
- *   check and the model it claims to share. See the §2 block below.
+ *   FINDING 2 — CLOSED BY K33. `model/suction.ts` sourced at `atmosphere +
+ *   static head` while the runtime solver sourced at `vesselPressure + static
+ *   head`, so a closed vessel was checked as if vented. K33 made the check ask
+ *   the node what it is held at. The §2 block below now pins the corrected
+ *   behaviour and records what it used to be.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -147,31 +146,34 @@ describe('§2 — the suction check is not NPSH, and is fluid-independent', () =
   })
 
   /**
-   * ── FINDING 2, PINNED AS-IS ───────────────────────────────────────────────
+   * ── FINDING 2, CLOSED BY K33 ──────────────────────────────────────────────
    *
-   * CURRENT BEHAVIOUR: the static check sources a vessel at ATMOSPHERE plus its
-   * static head, whatever its record says. The runtime solver sources the same
-   * vessel at its stated operating pressure plus the same static head
-   * (`solver.ts`: `vapour + vesselHeadBar(...)`, with `vapour` from
-   * `vesselPressureBarA`).
+   * OLD EXPECTATION:  `closed.sourcePressure === vented.sourcePressure`. The
+   *                   static check sourced EVERY vessel at atmosphere plus its
+   *                   static head, whatever its record said.
+   * NEW EXPECTATION:  a vessel is sourced at its STATED operating pressure plus
+   *                   the same static head — 11 + 0.15 where it was 1 + 0.15.
+   * PHYSICAL REASON:  the runtime solver has always fixed that node at
+   *                   `vesselPressure + vesselHeadBar(level)`. The static check
+   *                   claims in its own header to ask the existing model a
+   *                   static question, so sourcing the same node at a different
+   *                   pressure made it check a plant that will never run. A
+   *                   closed vessel at 10 barg was checked as if vented, which
+   *                   understates `maxFlow` and can report `insufficient` on a
+   *                   suction that is amply pressurised.
    *
-   * EFFECT: a closed vessel at 10 barg is checked as if vented. `sourcePressure`
-   * is understated by 10 bar, so `maxFlow` is understated and a machine could be
-   * reported `insufficient` on a suction that is in fact amply pressurised.
-   *
-   * WHY IT IS NOT FIXED HERE: K32 §10 forbids it, and it is not a fluid defect —
-   * it is a divergence between two pressure sources, so it belongs to the
-   * pressure-convention question, not the density one. Recorded for K33.
+   * Nothing about the STATIC HEAD changed: `vesselHeadBar` is the same
+   * calibrated 0.3 bar and K32's FINDING 1 is untouched. Only the base it is
+   * added to moved, from a hard-coded atmosphere to the node's own pressure.
    */
-  it('FINDING 2: a closed vessel is checked as if it were vented', () => {
+  it('FINDING 2 CLOSED: a closed vessel is sourced at its stated pressure', () => {
     const vented = checkOf(reg())
     const closed = checkOf(reg({ 'design.operatingPressure': '10 barg' }))
-    // the record IS read elsewhere — this is not a parsing failure
     expect(processFor(reg({ 'design.operatingPressure': '10 barg' }), 'TK-0')
       .operatingPressureBarA).toBe(11)
-    // but the suction check does not see it
-    expect(closed.sourcePressure).toBeCloseTo(vented.sourcePressure!, 12)
-    expect(closed.sourcePressure).toBeCloseTo(ATMOSPHERIC_BAR + vesselHeadBar(50), 9)
+    expect(closed.sourcePressure).toBeCloseTo(11 + vesselHeadBar(50), 9)
+    expect(vented.sourcePressure).toBeCloseTo(ATMOSPHERIC_BAR + vesselHeadBar(50), 9)
+    expect(closed.sourcePressure! - vented.sourcePressure!).toBeCloseTo(10, 9)
   })
 })
 

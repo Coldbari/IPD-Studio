@@ -605,12 +605,26 @@ export const HYDRAULIC_BOUNDARY_IS_DECLARED = true
  *    written as a density before K31 and K32; none is wrong; they simply were
  *    never reconciled because nothing required them to be.
  *
- * 2. THE SUCTION CHECK SOURCES A VESSEL AT ATMOSPHERE plus its static head,
- *    while the runtime solver sources the same vessel at its STATED OPERATING
- *    PRESSURE plus the same static head. A closed vessel is therefore checked
- *    as if vented, understating `sourcePressure` and `maxFlow`. This is
- *    fluid-INDEPENDENT — it is a divergence between two pressure sources, not
- *    a density defect — so it is a pressure-convention question for K33.
+ * 2. CLOSED BY K33. The suction check sourced a vessel at ATMOSPHERE plus its
+ *    static head while the runtime solver sourced the same vessel at its
+ *    STATED OPERATING PRESSURE plus the same head — and a boundary at the
+ *    terminal's own `pressureBar` while the check used atmosphere there too.
+ *    A closed vessel or a pressurised battery limit was checked as if open to
+ *    the sky, understating `sourcePressure` and `maxFlow` and able to report
+ *    `insufficient` on a suction that was amply supplied.
+ *
+ *    K33 changed ONE expression — the base the static head is added to — so
+ *    the check now asks the node what it is held at, exactly as the solver
+ *    does. The static head itself, the resistances, the law and the three-state
+ *    vocabulary are untouched, and FINDING 1 above is unaffected: what moved
+ *    was the base, never the head. `tests/model/suctionSourcePressure.test.ts`
+ *    proves the two paths agree by running the real solver over the real model
+ *    rather than re-deriving the formula.
+ *
+ *    ONE DIFFERENCE REMAINS AND IS INTENDED: the solver also consults a
+ *    SCENARIO holding a tagged terminal for a run in progress. The static check
+ *    does not, because there is no run — that is a difference in the question,
+ *    not in the answer.
  *
  * Both are pinned by `tests/model/fluidConsistency.test.ts`, which asserts the
  * CURRENT behaviour so that changing either has to come past a test that says
