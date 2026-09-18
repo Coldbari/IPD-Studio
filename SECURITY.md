@@ -4,8 +4,14 @@
 
 | Version | Supported |
 |---|---|
-| 0.13.x (current) | ✅ Security fixes |
-| ≤ 0.12.x | ❌ Not supported — please upgrade |
+| 0.22.x (current) | ✅ Security fixes |
+| ≤ 0.21.x | ❌ Not supported — please upgrade |
+
+Only the current minor version receives security fixes. Older versions —
+including every version released under the AGPL, i.e. everything before the
+v0.13.0 relicense — are not patched. Their license grants are unaffected by
+that: not supported is not the same as not licensed. See
+[docs/PROVENANCE.md](docs/PROVENANCE.md) for the exact license boundary.
 
 ## Reporting a vulnerability
 
@@ -27,11 +33,36 @@ credited in the advisory and the changelog unless they prefer otherwise.
 
 ## Threat model
 
-IPD Studio is a **local-first, client-side browser application**. There is no
-backend, no account system, and no server that stores user data — drawings live
-in the browser's IndexedDB and in files on the user's own machine. That removes
-most of the usual server-side attack surface and concentrates risk in what the
-app *parses*.
+IPD Studio is a **local-first browser application with an optional backend**.
+
+**Drawing needs no backend.** The editor, validation, exports and the HMI
+simulation all run client-side; drawings live in the browser's IndexedDB and in
+files on the user's own machine. When no Firebase project is configured
+(`firebaseReady`, `src/auth/config.ts`), the sign-in screen and cloud drawings
+are switched off and the app never contacts a server of ours.
+
+**Since v0.13.0 a configured deployment can also reach two optional services:**
+
+- **Accounts and cloud drawings** — Firebase Authentication (email/password and
+  Google) plus Firestore. A signed-in user's drawings are stored under their own
+  uid, and client access is governed by [`firestore.rules`](firestore.rules),
+  which lives in this repository and is deployed from it. The same file defines
+  a create-only feedback collection that clients cannot read, update or delete.
+  The Firebase SDK is loaded lazily, only once a visitor signs in or opens
+  cloud drawings.
+- **The project assistant** — optional and bring-your-own-key. The browser calls
+  whichever LLM provider the user configures, using the user's own API key. It
+  does not send the project document: it sends a projection whose contents are
+  classified key by key in `src/assist/redact.ts` and enforced by
+  `tests/assist/redact.test.ts`.
+
+A self-hosted build must supply its own Firebase project and deploy its own copy
+of `firestore.rules` — see [.env.example](.env.example). The shared demo
+deployment runs with these features enabled.
+
+Most of the attack surface is still in what the app *parses*. The rules, the
+authentication flows and the redaction boundary are now part of it too, and all
+three are in scope below.
 
 **In scope — the app parses untrusted files, and that's where the risk is:**
 
@@ -46,6 +77,12 @@ app *parses*.
   rendered output
 - **Service worker / PWA caching** — cache poisoning, stale-content attacks
 - Dependency vulnerabilities reachable from the shipped bundle
+- **Firestore rules** — any path that lets one account read or write another's
+  drawings, or read, alter or delete a filed feedback report
+- **Authentication flows** — session handling, account takeover, or any route to
+  cloud data without a valid session
+- **Assistant redaction** — anything that causes project data classified `never`
+  in `src/assist/redact.ts` to leave the browser
 
 **Out of scope:**
 
