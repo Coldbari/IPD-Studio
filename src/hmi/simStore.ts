@@ -13,7 +13,7 @@ import type { TagDef } from './sim/tags'
 import { tagDefMap } from './sim/tags'
 import type { AlarmRecord, JournalEntry, SuppressionSets } from './sim/alarms'
 import type { Tags } from './sim/engine'
-import { ackAlarms, alarmEvents, deviceAlarms, evalAlarms } from './sim/alarms'
+import { ackAlarms, alarmEvents, deviceAlarms, evalAlarms, minFlowAlarms } from './sim/alarms'
 import { pushCommand } from './sim/commands'
 import type { ResolvedPressure, Scenario, ScenarioProblem } from './sim/scenario'
 import { terminalPressures, validateScenario } from './sim/scenario'
@@ -313,6 +313,34 @@ function qualityMap(
   return out
 }
 
+/**
+ * EVERY ALARM THIS PRODUCT RAISES, in one place.
+ *
+ * Four call sites build this list — the tick, and the three suppression
+ * actions that re-stamp it immediately so the banner reacts even while the sim
+ * is paused. They were three copies of the same two-call spread before K20 and
+ * would have become four; a kind of alarm that some of them evaluate and
+ * others do not is a banner that disagrees with itself depending on whether
+ * anybody has touched a shelf button.
+ *
+ * All three evaluators share the one lifecycle in `sim/alarms.ts` and all
+ * three feed the one journal.
+ */
+function allAlarms(
+  m: SimModel,
+  tags: Tags,
+  envelopes: Record<string, PumpEnvelope>,
+  prev: AlarmRecord[],
+  t: number,
+  sup: SuppressionSets,
+): AlarmRecord[] {
+  return [
+    ...evalAlarms(m.defs, tags, prev, t, sup),
+    ...deviceAlarms(m.defs, tags, prev, t, sup),
+    ...minFlowAlarms(m.defs, envelopes, prev, t, sup),
+  ]
+}
+
 function supSets(shelved: Record<string, number>, oos: Record<string, true>, tags: Tags): SuppressionSets {
   return { shelvedIds: new Set(Object.keys(shelved)), oosTags: new Set(Object.keys(oos)), sbdTags: sbdSet(tags) }
 }
@@ -444,11 +472,21 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
       delete shelved[id]
       journal0 = pushCommand(journal0, { t, tag: id.split(':')[0]!, what: 'CMD', sig: 'SHELVE', from: 1, to: 0 }, JOURNAL_CAP)
     }
+    /**
+     * WHERE EACH PUMP IS BEING RUN, this instant.
+     *
+     * Reads the SIGNED edge flow straight out of the solve — not `equipFlows`
+     * below, which is a branch magnitude and would report a machine running
+     * backwards as one running forwards.
+     *
+     * K20 MOVED THIS ABOVE THE ALARM BLOCK. The minimum-flow alarm is judged
+     * on the envelope, and it has to be judged on THIS tick's — evaluating an
+     * alarm against the previous solve would annunciate one tick late and,
+     * worse, clear one tick late on a shutdown.
+     */
+    const envelopes = pumpEnvelopes(m.hydraulic, m.defs, tags, hyd, pumpEdges)
     const sup = supSets(shelved, s.oos, tags)
-    const alarms = [
-      ...evalAlarms(m.defs, tags, s.alarms, t, sup),
-      ...deviceAlarms(m.defs, tags, s.alarms, t, sup),
-    ]
+    const alarms = allAlarms(m, tags, envelopes, s.alarms, t, sup)
     const journal = [...alarmEvents(s.alarms, alarms, t).reverse(), ...journal0].slice(0, JOURNAL_CAP)
     const equipFlows: Record<string, number> = {}
     for (const b of m.net.branches) {
@@ -458,14 +496,6 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
       for (const p of b.pumps) equipFlows[p] = Math.max(equipFlows[p] ?? 0, f)
       for (const v of b.valves) equipFlows[v] = Math.max(equipFlows[v] ?? 0, f)
     }
-    /**
-     * WHERE EACH PUMP IS BEING RUN, this instant.
-     *
-     * Reads the SIGNED edge flow straight out of the solve — not `equipFlows`
-     * above, which is a branch magnitude and would report a machine running
-     * backwards as one running forwards.
-     */
-    const envelopes = pumpEnvelopes(m.hydraulic, m.defs, tags, hyd, pumpEdges)
     const hydraulic: HydraulicStatus = {
       converged: hyd.converged, residual: hyd.residual, iterations: hyd.iterations,
       ...(hyd.reason ? { reason: hyd.reason } : {}),
@@ -563,7 +593,7 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
     set((s) => {
       const shelved = { ...s.shelved, [id]: s.t + minutes * 60 }
       const sup = supSets(shelved, s.oos, s.tags)
-      const alarms = model ? [...evalAlarms(model.defs, s.tags, s.alarms, s.t, sup), ...deviceAlarms(model.defs, s.tags, s.alarms, s.t, sup)] : s.alarms
+      const alarms = model ? allAlarms(model, s.tags, s.pumpEnvelopes, s.alarms, s.t, sup) : s.alarms
       return {
         shelved, alarms,
         journal: pushCommand(s.journal, { t: s.t, tag: id.split(':')[0]!, what: 'CMD', sig: 'SHELVE', from: 0, to: minutes }, JOURNAL_CAP),
@@ -575,7 +605,7 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
       const shelved = { ...s.shelved }
       delete shelved[id]
       const sup = supSets(shelved, s.oos, s.tags)
-      const alarms = model ? [...evalAlarms(model.defs, s.tags, s.alarms, s.t, sup), ...deviceAlarms(model.defs, s.tags, s.alarms, s.t, sup)] : s.alarms
+      const alarms = model ? allAlarms(model, s.tags, s.pumpEnvelopes, s.alarms, s.t, sup) : s.alarms
       return {
         shelved, alarms,
         journal: pushCommand(s.journal, { t: s.t, tag: id.split(':')[0]!, what: 'CMD', sig: 'SHELVE', from: 1, to: 0 }, JOURNAL_CAP),
@@ -609,7 +639,7 @@ export const useSimStore = create<SimStoreState>()((set, get) => ({
       if (on) oos[tag] = true
       else delete oos[tag]
       const sup = supSets(s.shelved, oos, s.tags)
-      const alarms = model ? [...evalAlarms(model.defs, s.tags, s.alarms, s.t, sup), ...deviceAlarms(model.defs, s.tags, s.alarms, s.t, sup)] : s.alarms
+      const alarms = model ? allAlarms(model, s.tags, s.pumpEnvelopes, s.alarms, s.t, sup) : s.alarms
       return {
         oos, alarms,
         quality: model ? qualityMap(model, s.tags, oos) : s.quality,

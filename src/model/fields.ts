@@ -122,6 +122,34 @@ export const FIELD_CATALOG: Record<EntityKind, FieldSection[]> = {
       ],
     },
     {
+      /**
+       * K20 — MINIMUM-FLOW ALARM POLICY, and deliberately NOT in Duty above.
+       *
+       * `duty.minFlow` is a manufacturer's figure about the machine. These are
+       * an operating-philosophy decision about the CONTROL ROOM, made by
+       * different people and routinely left blank. Putting them in their own
+       * section says so on the form, and it is why an empty section here means
+       * "nobody has decided" rather than "no alarm required".
+       *
+       * PRIORITY IS THE ENABLE. Stated, the machine's minimum flow is
+       * annunciated at that priority; blank, it is not annunciated at all and
+       * K13's detection and K18's protection carry on exactly as before. The
+       * other two are optional refinements of an alarm that already exists —
+       * blank means no hysteresis and no on-delay, never a default value.
+       *
+       * The equipment record had no alarm section at all before this; only the
+       * instrument datasheet did, and `alarm.priority` there grades that TAG's
+       * H/L limits. These keys are distinct so one key never means two things.
+       */
+      id: 'alarm',
+      title: 'Minimum-flow alarm',
+      fields: [
+        { key: 'alarm.minFlowPriority', label: 'Alarm priority (high/medium/low) — blank: no alarm' },
+        { key: 'alarm.minFlowDeadband', label: 'Alarm deadband (e.g. 2 m³/h) — blank: none' },
+        { key: 'alarm.minFlowDelay', label: 'Alarm on-delay (e.g. 10 s) — blank: immediate' },
+      ],
+    },
+    {
       id: 'construction',
       title: 'Construction',
       fields: [

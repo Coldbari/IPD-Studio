@@ -4,12 +4,17 @@
 
 import type { TagDef } from './tags'
 import type { Tags } from './engine'
+/** Type-only, and therefore erased. K13's envelope is the ONE place the
+ *  signed pump-edge flow and the trustworthiness of the solve behind it are
+ *  decided; asking either question a second time here is how two modules start
+ *  to disagree about whether a machine is below its minimum. */
+import type { PumpEnvelope } from './envelope'
 import { qualityOf } from './quality'
 
 /** Limit levels, plus the device alarms: a valve not following its command
- *  (DEV), a drive taken out by its protection (TRIP), and an instrument whose
- *  reading is not valid (BAD). */
-export type AlarmLevel = 'LL' | 'L' | 'H' | 'HH' | 'DEV' | 'TRIP' | 'BAD'
+ *  (DEV), a drive taken out by its protection (TRIP), an instrument whose
+ *  reading is not valid (BAD), and K20's machine-level minimum flow (MINF). */
+export type AlarmLevel = 'LL' | 'L' | 'H' | 'HH' | 'DEV' | 'TRIP' | 'BAD' | 'MINF'
 /** ISA-18.2-flavored lifecycle: pending (on-delay running, never annunciated)
  *  -> active (unacked) -> acked; return-to-normal turns active into cleared
  *  (still listed until acked) and drops acked. */
@@ -57,6 +62,10 @@ export function alarmMessage(a: AlarmRecord): string {
     case 'DEV': return `Position ${n(a.value)} % from command — valve not following`
     case 'TRIP': return 'Tripped — drive stopped, reset required'
     case 'BAD': return 'Reading not valid — instrument fault'
+    /** SIGNED, and said as such. A machine running backwards reads negative
+     *  here, which is the whole reason the protection is judged on the solve's
+     *  flow rather than on the transmitter's magnitude beside it. */
+    case 'MINF': return `${n(a.value)}${u} below minimum flow ${n(a.limit)}${u}`
   }
 }
 
@@ -68,6 +77,19 @@ export function priorityOf(level: AlarmLevel, def?: Pick<TagDef, 'priority'>): A
   // about a drive losing its breaker.
   if (level === 'TRIP') return 'high'
   if (level === 'DEV' || level === 'BAD') return 'medium'
+  /**
+   * K20: MINF IS NOT GRADED HERE AND MUST NOT REACH THE LINE BELOW.
+   *
+   * Its priority comes from the machine's own record (`alarm.minFlowPriority`)
+   * and is the thing that decides the alarm exists at all. Falling through to
+   * `base` would hand it the 'medium' default and invent exactly the value
+   * §12 forbids inventing — so `minFlowAlarms` seeds the priority directly and
+   * never calls this. The throw is here so that a future caller who forgets
+   * finds out immediately rather than shipping a fabricated priority.
+   */
+  if (level === 'MINF') {
+    throw new Error('minimum-flow priority comes from the record, not from priorityOf')
+  }
   const base = def?.priority ?? 'medium'
   if (level === 'HH' || level === 'LL') return base === 'low' ? 'medium' : 'high'
   return base
@@ -156,35 +178,14 @@ export function evalAlarms(
       const isIn = wasIn
         ? (isHighSide(level) ? pv >= limit - db : pv <= limit + db)
         : (isHighSide(level) ? pv >= limit : pv <= limit)
-      if (isIn) {
-        let rec: AlarmRecord
-        if (!existing || existing.phase === 'cleared') {
-          rec = {
-            id, tag: d.name, level, priority: priorityOf(level, d), value: pv, limit,
-            ...(d.unit ? { unit: d.unit } : {}),
-            phase: delay > 0 ? 'pending' : 'active', since: t,
-          }
-        } else if (existing.phase === 'pending' && t - existing.since >= delay) {
-          rec = { ...existing, phase: 'active', since: t, value: pv }
-        } else {
-          rec = existing
-        }
-        if ((rec.sup ?? undefined) !== supKind) {
-          const { sup: _old, ...rest } = rec
-          rec = supKind ? { ...rest, sup: supKind } : (rest as AlarmRecord)
-        }
-        out.push(rec)
-      } else if (existing) {
-        // suppressed or never-annunciated alarms leave silently
-        if (supKind || existing.phase === 'pending') continue
-        if (existing.phase === 'active') {
-          const { sup: _s, ...rest } = existing
-          out.push({ ...(rest as AlarmRecord), phase: 'cleared' })
-        } else if (existing.phase === 'cleared') {
-          out.push(existing)
-        }
-        // 'acked' + back to normal -> drop silently
-      }
+      lifecycle(
+        out, byId, id,
+        () => ({
+          id, tag: d.name, level, priority: priorityOf(level, d), value: pv, limit,
+          ...(d.unit ? { unit: d.unit } : {}),
+        }),
+        isIn, t, supKind, delay, pv,
+      )
     }
   }
   return out
@@ -195,14 +196,31 @@ export function evalAlarms(
 const DEV_DELAY = 5
 
 /**
- * Raise / hold / clear one device alarm.
+ * THE ONE ALARM LIFECYCLE — raise, hold, mature, clear.
  *
- * Factored out because there are now three of them (DEV, TRIP, BAD) and the
- * lifecycle is the interesting part: an alarm that is already standing keeps
- * its original record — and therefore its timestamp and its value at trip —
- * rather than being recreated every tick.
+ * K20 extracted this from `evalAlarms` and `deviceLifecycle`, which had grown
+ * two copies of the same state machine that differed only in whether an
+ * on-delay was possible. There is now ONE, and limit alarms, device alarms and
+ * the minimum-flow alarm all enter it. A fourth kind of alarm with a fourth
+ * copy of these transitions is exactly how an ISA-18.2 implementation stops
+ * being one.
+ *
+ * The interesting part is what does NOT happen: an alarm that is already
+ * standing keeps its ORIGINAL RECORD, and therefore its timestamp and the
+ * value it tripped at, rather than being recreated every tick. That is what
+ * makes the journal a list of events instead of a list of samples.
+ *
+ *   absent/cleared + active  -> `pending` if an on-delay is configured,
+ *                               else `active` immediately
+ *   `pending` + delay served -> `active`, timestamped now, value refreshed
+ *   `active`  + normal       -> `cleared` (still listed until acknowledged)
+ *   `pending` + normal       -> dropped silently: it was never annunciated
+ *   `acked`   + normal       -> dropped silently
+ *
+ * Suppression is applied to whatever record results, never to the transitions:
+ * a shelved alarm still tracks the process, it simply does not annunciate.
  */
-function deviceLifecycle(
+function lifecycle(
   out: AlarmRecord[],
   byId: Map<string, AlarmRecord>,
   id: string,
@@ -210,11 +228,22 @@ function deviceLifecycle(
   active: boolean,
   t: number,
   supKind: Suppression | undefined,
+  /** ISA-18.2 on-delay, seconds. 0 — the device-alarm case — is immediate. */
+  delay = 0,
+  /** The reading now, written onto the record when an on-delay matures so the
+   *  banner prints what the alarm ANNUNCIATED at, not what it first saw. */
+  value?: number,
 ): void {
   const existing = byId.get(id)
   if (active) {
-    let rec: AlarmRecord =
-      existing && existing.phase !== 'cleared' ? existing : { ...seed(), phase: 'active', since: t }
+    let rec: AlarmRecord
+    if (!existing || existing.phase === 'cleared') {
+      rec = { ...seed(), phase: delay > 0 ? 'pending' : 'active', since: t }
+    } else if (existing.phase === 'pending' && t - existing.since >= delay) {
+      rec = { ...existing, phase: 'active', since: t, ...(value !== undefined ? { value } : {}) }
+    } else {
+      rec = existing
+    }
     if ((rec.sup ?? undefined) !== supKind) {
       const { sup: _old, ...rest } = rec
       rec = supKind ? { ...rest, sup: supKind } : (rest as AlarmRecord)
@@ -222,14 +251,16 @@ function deviceLifecycle(
     out.push(rec)
     return
   }
-  if (!existing || supKind) return
+  if (!existing) return
+  // suppressed or never-annunciated alarms leave silently
+  if (supKind || existing.phase === 'pending') return
   if (existing.phase === 'active') {
     const { sup: _s, ...rest } = existing
     out.push({ ...(rest as AlarmRecord), phase: 'cleared' })
   } else if (existing.phase === 'cleared') {
     out.push(existing)
   }
-  // 'acked' + back to normal -> drop silently, exactly as limit alarms do
+  // 'acked' + back to normal -> drop silently
 }
 
 /** Defs that measure something, and can therefore have a reading that is
@@ -265,7 +296,7 @@ export function deviceAlarms(
     sup.shelvedIds?.has(id) ? 'shelved' : sup.oosTags?.has(tag) ? 'oos' : undefined
   const raise = (d: TagDef, level: AlarmLevel, active: boolean, extra: () => { value?: number }) => {
     const id = `${d.name}:${level}`
-    deviceLifecycle(
+    lifecycle(
       out, byId, id,
       () => ({ id, tag: d.name, level, priority: priorityOf(level, d), ...extra() }),
       active, t, supOf(id, d.name),
@@ -286,6 +317,124 @@ export function deviceAlarms(
   }
   return out
 }
+
+/**
+ * K20 — THE MINIMUM-FLOW ALARM, on the one lifecycle above.
+ *
+ * ── AN ALARM IS NOT A PROTECTION ──────────────────────────────────────────
+ *
+ * K18 raises the setpoint; this annunciates a breach. They are different
+ * mechanisms answering different questions, and neither implies the other:
+ *
+ *   requested 12, minimum 20, effective 20, flow 22
+ *       protection ACTIVE and EFFECTIVE — and NO ALARM, because the machine
+ *       is passing its minimum. A protection doing its job is not an alarm.
+ *
+ *   requested 20, minimum 20, flow 12
+ *       NO override at all — the setpoint already respected the limit — and
+ *       an ALARM, because the machine is not making what it was asked for.
+ *
+ * So nothing here reads the override, the setpoint, the controller or its
+ * mode. The condition is a fact about THE MACHINE, which is also why the alarm
+ * sits on the pump's tag and exists for a pump with no controller on it at
+ * all.
+ *
+ * ── THE CONDITION ─────────────────────────────────────────────────────────
+ *
+ * The machine is TURNING, the solve is one worth reading, and the SIGNED flow
+ * through its own edge is below the record's minimum. That is one comparison
+ * covering the three ways a running machine can be short of its limit —
+ * REVERSE FLOW, DEAD-HEAD and BELOW MINIMUM FLOW — because all three are the
+ * same physical hazard the limit exists to prevent, and dead-head is the worst
+ * of them. K13 keeps its finer three-way classification on the diagnostics
+ * page; the annunciator gets the one protective fact.
+ *
+ * SIGNED, with no `Math.abs` anywhere: a machine running backwards at 25 m³/h
+ * is passing less than nothing forwards, and the comparison says so.
+ *
+ * ── WHAT IS NOT THE CONDITION ─────────────────────────────────────────────
+ *
+ * A STOPPED machine is not in alarm. K13 already calls it STOPPED, K16 calls
+ * the loop de-energised and grades it INFORMATION, and K19 made the protection
+ * say STANDING_BY — turning a switched-off pump into a standing annunciation
+ * would undo all three.
+ *
+ * An UNTRUSTWORTHY SOLVE is not in alarm either, and this is the §15 rule: a
+ * flow the network cannot determine must never be read as a LOW one. The
+ * envelope's UNKNOWN state is that gate, and it is the same `faultOfNodes`
+ * test any measurement bound to those nodes would get — not a second opinion
+ * about quality.
+ *
+ * ── AND WHAT IS NOT CONFIGURED IS NOT ALARMED ─────────────────────────────
+ *
+ * No policy on the record, no alarm. Not a silent one, not a medium-priority
+ * one, not a disabled record in the list — nothing at all. The limit still
+ * exists, K13 still detects against it and K18 still protects to it; what is
+ * absent is anybody's decision to annunciate.
+ */
+export function minFlowAlarms(
+  defs: readonly TagDef[],
+  envelopes: Record<string, PumpEnvelope>,
+  prev: AlarmRecord[],
+  t: number,
+  sup: SuppressionSets = {},
+): AlarmRecord[] {
+  const byId = new Map(prev.map((a) => [a.id, a]))
+  const out: AlarmRecord[] = []
+  for (const d of defs) {
+    const policy = d.minFlowAlarm
+    const limit = d.minFlowM3h
+    // PRIORITY IS THE ENABLE, and a policy without a limit has nothing to
+    // alarm against — neither is an error, both are simply not an alarm.
+    if (policy === undefined || limit === undefined) continue
+    const env = envelopes[d.name]
+    if (env === undefined) continue
+
+    const id = `${d.name}:MINF`
+    const existing = byId.get(id)
+    const supKind: Suppression | undefined =
+      sup.shelvedIds?.has(id) ? 'shelved'
+      : sup.oosTags?.has(d.name) ? 'oos'
+      : undefined
+
+    /**
+     * Is this machine in a state where "below minimum" MEANS anything? A shaft
+     * at rest and a solve nobody can trust are both "no", and for different
+     * reasons — see the note above.
+     */
+    const judgeable = env.state !== 'STOPPED' && env.state !== 'UNKNOWN'
+      && env.flowM3h !== undefined
+    /**
+     * HYSTERESIS, ONLY IF THE RECORD STATES A WIDTH. Once in alarm the clear
+     * threshold moves UP by the deadband, so a flow sitting exactly on the
+     * limit cannot chatter the annunciator. With none stated the two tests are
+     * identical and the alarm follows the instantaneous condition — which K19
+     * measured crossing ~154 times in 200 s, and which is reported rather than
+     * papered over. NOTHING here picks a width.
+     */
+    const db = policy.deadbandM3h ?? 0
+    const wasIn = existing !== undefined && existing.phase !== 'cleared'
+    const flow = env.flowM3h ?? 0
+    const isIn = judgeable && (wasIn ? flow < limit + db : flow < limit)
+
+    lifecycle(
+      out, byId, id,
+      () => ({
+        id, tag: d.name, level: 'MINF' as const,
+        // FROM THE RECORD, never from `priorityOf` — see the throw there.
+        priority: policy.priority,
+        value: flow, limit, unit: FLOW_UNIT,
+      }),
+      isIn, t, supKind, policy.onDelayS ?? 0, flow,
+    )
+  }
+  return out
+}
+
+/** The unit `duty.minFlow` is converted into, and the one K13, the faceplate
+ *  and the trend all say a flow in. Stated once so the banner cannot print a
+ *  number in a unit the limit was not measured in. */
+const FLOW_UNIT = 'm³/h'
 
 /** Ack one alarm (by id) or all: active -> acked, cleared -> removed.
  *  Suppressed alarms don't ack — they aren't annunciating. */

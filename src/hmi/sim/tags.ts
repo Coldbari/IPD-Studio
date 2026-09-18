@@ -6,6 +6,7 @@ import type { HmiScreen, HmiWidget } from '../model'
 import type { Registry } from '../../model/registry'
 import { engineeringFor } from '../../model/signalData'
 import { processFor } from '../../model/processData'
+import type { MinFlowAlarmPolicy } from '../../model/processData'
 import { DEFAULTS, UNITS } from './units'
 
 export type TagKind = 'tank' | 'motor' | 'valve' | 'valveOnOff' | 'display' | 'controller'
@@ -127,6 +128,15 @@ export interface TagDef {
    * derivation reports LIMIT UNKNOWN instead of a verdict.
    */
   minFlowM3h?: number
+  /**
+   * K20: WHETHER AND HOW A BREACH OF THAT MINIMUM IS ANNUNCIATED.
+   *
+   * Carried beside the limit and never merged with it. Absent means the record
+   * states no alarm policy, and then none is manufactured — K13 still detects
+   * and K18 still protects, exactly as they did before this field existed.
+   * See `model/processData.ts` for why the two are separate decisions.
+   */
+  minFlowAlarm?: MinFlowAlarmPolicy
   /** Heater duty kW. Its PRESENCE is what marks a driven tag as a heater
    *  rather than a pump, so the flow network never treats it as a driver. */
   heaterKw?: number
@@ -236,6 +246,8 @@ function defFor(w: HmiWidget, registry: Registry | undefined): TagDef | null {
         ...(proc.minSpeedPct !== undefined ? { minSpeedPct: proc.minSpeedPct } : {}),
         // no `?? DEFAULTS…` here, deliberately: see `minFlowM3h`
         ...(proc.minFlowM3h !== undefined ? { minFlowM3h: proc.minFlowM3h } : {}),
+        // K20: and the alarm policy for it, if the record states one at all
+        ...(proc.minFlowAlarm !== undefined ? { minFlowAlarm: proc.minFlowAlarm } : {}),
       }
     }
     case 'valve':

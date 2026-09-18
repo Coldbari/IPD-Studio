@@ -351,6 +351,36 @@ export default function Faceplate({ widget, onClose, theme: themeName = 'classic
                 </span>
               </div>
             )}
+            {/* AND WHETHER ANYBODY DECIDED TO ANNUNCIATE IT — K20, §17.
+                A LIMIT IS NOT AN ALARM. Without this line a machine with a
+                stated minimum looks alarmed-on by implication, and an operator
+                has no way to tell a plant that will call them from one that
+                will not. The alarm ITSELF, when there is one, appears in the
+                Alarms section below with every other alarm on this tag — this
+                is the POLICY, not the condition.
+                NOT CONFIGURED is shown in the muted tone and never in red: an
+                undecided alarm philosophy is a gap in the record, not a fault
+                in the plant. No priority, width or delay is ever shown for a
+                record that does not state one. */}
+            {envelope?.minFlowM3h !== undefined && (
+              <div className="fp-kv" data-testid="fp-minflow-alarm"
+                data-configured={eng?.minFlowAlarm !== undefined ? 'yes' : 'no'}>
+                <span className="k">Min-flow alarm</span>
+                <span className="v" style={{
+                  color: eng?.minFlowAlarm ? theme.textSecondary : theme.textMuted,
+                }}>
+                  {eng?.minFlowAlarm
+                    ? [
+                        eng.minFlowAlarm.priority.toUpperCase(),
+                        eng.minFlowAlarm.deadbandM3h !== undefined
+                          ? `± ${eng.minFlowAlarm.deadbandM3h.toFixed(1)} m³/h` : null,
+                        eng.minFlowAlarm.onDelayS !== undefined
+                          ? `${eng.minFlowAlarm.onDelayS.toFixed(0)} s delay` : null,
+                      ].filter(Boolean).join(' · ')
+                    : 'NOT CONFIGURED'}
+                </span>
+              </div>
+            )}
           </Section>
           <Section title="Command">
             <div className="fp-row">

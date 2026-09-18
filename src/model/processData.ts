@@ -22,6 +22,73 @@
  */
 
 import type { Registry } from './registry'
+/** The SAME priority vocabulary every other alarm in this product is graded
+ *  in — `model/signalData.ts` has owned it since the instrument datasheet did.
+ *  A second scale for one machine's limit is how two surfaces start to
+ *  disagree about what "high" means. */
+import type { AlarmPriority } from './signalData'
+import { ALARM_PRIORITIES } from './signalData'
+
+/**
+ * K20 — THE MINIMUM-FLOW ALARM POLICY, as an engineering record states it.
+ *
+ * ── WHY IT IS A SEPARATE OBJECT FROM THE LIMIT ────────────────────────────
+ *
+ * `duty.minFlow` is a MANUFACTURER'S FIGURE: below this flow the impeller
+ * overheats, and that is true of the machine whether or not anybody is
+ * watching. Whether a breach of it should reach an operator's annunciator, at
+ * what priority, with what hysteresis and after how long, is an OPERATING
+ * PHILOSOPHY decision — made by a different discipline, recorded separately,
+ * and routinely absent. Folding the two together would mean either inventing
+ * an alarm for every machine that states a limit, or refusing to state a limit
+ * without an alarm. Both are wrong.
+ *
+ * ── PRIORITY IS THE ENABLE ────────────────────────────────────────────────
+ *
+ * There is no separate on/off flag, deliberately. A stated priority IS the
+ * statement that this machine's minimum flow is annunciated, and an absent one
+ * is the statement that it is not. An enable flag beside a priority creates a
+ * fourth state — enabled, priority unstated — that nothing here could answer
+ * without inventing the very value §12 forbids inventing.
+ *
+ * ── EVERY FIELD IS OPTIONAL AND NOTHING IS DEFAULTED ──────────────────────
+ *
+ * `deadbandM3h` and `onDelayS` absent do not mean zero the way a default
+ * would; they mean the record has not stated them, and the alarm therefore
+ * runs without hysteresis and without an on-delay. That is a REPORTED
+ * consequence rather than a chosen behaviour — see `docs/HMI-AUDIT.md` — and
+ * it is why the faceplate says NOT CONFIGURED rather than showing a zero.
+ */
+export interface MinFlowAlarmPolicy {
+  /**
+   * `alarm.minFlowPriority`. Its PRESENCE is what configures the alarm; see
+   * above. One of the three priorities `model/alarmPriority.ts` defines, which
+   * is the same vocabulary the instrument datasheet already uses.
+   */
+  priority: AlarmPriority
+  /**
+   * `alarm.minFlowDeadband`, m³/h. How far back ABOVE the minimum the flow
+   * must come before the alarm clears.
+   *
+   * ABSENT MEANS NONE APPLIED, and K19 measured what that costs: a loop
+   * controlling exactly at its minimum crosses it ~154 times in 200 s. The
+   * width that would stop it is a control-design decision, and this field is
+   * where an engineer makes it. Nothing here picks one — not 1 % of span, not
+   * a fraction of the limit, not anything.
+   */
+  deadbandM3h?: number
+  /**
+   * `alarm.minFlowDelay`, seconds. How long the condition must stand before it
+   * is annunciated — the existing ISA-18.2 on-delay, which holds the record in
+   * `pending` and never reaches the banner or the journal.
+   *
+   * ABSENT MEANS IMMEDIATE. This is also the field that would cover a normal
+   * pump start, where the machine legitimately runs below its minimum while
+   * the shaft accelerates: with none stated, a start annunciates. No start-up
+   * bypass timer is invented in its place — see K20's report.
+   */
+  onDelayS?: number
+}
 
 /** Internal units, matching `hmi/sim/units.ts`. Every getter converts INTO
  *  these, so a caller never has to ask what unit it just received. */
@@ -63,6 +130,21 @@ export interface ProcessEngineering {
    * tell whether the machine is below minimum flow, which is the truth.
    */
   minFlowM3h?: number
+  /**
+   * K20. THE ALARM POLICY FOR THAT MINIMUM — and nothing about the minimum
+   * itself.
+   *
+   * `duty.minFlow` above says WHAT THE MACHINE REQUIRES. This says WHETHER AND
+   * HOW THE PLANT ANNUNCIATES A BREACH OF IT, which is a different engineering
+   * decision made by different people: a limit is a manufacturer's figure, an
+   * alarm priority is an operating-philosophy one. K18's protection and K13's
+   * detection both work with this absent, and do.
+   *
+   * ABSENT MEANS NOT CONFIGURED, THROUGHOUT. No alarm is manufactured for a
+   * machine whose record does not ask for one, and no priority, width or delay
+   * is ever defaulted into existence. See `minFlowAlarmPolicy`.
+   */
+  minFlowAlarm?: MinFlowAlarmPolicy
   /** Design pressure, bar (`design.pressure`, else `duty.designPressure`). */
   designPressureBar?: number
   /** Operating temperature, °C (`design.operatingTemperature`, else `design.temperature`). */
@@ -159,6 +241,40 @@ export function processFor(registry: Registry | undefined, tag: string | undefin
     vsd: truthy(f['duty.vsd']),
     minSpeedPct: percent(f['duty.minSpeed']),
     minFlowM3h: convert(q('duty.minFlow'), FLOW, 1),
+    ...(minFlowAlarmPolicy(f) !== undefined ? { minFlowAlarm: minFlowAlarmPolicy(f)! } : {}),
+  }
+}
+
+/**
+ * K20 — the minimum-flow ALARM policy, or nothing at all.
+ *
+ * Returns `undefined` when the record states no priority, and that is the
+ * whole enable: no priority, no alarm, nothing manufactured. A record that
+ * states a deadband or a delay but no priority gets `undefined` too — those
+ * two describe HOW an alarm behaves and there is no alarm for them to describe
+ * until somebody says how serious it is. §12 forbids choosing that.
+ *
+ * The units are the ones this file already converts: `FLOW` for the deadband,
+ * so "2 m³/h" and "0.5 l/s" both work, and `TIME` for the delay, so "10 s" and
+ * "1 min" both do. A bare number is m³/h and seconds respectively, matching
+ * every other quantity here.
+ */
+function minFlowAlarmPolicy(
+  f: Record<string, string | undefined>,
+): MinFlowAlarmPolicy | undefined {
+  const priority = ALARM_PRIORITIES.find(
+    (p) => p === f['alarm.minFlowPriority']?.trim().toLowerCase())
+  if (priority === undefined) return undefined
+  const q = (key: string) => parseQuantity(f[key])
+  const deadbandM3h = convert(q('alarm.minFlowDeadband'), FLOW, 1)
+  const onDelayS = convert(q('alarm.minFlowDelay'), TIME, 1)
+  return {
+    priority,
+    // NEGATIVE OR NON-FINITE IS NOT STATED. A deadband below zero would widen
+    // the alarm INTO the healthy region, and a negative delay is not a delay;
+    // neither is a value this model can act on, so neither is carried.
+    ...(deadbandM3h !== undefined && deadbandM3h > 0 ? { deadbandM3h } : {}),
+    ...(onDelayS !== undefined && onDelayS > 0 ? { onDelayS } : {}),
   }
 }
 

@@ -258,6 +258,69 @@ describe('the pump\'s plate says whether anything is being done about it', () =>
   })
 })
 
+/**
+ * K20 — WHETHER ANYBODY DECIDED TO ANNUNCIATE THE LIMIT.
+ *
+ * A stated `duty.minFlow` makes a machine DETECTABLE and PROTECTABLE. It does
+ * not make it alarmed: that is a separate record, routinely blank. Without
+ * this line an operator cannot tell a plant that will call them from one that
+ * will not, and the blank looks like a decision rather than a gap.
+ */
+describe('K20 — the pump\'s plate says whether the limit is alarmed', () => {
+  it('a limit with NO alarm policy says NOT CONFIGURED, in the muted tone', async () => {
+    start(reg('20 m³/h'))
+    lineUp(12); advance(200)
+    const host = await mount(<Faceplate widget={w('p')} onClose={() => {}} />)
+    const el = q(host, 'fp-minflow-alarm')!
+    expect(el.getAttribute('data-configured')).toBe('no')
+    expect(el.textContent).toContain('NOT CONFIGURED')
+    // and no priority, width or delay is shown for a record that states none
+    expect(el.textContent).not.toMatch(/HIGH|MEDIUM|LOW|delay|±/)
+  })
+
+  it('a configured policy shows exactly what the record states, and no more', async () => {
+    start({
+      ...reg('20 m³/h'),
+      'P-1': { key: 'P-1', kind: 'equipment', fields: {
+        'duty.capacity': '40 m³/h', 'duty.head': '35 m', 'duty.vsd': 'Yes',
+        'duty.minSpeed': '20 %', 'duty.minFlow': '20 m³/h',
+        'alarm.minFlowPriority': 'high' } },
+    })
+    lineUp(12); advance(200)
+    const el = q(await mount(<Faceplate widget={w('p')} onClose={() => {}} />), 'fp-minflow-alarm')!
+    expect(el.getAttribute('data-configured')).toBe('yes')
+    expect(el.textContent).toContain('HIGH')
+    // the record stated no deadband and no delay, so neither is shown
+    expect(el.textContent).not.toContain('±')
+    expect(el.textContent).not.toContain('delay')
+  })
+
+  it('...and the alarm itself lands in the plate\'s existing Alarms section', async () => {
+    start({
+      ...reg('55 m³/h'),
+      'P-1': { key: 'P-1', kind: 'equipment', fields: {
+        'duty.capacity': '40 m³/h', 'duty.head': '35 m', 'duty.vsd': 'Yes',
+        'duty.minSpeed': '20 %', 'duty.minFlow': '55 m³/h',
+        'alarm.minFlowPriority': 'medium', 'alarm.minFlowDeadband': '2 m³/h' } },
+    })
+    lineUp(12); advance(300)
+    const host = await mount(<Faceplate widget={w('p')} onClose={() => {}} />)
+    // NO NEW PAGE and no new section: the existing one, with the existing ACK
+    const alarms = q(host, 'fp-alarms')!
+    expect(alarms.textContent).toContain('MINF')
+    expect(alarms.textContent).toContain('below minimum flow')
+    expect(q(host, 'fp-minflow-alarm')!.textContent).toContain('MEDIUM')
+    expect(q(host, 'fp-minflow-alarm')!.textContent).toContain('± 2.0 m³/h')
+  })
+
+  it('a machine with no stated minimum gets no alarm line at all', async () => {
+    start(reg())
+    lineUp(12); advance(200)
+    const host = await mount(<Faceplate widget={w('p')} onClose={() => {}} />)
+    expect(q(host, 'fp-minflow-alarm')).toBeNull()
+  })
+})
+
 // ── The Diagnostics page ────────────────────────────────────────────────────
 
 describe('the Diagnostics page carries it on LIVE, among the control loops', () => {

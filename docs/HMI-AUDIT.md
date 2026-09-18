@@ -3631,3 +3631,132 @@ would require a priority and a latching decision from somebody who can make it.
 - Carried: PI not PID, no output rate limit, one cascade topology (K17), no
   manufacturer data, no scenario library (K9), pressure-only boundary dynamics
   (K10), mixing unsupported (K5).
+
+---
+
+## K20 — minimum-flow alarm policy and lifecycle
+
+K19 ended with a gap that was structural rather than a defect: minimum-flow
+protection lived on the instantaneous diagnostic path, and the ISA-18.2 alarm
+system sat beside it unused because **equipment records had no alarm section**.
+Only the instrument datasheet did.
+
+### The policy model
+
+A new "Minimum-flow alarm" section on the EQUIPMENT record, deliberately not
+inside Duty — a limit is a manufacturer's figure, an alarm philosophy is not.
+
+| Field | Unit | Meaning | Absent |
+|---|---|---|---|
+| `alarm.minFlowPriority` | high/medium/low | grades the alarm, and its presence CREATES it | **no alarm at all** |
+| `alarm.minFlowDeadband` | m³/h (`FLOW`, so l/s converts) | how far above the limit the flow must return before clearing | no hysteresis |
+| `alarm.minFlowDelay` | s (`TIME`, so min converts) | how long the condition stands before annunciating | immediate |
+
+Parsed by `minFlowAlarmPolicy` into `ProcessEngineering.minFlowAlarm`, carried
+onto `TagDef.minFlowAlarm`, consumed only by `minFlowAlarms`. Negative or
+non-finite widths and delays are treated as unstated: a deadband below zero
+widens the alarm into the healthy region, and a negative delay is not a delay.
+
+**Priority is the enable, and nothing is defaulted.** `priorityOf` throws on
+`MINF` so no caller can ever obtain a fabricated priority for it.
+
+### The condition
+
+```text
+shaft turning  AND  solve trustworthy  AND  signed edge flow < duty.minFlow
+```
+
+Signed throughout, no `Math.abs`: a machine running backwards at 25 m³/h is
+passing less than nothing forwards. One comparison covers REVERSE FLOW,
+DEAD-HEAD and BELOW MINIMUM FLOW, because all three are the hazard the limit
+exists to prevent and dead-head is the worst of them. K13 keeps its finer
+classification on the diagnostics page; the annunciator gets one protective
+fact.
+
+A STOPPED or tripped machine is not in alarm — K13 already says STOPPED, K16
+says de-energised and grades it INFORMATION, K19 says STANDING_BY. An
+untrustworthy solve is not in alarm either, and that is the §15 rule: a flow
+the network cannot determine must never be read as a LOW one. The envelope's
+UNKNOWN state is that gate, which is the same `faultOfNodes` test any
+measurement bound to those nodes would get.
+
+### Protection and alarm are different mechanisms
+
+Nothing in the alarm reads the override, the setpoint, the controller or its
+mode. Both halves are pinned by test:
+
+```text
+requested 2, minimum 5, effective 5, flow > 5
+    protection ACTIVE and EFFECTIVE  ->  NO ALARM
+
+requested 20, minimum 20, no override at all, flow 12
+    protection INACTIVE              ->  ALARM
+```
+
+The alarm sits on the PUMP's tag, because it is a fact about the machine — and
+it exists for a machine with no controller on it at all.
+
+### One lifecycle
+
+`evalAlarms` and `deviceLifecycle` held two copies of the same state machine.
+K20 extracted one `lifecycle()`; limit alarms, device alarms and minimum flow
+all enter it, and all feed the one journal. `allAlarms()` does the same for the
+four call sites (the tick and three suppression actions).
+
+Phases, suppression, acknowledgement, shelving, out-of-service and the journal
+are the existing ones, unchanged. A standing alarm keeps its original record
+and therefore its timestamp and trip value, so 400 ticks of an unrelenting
+condition write ONE journal event, not 400.
+
+### What was not invented
+
+- **Off-delay.** The framework has none: return-to-normal goes straight to
+  `cleared`, for every alarm in the product. Adding one is a change they all
+  share, and K20's scope excludes it. No field, no value, no mechanism.
+- **Start-up bypass.** A duration, and no record states one. A normal pump
+  start annunciates, which is the physically true statement — the machine
+  genuinely is below its minimum while the shaft accelerates. The configurable
+  on-delay is the mechanism an engineer uses to cover it.
+- **Latching.** The framework is unlatched; minimum flow inherits that rather
+  than being made sticky for the UI.
+- **Priority, deadband width, on-delay.** Fields, not values.
+
+### The chatter
+
+K19 measured ~154 crossings / 200 s of the instantaneous condition and could do
+nothing about it. Measured now, counting ANNUNCIATOR transitions on the record
+(not journal entries — the journal caps at 200, which would make a flapping
+alarm and a quiet one report the same number):
+
+```text
+no deadband stated        > 10 transitions / 200 s
+2 m³/h stated on record  <=  2 transitions / 200 s
+```
+
+The condition still crosses and the override still does not. What changed is
+that the cure is now an engineering value on a record instead of a number this
+product chose.
+
+### Operator surface
+
+No new page. The alarm appears in the faceplate's existing Alarms section with
+its priority glyph, its level (`MINF`), its message and its ACK button, and in
+the banner and journal with every other alarm. One line was added to the pump's
+plate: **Min-flow alarm**, showing the configured priority (and the width and
+delay if stated), or **NOT CONFIGURED** in the muted tone. Without it a blank
+policy looks like a decision rather than a gap, and an operator cannot tell a
+plant that will call them from one that will not.
+
+### Limitations carried
+
+- No off-delay in the framework, for any alarm.
+- No start-up bypass; a start annunciates unless an on-delay is stated.
+- No latching, by inheritance.
+- The instantaneous protection state and K13's envelope still cross at the
+  exact boundary — §19 permits it, and only the ALARM can be steadied.
+- One limit, one direction, per machine. No maximum-flow alarm, no
+  time-at-low-flow accumulation, no alarm on the protection STATE itself.
+- Carried: no recirculation, no trip, flow loops in m³/h only, one cascade
+  topology (K17), PI not PID, no output rate limit, no manufacturer data, no
+  scenario library (K9), pressure-only boundary dynamics (K10), mixing
+  unsupported (K5).
