@@ -1304,6 +1304,24 @@ function pipePressureMap(model: SimModel, hyd: SolveResult): Record<string, numb
  * and REPORTED by `pump-speed-out-of-range`, rather than being obeyed into a
  * region the machine does not have.
  */
+/**
+ * WHERE A VALVE IS BEING TOLD TO GO, within the travel it actually has — K22.
+ *
+ * The sibling of `speedTarget`, and deliberately shaped like it: the actuator
+ * decides what it can do with a command, and the command itself is left alone
+ * so the clamp stays visible.
+ *
+ * A command that is absent or unreadable is NOT a position. The valve holds
+ * its fail-safe state, which for a throttling valve is SHUT — the same answer
+ * `initTags` gives one that has never been commanded, and the same `?? 0` this
+ * line has always had.
+ */
+function travelTarget(t: Record<string, number>): number {
+  const asked = t.OP
+  if (asked === undefined || !Number.isFinite(asked)) return 0
+  return clamp(asked, 0, 100)
+}
+
 function speedTarget(t: Record<string, number>, d: TagDef): number {
   if (d.vsd !== true) return 1
   const asked = t.SPD
@@ -1877,9 +1895,37 @@ function step(
         : Math.max(target, cur - rate)
     }
     if (d.kind === 'valve') {
-      const cmd = t.OP ?? 0
+      /**
+       * THE ACTUATOR OWNS ITS OWN TRAVEL — K22.
+       *
+       * A valve's position is defined between SHUT and FULLY OPEN, and this is
+       * the counterpart of `speedTarget`, which has owned the drive's turndown
+       * since K12. Before K22 the clamp existed only at the SOLVER boundary,
+       * where `frac` takes `clamp(POS / 100, 0, 1)` — so the hydraulics were
+       * safe and the PUBLISHED state was not. Measured: an operator writing
+       * `OP = 150` read back a position of 150 %, and `OP = -50` drove it
+       * negative, both of which reached the faceplate, `LoopState.actual` and
+       * the DEV alarm's own comparison.
+       *
+       * NOT AN INVENTED LIMIT. 0 % shut and 100 % open is what a valve
+       * POSITION MEANS; every consumer in the runtime already assumes it, and
+       * `outputRange` hands a valve loop exactly this travel. A controller
+       * could never produce a command outside it — only a direct write could,
+       * and that path had no owner.
+       *
+       * THE COMMAND IS LEFT READING WHAT WAS ASKED, exactly as K12 leaves
+       * `SPD` reading a speed the drive is refusing, so the clamp is visible
+       * rather than silent. What changes is the POSITION, which is physical.
+       */
+      const cmd = travelTarget(t)
       const pos = t.POS ?? cmd
       t.POS = (t.STUCK ?? 0) >= 0.5 ? pos : pos + clamp(cmd - pos, -STROKE_RATE * dt, STROKE_RATE * dt)
+      /**
+       * ...and the deviation is judged against the ACHIEVABLE command. A valve
+       * held at 100 % by its own travel while something asks for 150 is
+       * FOLLOWING, and raising `valve not following` for it would blame the
+       * actuator for a command it obeyed as far as it physically goes.
+       */
       t.DEVT = Math.abs(cmd - t.POS) > DEV_LIMIT ? (t.DEVT ?? 0) + dt : 0
     }
   }

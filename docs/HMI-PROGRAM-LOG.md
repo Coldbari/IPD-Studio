@@ -1526,3 +1526,84 @@ tsc -b clean · production build clean
 | P2 | **No separate up/down rates.** One symmetric limit, because one number is what a record states. |
 | P2 | Rate limiting produces no diagnostic and no alarm, deliberately: a loop moving at its configured rate is the system working. It is a published loop state and a faceplate row. |
 | P2 | Carried: no off-delay in the alarm framework, no start-up bypass, no latching (K20); no recirculation, no trip, flow loops in m³/h only (K18); one cascade topology (K17), PI not PID, no manufacturer data, no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |
+
+---
+
+## 36. Step K22 — constraint ownership and precedence
+
+Not a feature phase. By K21 this runtime had eight independent things that can
+stop a controller getting what it asked for, added one at a time since K12.
+Each was correct alone; nobody had written down the ORDER, the OWNERSHIP, or
+which of them the anti-windup can see.
+
+### The inventory
+
+`src/hmi/sim/constraints.ts` is the audit's result, and
+`tests/hmi/constraints.test.ts` is what stops it being prose: every row's claim
+is driven against a running plant, every engineering `source` is checked to
+still exist in the field catalogue, and the precedence is walked by pushing one
+loop into each limit in turn.
+
+| # | Constraint | Layer | Source | Absent |
+|---|---|---|---|---|
+| 1 | min-flow override | setpoint | `duty.minFlow` | no protection |
+| 2 | sp-domain | setpoint | **none** | there are no SP limits |
+| 3 | op-travel | controller output | `duty.minSpeed` (floor) | floor 0 |
+| 4 | output-rate | controller output | `signal.outputRateLimit` | unconstrained |
+| 5 | vsd-turndown | actuator | `duty.minSpeed` | none imposed |
+| 6 | vsd-ceiling | actuator | **none** — the curve's domain | n/a |
+| 7 | valve-travel | actuator | **none** — what a position means | n/a |
+| 8 | vsd-ramp | physical | **none** — modelling assumption | n/a |
+| 9 | valve-stroke | physical | **none** — modelling assumption | n/a |
+
+### The three findings
+
+**There are NO engineering setpoint limits**, and K22 declined to invent any.
+The audit found three things that are not them: the calibrated range bounds the
+faceplate's *entry field*; the same range is what K17 *maps* a master's output
+onto; and `signal.setpoint` is a configured *starting value*. The engine
+enforces none of them — measured, `SP = 200` on a 0–60 loop is honoured, the
+output runs to 100 % and reports `SAT +1`. That is the better behaviour: the
+operator is told the setpoint is unreachable instead of having their entry
+silently rewritten to a number that looks achievable.
+
+**A valve's travel had no owner** on the direct-write path. `OP = 150` read
+back a POSITION of 150 %, and `OP = -50` drove it negative. The hydraulics were
+never wrong — `frac` clamps at the solver boundary — but the *published*
+actuator state was physically impossible and reached the faceplate,
+`LoopState.actual` and the DEV alarm's own comparison. `travelTarget` now owns
+it, exactly as `speedTarget` has owned the drive's turndown since K12, and the
+deviation is judged against the achievable command so a valve held at its stop
+is FOLLOWING rather than faulted.
+
+**Physical lag is not windup**, and this is the load-bearing conclusion. A
+drive takes `RAMP_S` and a valve strokes at `STROKE_RATE`; neither is a stop
+the controller's OUTPUT rests against — the command was accepted in full and
+the hardware is on its way. That lag belongs to the process the loop is
+controlling. Feeding it into the anti-windup would freeze the integrator during
+every ordinary move and turn a tuned loop into a proportional-only one.
+
+### The one deliberate double-enforcement
+
+`duty.minSpeed` is enforced twice: by `speedTarget` at the actuator, so a
+direct write to `SPD` is still refused, and as the controller's `op-travel`
+floor, so the algorithm can SEE the stop it is winding against. K22 records
+that as intentional rather than removing one of them. Everything else has
+exactly one owner, and the tests prove a direct write cannot slip past it.
+
+### State after K22
+
+```text
+3905 tests passing · 7 skipped · 0 failing  (+54)
+tsc -b clean · production build clean
+209 Playwright passing · 16 skipped · 0 failing
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P2 | **The setpoint bound is honoured on two paths and ignored on a third.** The faceplate clamps entry to the calibrated range and K17 maps onto it; the engine does not. Deliberate — there is no SP-limit field — but an operator and a scenario can reach different setpoints on the same loop. |
+| P2 | **No engineering field for the physical rates.** `RAMP_S`, `COAST_S` and `STROKE_RATE` are code constants; no record carries a ramp, deceleration or stroke time. |
+| P2 | **No `duty.maxSpeed`.** The 100 % ceiling is the pump curve's domain, not a declared maximum, and must never be reported as one. |
+| P2 | Carried: no setpoint rate limiting (K21/§3 — a separate engineering function); no off-delay, start-up bypass or latching (K20); no recirculation or trip (K18); one cascade topology (K17), PI not PID, no manufacturer data, no scenario library (K9), pressure-only boundary dynamics (K10), mixing unsupported (K5). |

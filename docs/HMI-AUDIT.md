@@ -3932,3 +3932,140 @@ the ordinary text tone, never the alarm palette, and never the saturation row.
   recirculation, no trip, flow loops in m³/h only (K18); one cascade topology
   (K17), PI not PID, no manufacturer data, no scenario library (K9),
   pressure-only boundary dynamics (K10), mixing unsupported (K5).
+
+---
+
+## K22 — constraint ownership, precedence and units
+
+A constraint-architecture phase, not a feature one. Eight independent limits
+had accumulated since K12, each correct alone; the ORDER, the OWNERSHIP and the
+anti-windup visibility of each had never been written down.
+
+### The chain
+
+```text
+operator / master ──► SP ──► [min-flow override] ──► effective SP
+                                                          │
+                                                     PI algorithm
+                                                          │
+                       requested OP ──► [OP travel] ──► [output rate]
+                                                          │
+                                                    commanded OP
+                                                          │
+                              ┌───────────────────────────┴────────┐
+                         VSD: SPD                             valve: OP
+                         [turndown]                          [travel]
+                              │                                   │
+                         [RAMP_S]                          [STROKE_RATE]
+                              │                                   │
+                           shaft                                 POS
+                              └───────────────┬───────────────────┘
+                                       hydraulic solve
+```
+
+`src/hmi/sim/constraints.ts` holds the inventory as typed data;
+`tests/hmi/constraints.test.ts` drives every row against a running plant so it
+cannot silently drift from the code it indexes.
+
+### Ownership, and the one exception
+
+**A constraint is enforced by the layer that owns it, and nowhere else** — with
+one deliberate exception. `duty.minSpeed` is enforced twice: by `speedTarget`
+at the actuator, so a direct write to `SPD` is still refused, and as the
+controller's `op-travel` floor, so the algorithm can see the stop it is winding
+against. Both are recorded as intentional. Everything else has one owner, and
+the tests prove a direct write cannot bypass it.
+
+### No engineering setpoint limits exist
+
+The audit looked and found three things that are **not** SP limits:
+
+1. the **calibrated range** (`signal.range`) bounds the faceplate's setpoint
+   entry field — input hygiene on a widget, not enforced by the engine;
+2. the **same range** is what K17 scales a master's output onto, because a
+   slave's setpoint must be in the slave's own units — that is a MAP;
+3. `signal.setpoint` is a **configured starting value** (K15).
+
+A transmitter's range is a statement about an instrument. Treating it as a
+controller's permitted setpoint span would be the same category error as
+treating `duty.minFlow` as a VSD minimum speed.
+
+Measured: `SP = 200` on a 0–60 loop is honoured, the output runs to 100 % and
+reports `SAT +1`. The operator is told the setpoint is unreachable rather than
+having their entry rewritten to a number that looks achievable.
+
+### The defect: a valve's travel had no owner
+
+```text
+before:  writeTag('HV-9','OP',150)  ->  POS = 150
+         writeTag('HV-9','OP',-50)  ->  POS negative
+after:   OP reads 150 (the request, left visible)
+         POS reads 100 (the position, physical)
+```
+
+The hydraulics were never wrong: `frac` takes `clamp(POS/100, 0, 1)` at the
+solver boundary. But the PUBLISHED state was physically impossible and reached
+the faceplate, `LoopState.actual` and the DEV alarm's `|cmd − POS|`.
+`travelTarget` now owns it, shaped exactly like `speedTarget`. The deviation is
+judged against the **achievable** command, so a valve held at its stop is
+FOLLOWING rather than reported as not following. `STROKE_RATE`, `STUCK` and
+`DEVT` are untouched.
+
+The command is left reading what was asked, exactly as K12 leaves `SPD` reading
+a speed the drive is refusing — the clamp stays visible rather than silent.
+
+### Physical lag is not windup
+
+The load-bearing conclusion. `RAMP_S`, `COAST_S` and `STROKE_RATE` are marked
+`outside` the anti-windup predicate **by design**: the command was accepted in
+full and the hardware is on its way, so the controller's output is not against
+a stop. That lag belongs to the process the loop is controlling, and a PI
+controller handles it through the measurement. Feeding it into the predicate
+would freeze the integrator during every ordinary move.
+
+The contrast is `output-rate`, where the command itself is REFUSED — which is
+why K21 added it to the predicate.
+
+Constraints the predicate observes: `op-travel`, `output-rate`,
+`vsd-turndown`, `vsd-ceiling`, and `min-flow-override` (on a master, as
+`minFlowFloorPct`). No new anti-windup algorithm was needed and no gains were
+touched.
+
+### `SAT` means the controller's travel
+
+Stated once, in `SATURATION_IS_CONTROLLER_TRAVEL`, so it cannot drift into
+"something limited me". It excludes the rate limit (`rateLimited`, K21), lost
+authority (which CLEARS it, K16), the physical lags, and the min-flow override.
+On a speed loop the bottom of travel IS the declared turndown, so `SAT −1`
+there means "at the turndown" — the controller's own configured floor, not the
+actuator limit leaking in.
+
+### Model-domain bounds, kept apart from engineering limits
+
+Five bounds carry `source: null`, meaning they belong to the MODEL rather than
+to a record: `sp-domain`, `vsd-ceiling` (the pump curve's domain — `H₀` is the
+shutoff head at rated speed), `valve-travel` (what a position means),
+`vsd-ramp` and `valve-stroke`. **There is no `duty.maxSpeed` field in this
+product** and the 100 % ceiling must never be reported as one.
+
+### What K22 did not do
+
+No setpoint limits invented, no setpoint RATE limiting added (§3 — an output
+rate limit and a setpoint rate limit are different engineering functions), no
+defaults created, no gains touched, no new operator state added, no new
+diagnostic and no new alarm. The three existing states — SATURATED, RATE
+LIMITED, NO AUTHORITY — already describe every constraint an operator needs,
+and both rows can show at once so neither claims sole responsibility.
+
+### Limitations carried
+
+- The setpoint bound is honoured on two paths (faceplate entry, cascade map)
+  and ignored on a third (the engine), so an operator and a scenario can reach
+  different setpoints on the same loop. Deliberate — there is no SP-limit field.
+- No engineering field for any physical rate: `RAMP_S`, `COAST_S` and
+  `STROKE_RATE` are code constants.
+- One symmetric output rate per controller, no separate up/down rates (K21).
+- Carried: no off-delay, start-up bypass or latching (K20); no recirculation or
+  trip (K18); one cascade topology (K17), PI not PID, no manufacturer data, no
+  scenario library (K9), pressure-only boundary dynamics (K10), mixing
+  unsupported (K5).
