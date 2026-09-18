@@ -2097,3 +2097,99 @@ tsc -b clean · production build clean
 | P2 | **`element.characteristic` has no vocabulary.** Before it could mean anything, the product needs a set of characteristics it supports and a parser for them. |
 | P2 | **`VALVE_K` and `PIPE_K` remain one constant each**, so no drawing can express a big valve and a small one, or a long line and a short one. Diameter and length are not on an HMI pipe. |
 | P2 | Carried: no maximum speed or physical-rate owner (K26/K27); no setpoint rate limiting (K21–K25); no off-delay, start-up bypass or latching (K20); one cascade topology (K17), PI not PID, pressure-only boundary dynamics (K10), mixing unsupported (K5). |
+
+---
+
+## 43. Step K29 — the hydraulic engineering data contract
+
+A schema-decision phase that **added no schema**, and the tests are the
+evidence rather than the assertion. No solver equation changed.
+
+### The basis, recorded before anything was proposed against it
+
+```text
+pressure bar absolute · flow m³/h signed · resistance bar/(m³/h)²
+
+ΔP = R · Q²
+  valve   R = VALVE_K / f⁴,  f = ACTUAL opening
+  pipe    R = PIPE_K
+  fitting R = PIPE_K / 10
+  pump    R = 0; the curve supplies head
+```
+
+**There is no `ρ`, no `SG` and no viscosity term in any of it.** `valveResistance`
+takes one argument — the opening — and there is nowhere to pass a fluid
+property. The resistances are *calibrations with any fluid effect already baked
+in*, not coefficients a property could be applied to. So engineering
+coefficients would not be **added** to this model; they would **replace part of
+it**.
+
+### What each option would require
+
+**A — the normalised resistance model (what exists).** Requires nothing
+further. Honest, calibrated, and unable to distinguish two valves or two pipes.
+
+**B — an engineering Cv/Kv valve model.** `R = SG/Kv²`. Four prerequisites,
+none met:
+1. **Which coefficient.** `element.cv` is labelled `Cv / Kv` and stores free
+   text; they differ by ~1.156. *A field that cannot distinguish two
+   definitions can supply neither.*
+2. **The coefficient's own reference condition.** `Fluid.referenceCondition`
+   exists — but that is the condition the **fluid's** properties are quoted at,
+   a different statement about a different object.
+3. **Specific gravity, in the solve.** `Fluid.densityKgM3` exists, so the *data*
+   side is not the blocker — the solver not reading it is, and `fluids.ts` says
+   wiring density in is a physics change to validate as one.
+4. **A comparable reference condition.** `referenceCondition` is a free-form
+   string, seeded `'20 °C, 1 atm'`, parsed nowhere. The type's comment says "a
+   property with no basis is not data"; that rule is *stated and not enforced*.
+
+**C — a geometry-based pipe model.** Darcy–Weisbach needs length, inside
+diameter and roughness. **Length exists nowhere** — an HMI pipe carries screen
+coordinates, and using pixel distance as plant length is exactly the defect
+`processData.ts` was created to fix. `spec.size` is *nominal*, not inside
+diameter (6" Sch 40 is 154.05 mm, Sch 80 is 146.33 mm), and converting needs
+the schedule plus a dimensional standard. No roughness field. **`PIPE_K` is not
+a placeholder waiting for two numbers; it stands in for a calculation whose
+every input is absent.**
+
+### Why no field was added
+
+§16 permits a field only when all eight of owner, meaning, unit, domain, absent
+semantics, reference condition, **runtime relationship** and serialization are
+known. Six are; two are not — and the decisive one is the runtime relationship,
+which needs fluid density inside the solve, a physics decision §20 forbids this
+phase from making. A field added now could not become causal without a later
+physics phase, so it would ship as DECLARED and **sit there looking like data
+that does something**.
+
+The characteristic fails earlier still: there is **no vocabulary** — no
+enumeration, no parser, no validation anywhere in the product. A search for the
+conventional terms finds them only in prose and in a cost estimator's
+description string.
+
+### One thing that was already right
+
+`Fluid` already separates identity (`id`, `name`), presentation (`color`,
+`displayToken`) and physics (`densityKgM3`, `viscosityMPaS`,
+`heatCapacityKJkgK`, `referenceCondition`). §7's separation is structural, not
+aspirational.
+
+### State after K29
+
+```text
+4144 tests passing · 7 skipped · 0 failing  (+27)
+tsc -b clean · production build clean
+209 Playwright passing · 16 skipped · 0 failing
+```
+
+### Carried forward
+
+| Priority | Item |
+|---|---|
+| P1 | **The one decision that unblocks everything**: does the hydraulic solve carry fluid density? It is a physics decision reaching far beyond valves, and until it is made no coefficient field can be causal. |
+| P2 | **Which coefficient the product supports** — Cv, Kv, or both with a recorded kind. A product decision, and cheap once the above is settled. |
+| P2 | **`Fluid.referenceCondition` is prose.** "A property with no basis is not data" is stated in the type and enforced nowhere. |
+| P2 | **No characteristic vocabulary, representation or position→coefficient map.** Three separate decisions, all absent. |
+| P2 | **Pipe length exists nowhere**, and nominal size is not an inside diameter. |
+| P2 | Carried: no maximum speed or physical-rate owner (K26/K27); no setpoint rate limiting (K21–K25); one cascade topology (K17), PI not PID, pressure-only boundary dynamics (K10), mixing unsupported (K5). |

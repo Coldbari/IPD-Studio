@@ -327,3 +327,118 @@ export const NO_ENGINEERING_MAX_SPEED = true
  * valves.
  */
 export const CV_CANNOT_ENTER_THE_SOLVE = true
+
+/**
+ * THE HYDRAULIC BASIS THIS PRODUCT SOLVES ON — K29, recorded before anything
+ * is proposed against it.
+ *
+ *     pressure    bar absolute
+ *     flow        m³/h, SIGNED along the element's own direction
+ *     resistance  bar / (m³/h)²
+ *
+ *     ΔP = R · Q²
+ *       valve    R = VALVE_K / f⁴,  f = ACTUAL opening clamped to
+ *                [SHUT_FRACTION, 1]
+ *       pipe     R = PIPE_K
+ *       fitting  R = PIPE_K / 10
+ *       pump     R = 0; the curve supplies head, falling with shaft speed
+ *
+ * ONE INCOMPRESSIBLE FLUID AT ONE DENSITY, and that density appears NOWHERE in
+ * the equations above — there is no `ρ`, no `SG` and no viscosity term. The
+ * resistances are calibrations in which any fluid effect is already baked, not
+ * coefficients a fluid property could be applied to. That is the single most
+ * important fact about introducing engineering coefficients: they would not be
+ * added to this model, they would REPLACE part of it.
+ */
+export const HYDRAULIC_BASIS_IS_DENSITY_FREE = true
+
+/**
+ * WHAT EACH HYDRAULIC MODEL WOULD REQUIRE — K29's actual output.
+ *
+ * Three options, and what is missing from each. None is implemented, and §20
+ * of the K29 brief forbids implementing any of them here.
+ *
+ * ── A. THE NORMALISED RESISTANCE MODEL (what exists) ──────────────────────
+ *
+ * Requires nothing further. Every element's resistance is a stated constant
+ * and the position dependence is `1/f⁴`. It is honest, it is calibrated, and
+ * it cannot distinguish two valves or two pipes.
+ *
+ * ── B. AN ENGINEERING Cv/Kv VALVE MODEL ───────────────────────────────────
+ *
+ * `ΔP = SG · (Q / Kv)²`, so `R = SG / Kv²`. FOUR prerequisites, none met:
+ *
+ *   1. WHICH COEFFICIENT. `element.cv` is labelled `Cv / Kv` and stores free
+ *      text. Cv is US gpm/√psi, Kv is m³/h/√bar, and they differ by ~1.156.
+ *      A field that cannot say which it holds can supply neither. NEEDS: a
+ *      recorded coefficient KIND, not a guess from magnitude or locale.
+ *   2. THE COEFFICIENT'S OWN REFERENCE CONDITION. A valve coefficient is
+ *      quoted against a standard fluid at a standard condition. `Fluid`
+ *      already carries `referenceCondition` — but that is the condition the
+ *      FLUID's properties are quoted at, which is a different statement about
+ *      a different object. NEEDS: a reference for the COEFFICIENT, and it is
+ *      not the fluid's.
+ *   3. SPECIFIC GRAVITY, IN THE SOLVE. `SG` is in the equation. `Fluid`
+ *      carries `densityKgM3`, so the DATA can exist — but the solver does not
+ *      read it, `sim/fluids.ts` states that wiring density in is a physics
+ *      change to be validated as one, and `hasProperties` reports most
+ *      services state no properties at all. NEEDS: a decision that the
+ *      hydraulic solve carries fluid, which reaches far beyond valves.
+ *   4. A COMPARABLE REFERENCE CONDITION. `Fluid.referenceCondition` is a
+ *      free-form string, seeded `'20 °C, 1 atm'` and parsed nowhere. The
+ *      type's own comment says a property with no basis is not data; that
+ *      rule is stated and not enforced. NEEDS: a parsed condition, if any
+ *      correction is ever to be applied against it.
+ *
+ * ── C. A GEOMETRY-BASED PIPE MODEL ────────────────────────────────────────
+ *
+ * Darcy-Weisbach needs length, inside diameter and roughness. NONE is
+ * obtainable:
+ *
+ *   LENGTH        does not exist, in any record or on any drawn object. An
+ *                 HMI pipe has screen coordinates; using pixel distance as
+ *                 plant length would be exactly the defect `processData.ts`
+ *                 was created to fix, where a tank's capacity came from its
+ *                 widget's pixel area.
+ *   DIAMETER      `spec.size` is a NOMINAL size. Nominal is not inside
+ *                 diameter: 6" Sch 40 is 154.05 mm and 6" Sch 80 is 146.33 mm.
+ *                 Converting needs the schedule AND a dimensional standard
+ *                 table, and `spec.schedule` is free text.
+ *   ROUGHNESS     no field. `spec.material` is free text and would need a
+ *                 material-to-roughness table.
+ *
+ * So `PIPE_K` is not a placeholder waiting for two numbers. It stands in for
+ * a calculation whose every input is absent.
+ */
+export const HYDRAULIC_MODEL_PREREQUISITES = true
+
+/**
+ * WHY NO SCHEMA FIELD WAS ADDED — K29 against its own §16 checklist.
+ *
+ * §16 permits a field only when ALL EIGHT of these are known. For a
+ * hypothetical coefficient pair:
+ *
+ *     field owner            KNOWN    the valve's engineering record
+ *     meaning                KNOWN    a flow coefficient
+ *     unit                   KNOWN    once the KIND is decided
+ *     valid domain           KNOWN    finite and positive
+ *     absent semantics       KNOWN    no coefficient; the model's own R stands
+ *     serialization          KNOWN    a free-form keyed map; nothing to migrate
+ *     reference condition    UNKNOWN  see B.2 — not the fluid's, and undecided
+ *     runtime relationship   UNKNOWN  see B.3 — needs fluid in the solve, which
+ *                                     is a physics decision K29 may not make
+ *
+ * Two unknown is two too many, and the second is the one that matters: a field
+ * added now could not become causal without a physics phase, so it would ship
+ * as DECLARED and sit there looking like data that does something.
+ *
+ * THE SAME TEST APPLIES TO THE CHARACTERISTIC and fails earlier still. There
+ * is no vocabulary: `element.characteristic` is free text with no enumeration,
+ * no parser and no validation anywhere in the product, and a search for the
+ * conventional terms finds them only in prose and in a cost estimator's
+ * description string. Before a characteristic could mean anything the product
+ * needs a set of characteristics it supports, a representation for each —
+ * enum, curve, breakpoint table — and a defined map from position to effective
+ * coefficient. None of the three exists.
+ */
+export const NO_SCHEMA_WITHOUT_A_RUNTIME_RELATIONSHIP = true
