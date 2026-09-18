@@ -38,12 +38,21 @@ remains under its own license; those licenses are unaffected by the terms
 above and their texts ship in node_modules/<package>/LICENSE.
 
   @joint/core        Mozilla Public License 2.0
+  firebase           Apache-2.0
   react, react-dom   MIT
   zustand, zundo     MIT
   idb-keyval         Apache-2.0
   dxf-parser         MIT
   fast-xml-parser    MIT
   ulid               MIT
+
+@joint/core is the only weak-copyleft component that reaches a build. MPL-2.0
+is file-level copyleft: it permits distribution inside a larger work under
+different terms, while the covered files themselves stay under MPL-2.0.
+
+The complete inventory -- all 577 packages, runtime and development, with
+attribution notices and the obligations that attach to each license -- is in
+THIRD-PARTY-LICENSES.md.
 
 --------------------------------------------------------------------------
 SYMBOLS AND STANDARDS
