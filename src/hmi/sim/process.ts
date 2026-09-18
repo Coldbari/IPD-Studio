@@ -35,9 +35,12 @@ import { DEFAULTS, LIQUID_CP_KJ_PER_M3_K, SECONDS_PER_HOUR, clamp } from './unit
  * The static head a vessel's contents put on its outlet, in bar.
  *
  * Proportional to level, so a filling tank raises the suction pressure of
- * anything drawing off it. `DEFAULTS.tankFullHeadBar` is roughly three metres
- * of liquid — a vessel's height is not on the drawing, so one figure stands
- * for all of them and is documented as such.
+ * anything drawing off it. `DEFAULTS.tankFullHeadBar` is a CALIBRATED PRESSURE
+ * and not a height: a vessel's height is on no drawing and in no record, so one
+ * figure stands for every vessel. K34 decided that formally — the quantity is a
+ * pressure, it is fluid-independent, and no density is applied to it. Unlike a
+ * pump's `duty.head`, which an engineer states in metres and which K31
+ * therefore converts against the real service, nobody states this one.
  */
 export const tankPressureBar = (levelPct: number): number =>
   (clamp(levelPct, 0, 100) / 100) * DEFAULTS.tankFullHeadBar

@@ -203,14 +203,18 @@ export const EQUIPMENT_CAPABILITY: readonly CapabilityFact[] = [
     id: 'tankFullHeadBar',
     cls: 'ASSUMPTION',
     meaning: 'the static head a full vessel puts on its outlet, 0.3 bar, proportional to '
-      + 'level. One figure for every vessel because no drawing carries a vessel height. '
-      + 'ITS JUSTIFICATION IS A WATER ASSUMPTION AND K32 RECORDS IT AS ONE: the docblock '
-      + 'calls it “≈ 3 m of liquid”, and 0.3 bar over 3 m implies ρ = 0.3e5/(3·g) = 1019.7 '
-      + 'kg/m³. Unlike a pump’s `duty.head` this is NOT converted against the service, and '
-      + 'that asymmetry is deliberate: a pump’s metres are stated by an engineer, a '
-      + 'vessel’s three metres are stated by nobody, and converting a length no record '
-      + 'contains would be inventing an elevation. Reconciling the two is a K33 decision '
-      + 'and needs a vessel height to become real data first',
+      + 'level. K34 DECIDED FORMALLY THAT THIS QUANTITY IS A CALIBRATED PRESSURE, not a '
+      + 'physical hydrostatic head. It is stored in bar, scaled by level and by nothing '
+      + 'else, derived from no height, and stated by no engineer on any record — there is '
+      + 'no vessel height or elevation field in the catalogue, and a capacity in m³ cannot '
+      + 'yield one without a diameter, an orientation and a head type that are equally '
+      + 'absent. It is therefore FLUID-INDEPENDENT and no density is applied to it. The '
+      + 'earlier “≈ 3 m of liquid” wording was scale intuition and has been corrected '
+      + 'where it read as a geometry calculation: taken as physics it would imply ρ = '
+      + '0.3e5/(3·g) = 1019.7 kg/m³, which nobody ever stated. The contrast with a pump’s '
+      + '`duty.head` is the whole rule — an engineer states those metres, so K31 converts '
+      + 'them against the real service; nobody states these, so converting them would be '
+      + 'inventing an elevation',
     unit: 'bar at 100 % level',
     absent: null,
   },
@@ -598,12 +602,13 @@ export const HYDRAULIC_BOUNDARY_IS_DECLARED = true
  *
  * ── TWO FINDINGS, RECORDED AND NOT FIXED ──────────────────────────────────
  *
- * 1. THE VESSEL STATIC HEAD carries an unrecorded water basis — see the
- *    `tankFullHeadBar` row above. Three water densities now exist in this
- *    product and no two are equal: 1019.7 kg/m³ in the vessel head, 1000.016
- *    in the legacy pump-head basis, 1000 in `LIQUID_CP_KJ_PER_M3_K`. None was
- *    written as a density before K31 and K32; none is wrong; they simply were
- *    never reconciled because nothing required them to be.
+ * 1. DECIDED BY K34 — see `VESSEL_HEAD_IS_CALIBRATED_PRESSURE` at the end of
+ *    this file. The vessel static head is a CALIBRATED PRESSURE and stays one.
+ *    K32 found that its “≈ 3 m” wording implied an unstated 1019.7 kg/m³, so
+ *    that this product held three unequal water densities — 1019.7 in the
+ *    vessel head, 1000.016 in the legacy pump-head basis, 1000 in
+ *    `LIQUID_CP_KJ_PER_M3_K`. The wording was the defect, not the number: K34
+ *    corrected the wording and applied no density to anything.
  *
  * 2. CLOSED BY K33. The suction check sourced a vessel at ATMOSPHERE plus its
  *    static head while the runtime solver sourced the same vessel at its
@@ -631,3 +636,65 @@ export const HYDRAULIC_BOUNDARY_IS_DECLARED = true
  * what is being changed and why.
  */
 export const FLUID_COUPLING_AUDITED = true
+
+/**
+ * K34 — THE VESSEL STATIC HEAD IS A CALIBRATED PRESSURE. DECIDED.
+ *
+ * ── THE QUESTION ──────────────────────────────────────────────────────────
+ *
+ * K31 made a pump head stated in METRES density-dependent. K32 then found that
+ * `DEFAULTS.tankFullHeadBar = 0.3` was documented as "≈ 3 m of liquid", which
+ * read as the same kind of quantity and would imply ρ = 1019.7 kg/m³. Are the
+ * two the same thing, treated differently?
+ *
+ * ── THE ANSWER: NO, AND IT IS DECIDABLE FROM THE DATA MODEL ───────────────
+ *
+ * They are different KINDS of quantity, and the product contract already says
+ * which is which. The test has been the same since K26 and it is not about
+ * which reading sounds more physical:
+ *
+ *      A RECORD STATES IT  →  engineering data, and physics may act on it.
+ *      NOBODY STATES IT    →  a simulator assumption, and nothing may.
+ *
+ * `duty.head` is stated by an engineer, in metres, on a pump datasheet. That is
+ * why K31 converts it against the real service: there is a real quantity, in a
+ * real unit, put there by somebody who meant it.
+ *
+ * `tankFullHeadBar` is stated by nobody. It is a constant in `sim/units.ts`,
+ * typed as bar, scaled by level percent and by nothing else. There is NO vessel
+ * height and NO elevation field anywhere in the 81-field catalogue, and
+ * `construction.volume` cannot produce one without a diameter, an orientation
+ * and a head type that are equally absent. There is no length here to convert.
+ *
+ * ── WHAT IS THEREFORE RECORDED ────────────────────────────────────────────
+ *
+ *   - the quantity IS a pressure, in bar, and is stored and used as one;
+ *   - the "3 m" wording is scale intuition and must not be read as a geometry
+ *     calculation — corrected in `sim/units.ts` and `sim/process.ts`;
+ *   - it remains FLUID-INDEPENDENT;
+ *   - 0.3 bar is an explicit simulator calibration, classified ASSUMPTION;
+ *   - NO density correction is applied to it, now or by implication.
+ *
+ * ── WHAT PHYSICAL HYDROSTATIC MODELLING WOULD NEED ────────────────────────
+ *
+ * Recorded because it was asked for, NOT because it was chosen. Were a vessel
+ * head ever to become ρgh, all of the following would have to exist first, and
+ * none does:
+ *
+ *   vessel geometry        a liquid height, or a diameter plus orientation plus
+ *                          head type that can produce one from a level
+ *   reference elevation    a datum, and each nozzle's height above it — the
+ *                          model today has no elevation of any kind
+ *   pressure basis         which nozzle sees which head, already answered by
+ *                          the K3.3 role and the only piece that exists
+ *   fluid density source   `Fluid.densityKgM3` on the vessel's own service,
+ *                          which the drawing assigns to LINES, not to vessels
+ *   partial fill           the level→height map for a dished or horizontal
+ *                          vessel, which is not linear in level percent
+ *   multiple levels        an interface elevation and a density per phase
+ *   static or dynamic      whether the head responds within a tick or is a
+ *                          quasi-steady boundary as it is today
+ *
+ * Seven dependencies, of which one exists. K34 implemented none of them.
+ */
+export const VESSEL_HEAD_IS_CALIBRATED_PRESSURE = true

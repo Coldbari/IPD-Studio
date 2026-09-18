@@ -81,7 +81,24 @@ export const DEFAULTS = {
    * together.
    */
   atmosphericPressureBar: 1,
-  /** A full vessel's static head at its outlet. ≈ 3 m of liquid. */
+  /**
+   * A full vessel's static head at its outlet, BAR — a calibrated simulator
+   * pressure, and K34 decided formally that it is one.
+   *
+   * IT IS NOT A HEIGHT AND NOTHING DERIVES IT FROM ONE. No vessel height or
+   * elevation exists anywhere in the engineering catalogue, and a capacity in
+   * m³ cannot yield one without a diameter, an orientation and a head type that
+   * are equally absent. So this is a pressure chosen so a filling tank visibly
+   * raises the suction of what draws off it — one figure for every vessel,
+   * scaled by level and by nothing else.
+   *
+   * THE "THREE METRES" IS SCALE INTUITION, NOT A DERIVATION. Earlier wording
+   * called it "≈ 3 m of liquid", which read as a geometry calculation and is
+   * not one; taken as physics it would imply a density of 1019.7 kg/m³ that
+   * nobody ever stated. It says only that 0.3 bar is the right ORDER for a
+   * process vessel. No `ρgh` is computed here and no density is applied — see
+   * `model/capability.ts` for the recorded decision.
+   */
   tankFullHeadBar: 0.3,
   /** Electric process heater. */
   heaterKw: 500,

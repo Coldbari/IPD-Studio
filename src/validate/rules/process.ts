@@ -147,16 +147,40 @@ export const pumpSuctionInsufficient: Rule = {
       const src = s.source?.kind === 'vessel'
         ? `${s.source.tag ?? 'a vessel'} at ${s.source.levelPct ?? 0}%`
         : 'the process boundary'
+      /**
+       * WHAT THE NOZZLE WOULD BE AT, or what it would be SHORT BY — K34.
+       *
+       * A positive figure is a pressure the nozzle would actually sit at, and
+       * is reported as one. A NEGATIVE figure is not: no liquid sits below
+       * absolute zero, and `hydraulic/solver.ts` already rules that a negative
+       * absolute pressure "must be presented as INVALID rather than as a
+       * reading". So the impossible case reports the SHORTFALL — how much more
+       * pressure the path would need than the source has, which is a real
+       * quantity and the one a reader can act on — and says plainly that the
+       * condition cannot be reached.
+       *
+       * K33 made this branch reachable. Before it, every source was atmosphere
+       * plus a static head and a shortfall this large was rare; a pressurised
+       * plant can now be specified far enough past its suction to produce one.
+       */
+      const at = s.suctionAtRated ?? 0
+      const nozzle = at >= 0
+        ? `At the rated flow the nozzle would sit at ${at.toFixed(2)} bar absolute.`
+        : `At the rated flow the path would need ${Math.abs(at).toFixed(2)} bar more than `
+          + `the source has, putting the nozzle below zero bar absolute — not a condition `
+          + `the plant can reach.`
       out.push(
         finding(
           pumpSuctionInsufficient,
           s.tag,
           `${s.tag} is rated ${m3h(s.ratedFlow)}${s.ratedDefaulted ? ' (assumed — no duty on its record)' : ''}, ` +
           `but its suction path from ${src} can pass at most ${m3h(s.maxFlow ?? 0)} on ` +
-          `${(s.sourcePressure ?? 0).toFixed(2)} bar. At the rated flow the nozzle would sit at ` +
-          `${(s.suctionAtRated ?? 0).toFixed(2)} bar absolute. ` +
+          `${(s.sourcePressure ?? 0).toFixed(2)} bar. ${nozzle} ` +
           `Lower the duty, shorten or enlarge the suction, or raise the source. ` +
-          `(Hydraulic capacity only — this is not an NPSH calculation; the model has no fluid, vapour pressure or elevation.)`,
+          // K31 gave the product a fluid and made density move a pump head, so
+          // "the model has no fluid" became false. The CHECK still has none —
+          // it is pure capacity — and that is what the disclaimer is about.
+          `(Hydraulic capacity only — this is not an NPSH calculation; this check has no fluid, vapour pressure or elevation.)`,
         ),
       )
     }

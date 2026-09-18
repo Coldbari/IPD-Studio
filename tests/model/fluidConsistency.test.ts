@@ -21,7 +21,8 @@
  *   convention are fluid-independent by construction and stay that way.
  *   Density has exactly ONE runtime consumer and it is the pump head.
  *
- *   FINDING 1 — VESSEL STATIC HEAD IS A CALIBRATED PRESSURE, NOT A HEAD.
+ *   FINDING 1 — DECIDED BY K34: THE VESSEL STATIC HEAD IS A CALIBRATED
+ *   PRESSURE, formally, and stays fluid-independent.
  *   `DEFAULTS.tankFullHeadBar = 0.3` bar is documented as "≈ 3 m of liquid",
  *   and 3 m of liquid is 0.3 bar only for water. The CONSTANT is declared in
  *   bar, so nothing converts it and no density is applied — which is why this
@@ -409,11 +410,24 @@ describe('§8 — density has exactly one runtime consumer that reads its VALUE'
 describe('§10 — the findings survive this conversation', () => {
   it('the audit is declared', () => { expect(FLUID_COUPLING_AUDITED).toBe(true) })
 
-  it('FINDING 1 is written down where the other assumptions live', () => {
+  /**
+   * ── AMENDED BY K34 ──────────────────────────────────────────────────────
+   *
+   * OLD EXPECTATION:  the row names K33 as the phase that would decide what
+   *                   the 0.3 bar means.
+   * NEW EXPECTATION:  the row states the DECISION itself. K33 turned out to be
+   *                   about source pressure; K34 took the vessel-head question
+   *                   and answered it — the quantity is a CALIBRATED PRESSURE
+   *                   and stays fluid-independent.
+   * REASON:           a pointer to a future phase is only correct until that
+   *                   phase happens. The 1019.7 figure is still asserted,
+   *                   because it is still the reason the wording needed fixing.
+   */
+  it('FINDING 1 is written down, and K34 decided it', () => {
     const f = EQUIPMENT_CAPABILITY.find((x) => x.id === 'tankFullHeadBar')!
     expect(f.cls).toBe('ASSUMPTION')
     expect(f.meaning).toContain('1019.7')
-    expect(f.meaning).toContain('K33')
+    expect(f.meaning).toContain('CALIBRATED PRESSURE')
   })
 
   it('and the three unequal water densities are all now named as densities', () => {
